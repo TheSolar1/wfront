@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="__THEME__">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorldFront</title>
+  <link rel="icon" href="static/img/favicon.ico">
+  <link rel="stylesheet" href="static/css/theme.css">
+  <link rel="stylesheet" href="static/css/worldfront.css">
+  <meta name="theme-color" content="#4fa553">
+</head>
+<body class="wf-jeu" data-vex="__VEX__" data-connexion="__CONNEXION__" data-mode="__MODE__">
+
+  <!-- ── Barre de navigation VEX ─────────────────────────────── -->
+  <div class="top-nav-bar-haut7844" role="navigation">
+    <div class="top-nav-left-7844">
+      <span class="wf-nav-titre"><i class="ico" style="--ic:url('__P__/static/img/solid/earth-europe.svg')"></i>WorldFront</span>
+    </div>
+    <div class="top-nav-right-7844">
+      <span class="wf-nav-horloge"><span id="wf-connexion" class="wf-connexion" title="Connexion…"></span><span id="wf-horloge"></span></span>
+      <div class="user-info-top-7844" id="user-info-top" tabindex="0" role="button" aria-haspopup="true" aria-expanded="false">
+        <span class="user-name-top-7844">__NOM__</span>
+        <img src="static/img/solid/user.svg" class="user-icon-top-7844" alt="profil">
+      </div>
+    </div>
+  </div>
+  <div class="profile-menu-7844" id="profile-menu" role="menu">
+    <a href="./"><img src="static/img/solid/circle-info.svg" class="pm-icon-svg-7844" alt="">À propos de WorldFront</a>
+    <a href="__VEX__/login/logout"><img src="static/img/solid/right-from-bracket.svg" class="pm-icon-svg-7844" alt="">Déconnexion</a>
+  </div>
+
+  <!-- ── Jeu ──────────────────────────────────────────────────── -->
+  <div class="wf-app">
+    <aside class="wf-side">
+      <div class="wf-nation" id="wf-nation"></div>
+      <nav class="wf-menu" id="wf-menu"></nav>
+    </aside>
+
+    <main class="wf-main">
+      <div class="wf-resbar" id="wf-resbar"></div>
+      <div class="wf-carte" id="wf-carte">
+        <div id="wf-carte-3d" class="wf-carte-3d"></div>
+
+        <div class="wf-outils">
+          <div class="wf-segment">
+            <button class="actif" data-mode-carte="politique" title="Carte politique"><i class="ico" style="--ic:url('__P__/static/img/solid/flag.svg')"></i><span>Politique</span></button>
+            <button data-mode-carte="terrain" title="Relief et terrains"><i class="ico" style="--ic:url('__P__/static/img/solid/mountain.svg')"></i><span>Terrain</span></button>
+            <button data-mode-carte="ressources" title="Gisements"><i class="ico" style="--ic:url('__P__/static/img/solid/gem.svg')"></i><span>Ressources</span></button>
+          </div>
+          <button class="wf-outil" id="wf-recentrer" title="Revenir à ma capitale"><i class="ico" style="--ic:url('__P__/static/img/solid/house-flag.svg')"></i></button>
+          <button class="wf-outil" id="wf-vue-globale" title="Vue d'ensemble"><i class="ico" style="--ic:url('__P__/static/img/solid/earth-europe.svg')"></i></button>
+        </div>
+
+        <div class="wf-consigne" id="wf-consigne" hidden></div>
+        <div class="wf-missiles" id="wf-missiles" hidden></div>
+        <div class="wf-survol" id="wf-survol" hidden></div>
+        <div class="wf-inspecteur" id="wf-inspecteur" hidden></div>
+        <div class="wf-hors-ligne" id="wf-hors-ligne" hidden><i class="ico" style="--ic:url('__P__/static/img/solid/plug-circle-xmark.svg')"></i> Connexion perdue — reconnexion en cours…</div>
+      </div>
+
+      <section class="wf-panneau" id="wf-panneau" aria-live="polite">
+        <header class="wf-panneau-tete">
+          <div id="wf-panneau-titre" class="wf-panneau-titre"></div>
+          <button class="wf-btn-ic" data-act="fermer_panneau" title="Fermer (Échap)"><i class="ico" style="--ic:url('__P__/static/img/solid/xmark.svg')"></i></button>
+        </header>
+        <div class="wf-panneau-corps" id="wf-panneau-corps"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="wf-toasts" id="wf-toasts"></div>
+  <div class="wf-modale-fond" id="wf-modale" hidden></div>
+  <div class="wf-flash" id="wf-flash"></div>
+  <div class="wf-chargement" id="wf-chargement">
+    <div class="wf-chargement-boite">
+      <img src="static/img/solid/earth-europe.svg" alt="" class="wf-chargement-logo">
+      <b>WorldFront</b>
+      <span>Connexion au monde…</span>
+      <div class="wf-barre anim"><div></div></div>
+    </div>
+  </div>
+
+  <script src="static/js/nav.js"></script>
+  <script type="module" src="static/js/jeu.js"></script>
+</body>
+</html>

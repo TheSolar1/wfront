@@ -1,0 +1,19 @@
+{
+  "_aide": "Copier en config.json. auth = \"reseau\" : connexion avec un compte de n'importe quel noeud VEX (voir README). \"dev\" pour tester en local.",
+  "adresse": "0.0.0.0",
+  "port": 8095,
+  "url_publique": "https://jeu.exemple.org",
+  "auth": "reseau",
+  "annuaire_url": "https://vex.hopto.org/neut/annuaire",
+  "noeud_par_defaut": "vex.hopto.org",
+  "admins": [],
+  "proxy_de_confiance": false,
+  "carte_largeur": 84,
+  "carte_hauteur": 52,
+  "graine": 20260925,
+  "vitesse": 1.0,
+  "protection_heures": 2,
+  "sauvegarde": "data/monde.json",
+  "intervalle_sauvegarde_s": 30,
+  "bots": 6
+}

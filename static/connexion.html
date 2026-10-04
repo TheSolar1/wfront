@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorldFront — connexion</title>
+  <link rel="icon" href="static/img/favicon.ico">
+  <link rel="stylesheet" href="static/css/theme.css">
+  <link rel="stylesheet" href="static/css/worldfront.css">
+  <meta name="theme-color" content="#4fa553">
+</head>
+<body class="wf-dev">
+  <form class="card wf-dev-carte" action="auth/debut" method="get" id="f">
+    <div class="card-header">
+      <div class="card-icon"><i class="ico" style="--ic:url('__P__/static/img/solid/earth-europe.svg')"></i></div>
+      <div class="card-header-text"><div class="card-title">WorldFront</div><div class="card-subtitle">Se connecter avec VEX</div></div>
+    </div>
+    <p>Utilisez votre compte de <b>n'importe quel nœud du réseau VEX</b>. Vous vous connectez sur votre nœud, qui confirme votre identité à WorldFront : votre mot de passe ne quitte jamais votre serveur.</p>
+    <div class="wf-avert" id="erreur" hidden><i class="ico" style="--ic:url('__P__/static/img/solid/triangle-exclamation.svg')"></i><span></span></div>
+    <div class="wf-form">
+      <label>Adresse de votre nœud VEX
+        <input name="noeud" id="noeud" required maxlength="200" value="__NOEUD_DEFAUT__" placeholder="vex.exemple.org" autocomplete="url">
+      </label>
+      <button class="wf-btn" type="submit" id="go"><img src="static/img/vex.svg" alt="" class="wf-btn-logo"> Se connecter avec VEX</button>
+    </div>
+    <p class="wf-note"><i class="ico" style="--ic:url('__P__/static/img/solid/circle-info.svg')"></i> C'est l'adresse où vous ouvrez VEX d'habitude (ex. <code>vex.hopto.org</code>). Le nœud doit figurer dans l'annuaire du réseau.</p>
+    <a class="wf-lien" href="./">Découvrir WorldFront</a>
+  </form>
+  <script>
+    (function () {
+      var q = new URLSearchParams(location.search);
+      var e = q.get('erreur');
+      if (e) { var b = document.getElementById('erreur'); b.hidden = false; b.querySelector('span').textContent = e; }
+      var i = document.getElementById('noeud');
+      // Retour arriere depuis le nœud : le bouton ne doit pas rester bloque.
+      window.addEventListener('pageshow', function () { var g = document.getElementById('go'); g.disabled = false; });
+      try { var m = localStorage.getItem('wf_noeud'); if (m) i.value = m; } catch (x) {}
+      document.getElementById('f').addEventListener('submit', function () {
+        try { localStorage.setItem('wf_noeud', i.value.trim()); } catch (x) {}
+        var g = document.getElementById('go');
+        g.disabled = true;
+        g.textContent = 'Contact du nœud…';
+      });
+    })();
+  </script>
+</body>
+</html>

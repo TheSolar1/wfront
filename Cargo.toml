@@ -1,0 +1,33 @@
+[package]
+name = "worldfront"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "worldfront"
+path = "src/main.rs"
+
+[dependencies]
+tokio      = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "fs"] }
+axum       = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs"] }
+futures-util = "0.3"
+
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono     = "0.4"
+rand       = "0.8"
+
+# « Se connecter avec VEX » : cle publique du nœud (/p2p/ping), annuaire
+# du reseau, verification de la signature Ed25519 du jeton.
+ureq          = { version = "2", features = ["json", "tls"] }
+ed25519-dalek = "2"
+base64        = "0.22"
+
+# Mode "vex" (optionnel) : lecture directe des sessions d'un seul nœud.
+mysql = { version = "28.0.0", default-features = false, features = ["rustls-tls"] }
+# mysql sans ses features par defaut ne choisit pas de backend zlib.
+flate2 = { version = "1", features = ["rust_backend"] }
+
+[profile.release]
+opt-level = 3

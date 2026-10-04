@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorldFront — connexion de test</title>
+  <link rel="icon" href="static/img/favicon.ico">
+  <link rel="stylesheet" href="static/css/theme.css">
+  <link rel="stylesheet" href="static/css/worldfront.css">
+</head>
+<body class="wf-dev">
+  <form class="card wf-dev-carte" action="dev/entrer" method="get">
+    <div class="card-header"><div class="card-icon"><i class="ico" style="--ic:url('__P__/static/img/solid/flask.svg')"></i></div>
+      <div class="card-header-text"><div class="card-title">Connexion de test</div><div class="card-subtitle">Mode développement — sans VEX</div></div></div>
+    <p>Ce serveur tourne avec <code>"auth": "dev"</code> : n'importe quel pseudo ouvre une session locale. En production, repassez sur <code>"auth": "vex"</code> pour utiliser les comptes VEX.</p>
+    <div class="wf-form">
+      <label>Pseudo<input name="nom" required minlength="2" maxlength="24" pattern="[A-Za-z0-9_\-]+" placeholder="Ex. : clement" autofocus></label>
+      <label>Thème
+        <select name="theme"><option value="light">Clair</option><option value="dark">Sombre</option></select>
+      </label>
+      <button class="wf-btn" type="submit"><i class="ico" style="--ic:url('__P__/static/img/solid/right-to-bracket.svg')"></i> Entrer</button>
+    </div>
+  </form>
+</body>
+</html>

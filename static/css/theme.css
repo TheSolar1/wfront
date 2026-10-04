@@ -1,0 +1,214 @@
+/* ══════════════════════════════════════════════════════════════════
+   theme.css — Tokens de thème partagés VEX
+   À charger sur toutes les pages via <link rel="stylesheet" href="/static/css/theme.css">
+   Le thème est piloté par l'attribut data-theme sur <html>, injecté
+   côté serveur (function::get_theme_attr), jamais par du JS/localStorage.
+   ══════════════════════════════════════════════════════════════════ */
+
+:root, [data-theme="light"] {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface2: #f7f9fb;
+  --panel: #ffffff;
+  --panel-border: #e4e6eb;
+  --border: #e2e6ec;
+  --text: #1c1e21;
+  --text-dim: #65676b;
+  --text-m: #6b7280;
+  --input: #ffffff;
+
+  --vex-green-1: #66bb6a;
+  --vex-green-2: #388e3c;
+  --accent: #4fa553;
+  --alt: rgba(22,163,74,.10);
+  --aglow: rgba(22,163,74,.22);
+  --danger: #dc2626;
+  --orange: #f59e0b;
+  --blue: #3b82f6;
+
+  /* FIX (demande utilisateur : "je veux un fond blanc") : la barre de
+     nav du haut (et son fil d'ariane) utilisait un degrade vert --
+     remplace par un blanc uni en theme clair. Le degrade reste en theme
+     sombre (un fond blanc y casserait le contraste). */
+  --nav-gradient: #ffffff;
+  --shadow: 0 1px 3px rgba(0,0,0,.06), 0 4px 14px rgba(0,0,0,.04);
+  --radius: 12px;
+
+  --sidebar-bg: rgba(255,255,255,0.95);
+  --sidebar-hover: rgba(76,175,80,0.10);
+  --sidebar-active: #4caf50;
+
+  /* Filtre CSS pour teinter en vert accent une icône SVG monochrome
+     (noire) chargée via <img> — utilisé par la nav (build_nav_html). */
+  --icon-filter: invert(28%) sepia(45%) saturate(1200%) hue-rotate(85deg) brightness(90%);
+}
+
+[data-theme="dark"] {
+  --bg: #131414;
+  --surface: #1a1f2e;
+  --surface2: #1e2435;
+  --panel: #1e1e1e;
+  --panel-border: #3a3b3c;
+  --border: #2d3347;
+  --text: #e8edf5;
+  --text-dim: #9aa0a6;
+  --text-m: #8892a4;
+  --input: #1e2435;
+
+  --accent: #4ade80;
+  --alt: rgba(74,222,128,.10);
+  --aglow: rgba(74,222,128,.20);
+  --danger: #ff6b6b;
+  --orange: #fbbf24;
+  --blue: #60a5fa;
+
+  --nav-gradient: linear-gradient(135deg,#2e7d32 0%,#1b5e20 100%);
+  --shadow: 0 1px 3px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3);
+
+  --sidebar-bg: rgba(30,31,32,0.95);
+  --sidebar-hover: rgba(102,187,106,0.10);
+  --sidebar-active: #66bb6a;
+
+  --icon-filter: invert(70%) sepia(30%) saturate(600%) hue-rotate(70deg) brightness(105%);
+}
+
+/* Reset de base commun */
+html[data-theme] body {
+  background: var(--bg);
+  color: var(--text);
+  transition: background .15s ease, color .15s ease;
+}
+
+/* ── Classes utilitaires génériques réutilisables sur toutes les pages ── */
+.vex-card {
+  background: var(--surface);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+.vex-sidebar {
+  background: var(--sidebar-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  backdrop-filter: blur(10px);
+}
+.vex-sidebar-link {
+  color: var(--text);
+}
+.vex-sidebar-link:hover {
+  background: var(--sidebar-hover);
+  color: var(--accent);
+}
+.vex-sidebar-link.active {
+  background: var(--sidebar-active);
+  color: #fff;
+}
+.vex-text-dim { color: var(--text-dim); }
+.vex-input {
+  background: var(--input);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+}
+.vex-btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.vex-btn-danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Nav globale (build_nav_html, function.rs) — barre du haut, popup
+   applis, menu profil, panneau latéral, fil d'ariane.
+   Déplacé ici depuis function.rs : plus aucun <style> n'est généré
+   en Rust, tout est statique et référence les tokens ci-dessus.
+   Toute page qui appelle build_nav_html() DOIT charger ce fichier
+   (<link rel="stylesheet" href="/static/css/theme.css">) sous peine
+   d'une nav sans mise en forme.
+   ══════════════════════════════════════════════════════════════════ */
+.top-nav-bar-haut7844 *,.apps-popup-7844 *,.profile-menu-7844 *,.nav-sidebar-7844 * { box-sizing:border-box; margin:0; padding:0; }
+
+.top-nav-bar-haut7844 { position:fixed;top:0;left:0;right:0;height:60px; background:var(--nav-gradient); box-shadow:var(--shadow); display:flex;align-items:center;justify-content:space-between; padding:0 20px;z-index:1000; }
+.top-nav-left-7844,.top-nav-right-7844 { display:flex;align-items:center;gap:12px; }
+
+.apps-btn-nav-7844 { width:40px;height:40px;border-radius:8px; background:rgba(0,0,0,0.18);border:1px solid rgba(255,255,255,0.30); color:#ffffff!important; display:flex;align-items:center;justify-content:center; cursor:pointer;font-size:18px; transition:transform .15s,background .15s; text-decoration:none!important; }
+.apps-btn-nav-7844:hover { transform:translateY(-2px);background:rgba(0,0,0,0.30); }
+
+.topbar-btn-svg-7844 { width:20px;height:20px;display:block;flex-shrink:0; filter:brightness(0) invert(1); }
+
+.nav-logo-flat-7844 { width:38px;height:38px;object-fit:contain;margin-left:4px; filter:grayscale(100%) brightness(0.65)!important; }
+
+.user-info-top-7844 { display:flex;align-items:center;gap:12px;cursor:pointer; padding:6px 12px;border-radius:6px;transition:background .2s; text-decoration:none!important; }
+.user-info-top-7844:hover { background:rgba(0,0,0,0.18); }
+.user-name-top-7844 { font-size:14px;font-weight:600;color:#ffffff!important; max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; font-family:Arial,sans-serif; }
+.user-name-top-7844.fona { color:transparent!important;-webkit-background-clip:text;background-clip:text; background-image:url('/static/img/image2.png'),url('/static/img/image3.png'); background-size:100% 200%;background-position:100% 100%,100% 200%; background-repeat:no-repeat,no-repeat; animation:slideImages7844 6s linear infinite;font-weight:700; }
+@keyframes slideImages7844 { 0%,100% { background-position:100% 100%,100% 200%; } 50% { background-position:100% 0%,100% 100%; } }
+
+.user-icon-top-7844 { width:32px;height:32px;border-radius:50%; background:rgba(0,0,0,0.20);border:2px solid rgba(255,255,255,0.40); padding:6px;object-fit:contain; filter:brightness(0) invert(1); flex-shrink:0; }
+
+/* Popups / menus flottants — fond 100% opaque (var(--surface)) */
+.apps-popup-7844 { position:fixed;top:70px;left:20px;width:360px; background:var(--surface);border:1px solid var(--panel-border); border-radius:var(--radius);box-shadow:var(--shadow); padding:16px;display:none;z-index:1001;overflow:hidden; }
+.apps-grid-7844 { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+.app-item-7844 { display:flex;flex-direction:column;align-items:center;justify-content:center; width:100%;padding:18px 8px 14px;min-height:88px; border-radius:var(--radius); background:var(--surface);border:1px solid var(--border); text-decoration:none!important; transition:background .15s; gap:9px; }
+.app-item-7844:hover { background:var(--sidebar-hover);text-decoration:none!important; }
+
+.app-icon-wrap-7844 { display:flex;align-items:center;justify-content:center; width:44px;height:44px;border-radius:12px; background:var(--alt); transition:background .15s; }
+.app-svg-icon-7844 { width:22px;height:22px;display:block;flex-shrink:0; filter:var(--icon-filter); }
+.app-item-7844:hover .app-icon-wrap-7844 { background:var(--aglow); }
+
+.app-label-7844 { font-size:12.5px;color:var(--accent)!important;font-weight:700; text-align:center;line-height:1.3; white-space:nowrap;overflow:hidden;text-overflow:ellipsis;width:100%; font-family:Arial,sans-serif;margin-top:2px; }
+.apps-admin-sep-7844 { margin-top:12px;padding-top:10px;border-top:1px solid var(--border); }
+
+/* Tuile "Administration" : meme fond que les autres, mais texte et
+   icone en rouge, avec un halo rouge autour de l'icone. */
+
+.apps-admin-sep-7844 .app-item-7844:hover { background:color-mix(in srgb, var(--danger,#dc2626) 8%, var(--surface)); border-color:var(--danger,#dc2626); }
+.apps-admin-sep-7844 .app-item-7844 .app-icon-wrap-7844 { background:color-mix(in srgb, var(--danger,#dc2626) 14%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--danger,#dc2626) 30%, transparent); }
+.apps-admin-sep-7844 .app-item-7844:hover .app-icon-wrap-7844 { background:color-mix(in srgb, var(--danger,#dc2626) 24%, transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--danger,#dc2626) 55%, transparent); }
+.apps-admin-sep-7844 .app-item-7844 .app-svg-icon-7844 { filter:invert(20%) sepia(90%) saturate(600%) hue-rotate(330deg); }
+[data-theme="dark"] .apps-admin-sep-7844 .app-item-7844 .app-svg-icon-7844 { filter:invert(70%) sepia(60%) saturate(600%) hue-rotate(320deg); }
+.apps-admin-sep-7844 .app-item-7844 .app-label-7844 { color:var(--danger,#dc2626)!important; }
+
+.profile-menu-7844 { position:fixed;top:70px;right:20px;width:200px; background:var(--surface);border:1px solid var(--panel-border); border-radius:var(--radius);box-shadow:var(--shadow); padding:8px;display:none;z-index:1002;overflow:hidden; }
+.profile-menu-7844 a { display:flex;align-items:center;gap:8px; text-decoration:none!important;color:var(--accent)!important; padding:9px 10px;border-radius:8px;font-weight:600; margin-bottom:4px;transition:background .15s; font-family:Arial,sans-serif; }
+.profile-menu-7844 a:hover { background:var(--sidebar-hover); }
+.pm-icon-svg-7844 { width:16px;height:16px;flex-shrink:0;display:block; filter:var(--icon-filter); }
+
+.nav-sidebar-7844 { position:fixed;top:60px;left:0;bottom:0;width:260px; background:var(--surface);border-right:1px solid var(--panel-border); padding:16px 10px;overflow-y:auto;z-index:999; transition:transform .3s;box-shadow:var(--shadow); }
+.nav-sidebar-7844.collapsed { transform:translateX(-100%); }
+.nav-sidebar-7844::-webkit-scrollbar { width:4px; }
+.nav-sidebar-7844::-webkit-scrollbar-thumb { background:var(--border);border-radius:2px; }
+.nav-sidebar-item-7844 { display:flex;align-items:center;gap:12px; padding:11px 16px;margin:3px 0;border-radius:8px; color:var(--text);text-decoration:none!important; font-size:15px;font-weight:500;transition:background .2s,color .2s; }
+.nav-sidebar-item-7844:hover { background:var(--sidebar-hover); }
+.nav-sidebar-item-7844.active { background:var(--sidebar-active);color:#fff!important;font-weight:600; }
+.nav-sidebar-item-7844.admin-item { color:var(--danger)!important; }
+.nav-sidebar-item-7844.admin-item:hover { background:var(--alt); }
+.nav-sidebar-item-7844.admin-item.active { background:var(--danger);color:#fff!important; }
+.sidebar-svg-7844 { width:20px;height:20px;flex-shrink:0;display:block; filter:none; }
+.nav-sidebar-item-7844.active .sidebar-svg-7844 { filter:brightness(0) invert(1); }
+.nav-sidebar-item-7844.admin-item .sidebar-svg-7844 { filter:invert(27%) sepia(51%) saturate(2878%) hue-rotate(346deg) brightness(104%) contrast(97%); }
+.nav-sidebar-divider-7844 { height:1px;background:var(--border);margin:10px 8px; }
+.nav-sidebar-overlay-7844 { display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:998; }
+.nav-sidebar-overlay-7844.show { display:block; }
+.nav-sidebar-content-push-7844 { transition:margin-left .3s; }
+body.nav-sidebar-open-7844 .nav-sidebar-content-push-7844 { margin-left:260px; }
+
+.nav-breadcrumb-7844 { position:fixed;top:60px;left:0;right:0;height:36px; background:var(--nav-gradient); border-bottom:1px solid var(--panel-border); display:flex;align-items:center;padding:0 18px;gap:8px;z-index:990; font-family:Arial,sans-serif;font-size:13px; }
+.nav-bc-link-7844 { display:flex;align-items:center;gap:6px;text-decoration:none!important;color:rgba(255,255,255,0.85);font-weight:600;transition:color .15s;white-space:nowrap; }
+.nav-bc-link-7844:hover { color:#fff; }
+.nav-bc-svg-7844 { width:12px;height:12px;display:block;filter:brightness(0) invert(1);opacity:0.7; }
+.nav-bc-sep-7844 { display:flex;align-items:center;opacity:0.4; }
+.nav-bc-current-7844 { color:rgba(255,255,255,0.95);max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500; }
+body.nav-has-breadcrumb-7844 { padding-top:96px!important; }
+body { padding-top:60px; }
+
+@media(max-width:768px) {
+  .nav-sidebar-7844 { transform:translateX(-100%); }
+  .nav-sidebar-7844.show { transform:translateX(0); }
+  .nav-sidebar-7844.collapsed { transform:translateX(-100%); }
+  body.nav-sidebar-open-7844 .nav-sidebar-content-push-7844 { margin-left:0; }
+  .apps-popup-7844 { left:10px;width:calc(100% - 20px); }
+  .profile-menu-7844 { right:10px;width:calc(100% - 20px); }
+  .nav-bc-current-7844 { max-width:180px; }
+}
