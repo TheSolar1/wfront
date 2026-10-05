@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WorldFront</title>
-  <link rel="icon" href="static/img/favicon.ico">
-  <link rel="stylesheet" href="static/css/theme.css">
-  <link rel="stylesheet" href="static/css/worldfront.css">
+  <link rel="icon" type="image/svg+xml" href="static/img/worldfront.svg">
+  <link rel="stylesheet" href="static/css/theme.css?v=__V__">
+  <link rel="stylesheet" href="static/css/worldfront.css?v=__V__">
   <meta name="theme-color" content="#4fa553">
 </head>
 <body class="wf-accueil" data-connecte="__CONNECTE__" data-mode="__MODE__">
@@ -15,7 +15,7 @@
       <span class="wf-nav-titre"><i class="ico" style="--ic:url('__P__/static/img/solid/earth-europe.svg')"></i>WorldFront</span>
     </div>
     <div class="top-nav-right-7844">
-      <a href="__CONNEXION__" class="apps-btn-nav-7844 wf-si-deconnecte" title="Connexion">
+      <a href="__ENTREE__" class="apps-btn-nav-7844 wf-si-deconnecte wf-entree" title="Se connecter avec VEX">
         <img src="static/img/solid/right-to-bracket.svg" class="topbar-btn-svg-7844" alt="connexion">
       </a>
       <div class="user-info-top-7844 wf-si-connecte" id="user-info-top" tabindex="0" role="button" aria-haspopup="true" aria-expanded="false">
@@ -37,8 +37,8 @@
         <p class="wf-hero-txt">Un jeu de stratégie et de guerre multijoueur qui se joue directement dans le navigateur. Prenez le contrôle d'un pays, faites-le grandir, gérez vos alliances… puis la guerre.</p>
         <div class="wf-hero-actions">
           <a class="wf-btn blanc wf-si-connecte" href="jeu"><i class="ico" style="--ic:url('__P__/static/img/solid/play.svg')"></i> Jouer</a>
-          <a class="wf-btn blanc wf-si-deconnecte" href="__CONNEXION__"><i class="ico" style="--ic:url('__P__/static/img/solid/right-to-bracket.svg')"></i> Se connecter avec VEX</a>
-          <span class="wf-hero-note wf-si-deconnecte">Votre compte VEX suffit, quel que soit votre nœud du réseau : aucune inscription supplémentaire.</span>
+          <a class="wf-btn blanc wf-si-deconnecte wf-entree" href="__ENTREE__"><i class="ico" style="--ic:url('__P__/static/img/solid/right-to-bracket.svg')"></i> Se connecter avec VEX</a>
+          <span class="wf-hero-note wf-si-deconnecte">Votre compte VEX suffit : un clic, vous vous connectez sur VEX et vous revenez jouer. <a href="__CONNEXION__">Autre nœud VEX</a></span>
         </div>
       </div>
       <div class="wf-hero-stats" id="wf-stats">
@@ -53,7 +53,7 @@
       <div class="card">
         <div class="card-header"><div class="card-icon"><i class="ico" style="--ic:url('__P__/static/img/solid/map-location-dot.svg')"></i></div>
           <div class="card-header-text"><div class="card-title">Un pays qui grandit</div><div class="card-subtitle">Territoire</div></div></div>
-        <p>La taille de votre pays évolue selon ce que vous construisez : centres administratifs et villes repoussent vos frontières, province après province.</p>
+        <p>Comme dans OpenFront : un clic droit sur la carte et vos troupes s'emparent des terres voisines, case par case. Plus votre pays grandit, plus votre armée grossit.</p>
       </div>
       <div class="card">
         <div class="card-header"><div class="card-icon"><i class="ico" style="--ic:url('__P__/static/img/solid/oil-well.svg')"></i></div>
@@ -92,7 +92,7 @@
     </div>
   </div>
 
-  <script src="static/js/nav.js"></script>
+  <script src="static/js/nav.js?v=__V__"></script>
   <script>
     (function () {
       var c = document.body.dataset.connecte === '1';
@@ -100,6 +100,13 @@
         document.querySelectorAll('#profile-menu a').forEach(function (a) { if (a.href.indexOf('logout') >= 0) a.href = 'deconnexion'; });
       }
       document.querySelectorAll(c ? '.wf-si-deconnecte' : '.wf-si-connecte').forEach(function (e) { e.remove(); });
+      // Nœud deja utilise sur ce navigateur : connexion directe dessus.
+      try {
+        var n = localStorage.getItem('wf_noeud');
+        if (n && document.body.dataset.mode === 'reseau') {
+          document.querySelectorAll('.wf-entree').forEach(function (a) { a.href = 'auth/debut?noeud=' + encodeURIComponent(n); });
+        }
+      } catch (x) {}
       function maj() {
         fetch('api/statut', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (s) {
           document.getElementById('st-pays').textContent = s.pays;

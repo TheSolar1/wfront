@@ -6,6 +6,7 @@
 // ══════════════════════════════════════════════════════════════════
 
 use crate::defs::*;
+use crate::fabrication as fab;
 use crate::jeu::{self, Bilan};
 use crate::monde::*;
 use serde_json::{json, Map, Value};
@@ -132,6 +133,26 @@ pub fn init(m: &Monde, nom: &str, admin: bool, vitesse: f64, vex_url: &str) -> S
             "specialisations": SPECIALISATIONS,
             "couleurs": COULEURS_PAYS,
             "emblemes": EMBLEMES,
+            "minerais": fab::MINERAIS,
+            "elements": fab::ELEMENTS.iter().map(|e| {
+                let (minerai, qte, temps) = fab::recette_raffinage(e.id).unwrap_or(("", 0.0, 0.0));
+                json!({"z": e.z, "id": e.id, "nom": e.nom, "categorie": e.categorie, "prix": fab::prix_objet(e.id),
+                    "demi_vie": fab::demi_vie(e), "minerai": minerai, "qte": qte, "temps": temps})
+            }).collect::<Vec<_>>(),
+            "produits": fab::tous_produits().map(|p| {
+                let mut v = serde_json::to_value(p).unwrap_or(Value::Null);
+                let o = v.as_object_mut().unwrap();
+                o.insert("prix".into(), json!(fab::prix_objet(p.id)));
+                if let Some(e) = fab::effet_de(p.id) {
+                    o.insert("effet".into(), json!({ "type": e.effet, "texte": fab::texte_effet(e), "par_unite": e.par_unite, "max": e.max }));
+                }
+                v
+            }).collect::<Vec<_>>(),
+            "index_minerais": fab::MINERAIS.iter().map(|mi| (mi.id, fab::index_minerai(mi.id))).collect::<HashMap<_, _>>(),
+            "troupes": { "cout_neutre": crate::front::COUT_NEUTRE, "portee_bateau": crate::front::PORTEE_BATEAU, "portee_cote": crate::front::PORTEE_COTE },
+            "file_fabrication": jeu::FILE_FABRICATION,
+            "lignes_max": jeu::LIGNES_MAX,
+            "prix_plan": jeu::PRIX_PLAN,
         }
     })
     .to_string()
@@ -299,6 +320,14 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
             })
         })
         .collect();
+    // Offensives : les siennes, et celles qui visent son territoire.
+    let attaques: Vec<Value> = m
+        .attaques
+        .values()
+        .filter(|a| pid.is_some() && (Some(a.de) == pid || a.cible == pid))
+        .map(|a| json!({"id": a.id, "de": a.de, "cible": a.cible, "troupes": a.troupes.floor(), "vise": a.vise, "prises": a.prises,
+            "bateau": a.bateau.map(|(c, r)| json!({"case": c, "reste": r}))}))
+        .collect();
     let missiles: Vec<Value> = m
         .missiles
         .values()
@@ -351,7 +380,6 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
         Some(p) => {
             let b = ctx.bl.get(&p.id).cloned().unwrap_or_default();
             let mut v = serde_json::to_value(p).unwrap_or(Value::Null);
-            let (acr, ainf) = jeu::cout_annexion(p, b.cases + p.chantiers.iter().filter(|c| c.bat == "annexion").count() as u32);
             let o = v.as_object_mut().unwrap();
             o.insert("bilan".into(), json!(b));
             o.insert("scores".into(), jeu::scores(p, &b));
@@ -363,7 +391,6 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
                     "logistique": p.niv("logistique"),
                     "niv_max": jeu::niveau_max(p),
                     "frais": jeu::frais_marche(p),
-                    "annexion": [acr, ainf],
                     "mondialisation": p.a("eco_mondialisation"),
                 }),
             );
@@ -382,6 +409,7 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
         "armees": armees,
         "missions": missions,
         "missiles": missiles,
+        "attaques": attaques,
         "relations": relations,
         "propositions": propositions,
         "evenements": evts,
@@ -389,6 +417,10 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
         "effets": m.effets,
         "nuages": m.nuages.iter().map(|n| json!({ "id": n.id, "case": n.case })).collect::<Vec<_>>(),
         "prix": m.prix,
+        // Change avec « Nouvelle carte » (admin) : les clients rechargent.
+        "graine": m.graine,
+        "cours": m.cours,
+        "bots": m.bots_admin,
     });
     if let Some(p) = ctx.publics {
         out.as_object_mut().unwrap().insert("publics".into(), p.clone());

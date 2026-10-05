@@ -6,14 +6,15 @@
   "auth": "reseau",
   "annuaire_url": "https://vex.hopto.org/neut/annuaire",
   "noeud_par_defaut": "vex.hopto.org",
-  "admins": [],
   "proxy_de_confiance": false,
   "carte_largeur": 84,
   "carte_hauteur": 52,
-  "graine": 20260925,
+  "graine": 0,
   "vitesse": 1.0,
   "protection_heures": 2,
   "sauvegarde": "data/monde.json",
   "intervalle_sauvegarde_s": 30,
-  "bots": 6
+  "bots": 6,
+  "_aide_admin": "Cle publique de la cle d'administration (32 octets en base64). Seul le detenteur de la cle privee voit et utilise l'administration, via la page /admin. Vide = administration desactivee.",
+  "admin_cle_publique": ""
 }

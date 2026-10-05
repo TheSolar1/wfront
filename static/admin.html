@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="__THEME__">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorldFront — administration</title>
+  <link rel="icon" type="image/svg+xml" href="static/img/worldfront.svg">
+  <link rel="stylesheet" href="static/css/theme.css?v=__V__">
+  <link rel="stylesheet" href="static/css/worldfront.css?v=__V__">
+  <meta name="theme-color" content="#4fa553">
+  <meta name="robots" content="noindex">
+</head>
+<body class="wf-dev" data-admin="__ADMIN__">
+  <div class="card wf-dev-carte">
+    <div class="card-header">
+      <div class="card-icon"><i class="ico" style="--ic:url('__P__/static/img/solid/key.svg')"></i></div>
+      <div class="card-header-text"><div class="card-title">Administration</div><div class="card-subtitle">Clé d'administration requise</div></div>
+    </div>
+    <div id="deja" hidden>
+      <p>L'administration est déverrouillée pour <b>__NOM__</b>. Si la clé est retenue sur cet ordinateur, elle se rouvre toute seule à chaque visite.</p>
+      <div class="wf-form">
+        <a class="wf-btn" href="jeu">Ouvrir le jeu</a>
+        <a class="wf-btn secondaire" href="admin/sortir">Verrouiller</a>
+      </div>
+    </div>
+    <div id="choix">
+      <p>Choisissez le fichier de votre clé privée (<code>worldfront admin.pem</code>). Elle reste sur votre ordinateur : le navigateur s'en sert seulement pour signer un défi envoyé par le serveur.</p>
+      <div class="wf-avert" id="erreur" hidden><i class="ico" style="--ic:url('__P__/static/img/solid/triangle-exclamation.svg')"></i><span></span></div>
+      <div class="wf-form">
+        <label>Clé privée
+          <input type="file" id="fichier" accept=".pem,.key,.txt">
+        </label>
+        <label class="wf-ligne-form"><input type="checkbox" id="retenir" checked> Se souvenir de la clé sur cet ordinateur : l'administration s'ouvrira toute seule, sans la redemander.</label>
+      </div>
+    </div>
+    <a class="wf-lien" href="jeu">Retour au jeu</a>
+  </div>
+  <script>
+    (function () {
+      var deja = document.body.dataset.admin === '1';
+      document.getElementById('deja').hidden = !deja;
+      document.getElementById('choix').hidden = deja;
+      var boite = document.getElementById('erreur');
+      function erreur(t) { boite.hidden = false; boite.querySelector('span').textContent = t; }
+
+      // Garde la cle (non exportable) dans IndexedDB : le jeu s'en sert pour
+      // deverrouiller l'administration tout seul.
+      function retenir(cle) {
+        return new Promise(function (ok) {
+          try {
+            var r = indexedDB.open('worldfront', 1);
+            r.onupgradeneeded = function () { r.result.createObjectStore('cles'); };
+            r.onerror = function () { ok(); };
+            r.onsuccess = function () {
+              var q = r.result.transaction('cles', 'readwrite').objectStore('cles').put(cle, 'admin');
+              q.onsuccess = q.onerror = function () { ok(); };
+            };
+          } catch (e) { ok(); }
+        });
+      }
+
+      function b64(octets) { var s = ''; octets.forEach(function (o) { s += String.fromCharCode(o); }); return btoa(s); }
+
+      async function deverrouiller(texte) {
+        var corps = texte.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\s+/g, '');
+        if (!corps || texte.indexOf('BEGIN PRIVATE KEY') < 0) throw new Error("Ce fichier n'est pas une clé privée (PEM).");
+        var der = Uint8Array.from(atob(corps), function (c) { return c.charCodeAt(0); });
+        var cle;
+        try {
+          // Non exportable : une fois importée, plus personne ne peut la relire.
+          cle = await crypto.subtle.importKey('pkcs8', der, { name: 'Ed25519' }, false, ['sign']);
+        } catch (e) {
+          throw new Error("Clé illisible, ou navigateur trop ancien pour les clés Ed25519.");
+        }
+        var r = await fetch('admin/defi', { cache: 'no-store' });
+        var d = await r.json();
+        if (!r.ok) throw new Error(d.erreur || 'Défi refusé.');
+        var sig = await crypto.subtle.sign({ name: 'Ed25519' }, cle, new TextEncoder().encode(d.message));
+        r = await fetch('admin/prouver', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: d.message, sig: b64(new Uint8Array(sig)) })
+        });
+        d = await r.json();
+        if (!r.ok) throw new Error(d.erreur || 'Clé refusée.');
+        if (document.getElementById('retenir').checked) await retenir(cle);
+        location.href = 'jeu';
+      }
+
+      document.getElementById('fichier').addEventListener('change', function (e) {
+        var f = e.target.files[0];
+        if (!f) return;
+        boite.hidden = true;
+        f.text().then(deverrouiller).catch(function (x) { erreur(x.message); });
+        e.target.value = '';
+      });
+    })();
+  </script>
+</body>
+</html>

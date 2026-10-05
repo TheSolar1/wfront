@@ -7,6 +7,8 @@
 // ══════════════════════════════════════════════════════════════════
 
 use crate::defs::*;
+use crate::fabrication::{self as fab, Fabrication};
+use crate::front;
 use crate::monde::*;
 use rand::seq::SliceRandom;
 use rand::Rng;
@@ -55,6 +57,12 @@ pub struct Bilan {
     pub croissance: f64,
     pub puissance: f64,
     pub unites: BTreeMap<String, u32>,
+    /// Reserve de troupes maximale (front.rs).
+    pub troupes_max: f64,
+    /// Niveau de la meilleure fabrique (complexite des recettes).
+    pub fab_max: u8,
+    /// Niveaux de carrieres par gisement : rien / rare / radioactif / meteorite.
+    pub carrieres: [f64; 4],
 }
 
 impl Bilan {
@@ -76,9 +84,19 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         }
         if let Some(bat) = &c.bat {
             *b.niv.entry(bat.clone()).or_insert(0) += c.niv as u32;
+            // La table de fabrication est dans le complexe industriel (et
+            // dans les anciennes fabriques).
+            if bat == "usine" || bat == "fabrique" {
+                b.fab_max = b.fab_max.max(c.niv);
+            }
             if bat == "ferme" {
                 let f = if c.depot == D_FERTILE { 1.5 } else { 1.0 };
                 *fermes.entry(p).or_insert(0.0) += c.niv as f64 * f;
+            }
+            // Une carriere sur un gisement extrait le minerai de ce gisement.
+            if bat == "carriere" {
+                let k = match c.depot { D_TERRES_RARES => 1, D_URANIUM => 2, D_METEORITE => 3, _ => 0 };
+                b.carrieres[k] += c.niv as f64;
             }
         }
     }
@@ -102,7 +120,7 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
 
         // ── Electricite ──
         let (mut ep, mut ec) = (0.0, 0.0);
-        let thermique_ok = p.res[PE] > 1.0;
+        let thermique_ok = p.res[ME] > 1.0;
         let nucleaire_ok = p.ur_enrichi > 0.5;
         for (id, n) in &b.niv {
             let Some(d) = bat(id) else { continue };
@@ -121,6 +139,7 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
             }
         }
         if p.spe == "energetique" { ep *= 1.30; }
+        ep += fab::effet(&p.stock, "electricite");
         let ratio = if ec > 0.0 { (ep / ec).min(1.0) } else { 1.0 };
         b.elec_prod = ep;
         b.elec_cons = ec;
@@ -130,52 +149,47 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
 
         // ── Population ──
         let urbanisme = 1.0 + 0.06 * p.niv("urbanisme");
-        b.pop_cap = 200.0 * b.n("capitale") + 140.0 * b.n("ville") * urbanisme + 30.0 * b.n("hopital");
+        b.pop_cap = (200.0 * b.n("capitale") + 140.0 * b.n("ville") * urbanisme + 30.0 * b.n("hopital")) * (1.0 + 0.05 * p.niv("agronomie"));
         b.croissance = 1.0
             + 0.15 * b.n("hopital") * ratio
             + if p.a("eco_etat_providence") { 0.2 } else { 0.0 }
-            + if spe == "agricole" { 0.15 } else { 0.0 };
+            + if spe == "agricole" { 0.4 } else { 0.0 }
+            + fab::effet(&p.stock, "croissance");
 
         // ── Production (par minute) ──
-        let mut cr = 40.0 * b.n("capitale") + 6.0 * b.n("ville") * ratio + 3.0 * b.n("usine") * ratio + p.pop * 0.18;
+        // Le territoire rapporte aussi : 0,15 credit par minute et par case.
+        let mut cr = 40.0 * b.n("capitale") + 6.0 * b.n("ville") * ratio + 3.0 * b.n("usine") * ratio + p.pop * 0.18 + 0.15 * b.cases as f64;
         let mut mult_cr = 1.0 + 0.08 * b.n("banque") * ratio;
         mult_cr += 0.05 * p.niv("fiscalite");
         if p.a("eco_etat_providence") { mult_cr += 0.10; }
         if spe == "commerciale" { mult_cr += 0.15; }
+        mult_cr += fab::effet(&p.stock, "credits");
         cr *= mult_cr;
 
-        let mut no = 12.0 * b.n("capitale") + 18.0 * fermes.get(pid).copied().unwrap_or(0.0);
-        no *= 1.0 + 0.08 * p.niv("agronomie");
-        if spe == "agricole" { no *= 1.30; }
+        // Plus de nourriture dans le jeu.
+        let no = 0.0;
+        let _ = fermes.get(pid);
 
         let extraction = if p.a("ind_extraction") { 1.25 } else { 1.0 };
-        let me = (6.0 * b.n("capitale") + 10.0 * b.n("mine") * ratio) * extraction;
-        let pe = 8.0 * b.n("puits_petrole") * ratio * extraction;
-        let ur = 2.5 * b.n("mine_uranium") * ratio;
-        let tr = 2.5 * b.n("extracteur_tr") * ratio;
+        let car = b.carrieres;
+        // Production par minute et par niveau (relevee le 2026-10-05).
+        let me = (15.0 * b.n("capitale") + (25.0 * b.n("mine") + 10.0 * car[0] + 8.0 * b.n("puits_petrole")) * ratio) * extraction;
+        let le = (2.0 * b.n("foreuse") + 1.0 * car[3]) * ratio;
+        let ur = (8.0 * b.n("mine_uranium") + 4.0 * car[2]) * ratio;
+        let tr = (8.0 * b.n("extracteur_tr") + 4.0 * car[1]) * ratio;
         let mine = if spe == "miniere" { 1.20 } else { 1.0 };
-        b.prod = [cr, no, me * mine, pe * mine, ur * mine, tr * mine];
+        b.prod = [cr, no, me * mine, le * mine, ur * mine, tr * mine];
 
         // ── Consommation ──
         let mut conso = [0.0; NB_RES];
-        conso[NO] = p.pop * 0.05;
-        if thermique_ok { conso[PE] += 3.0 * b.n("centrale_thermique") * if spe == "energetique" { 0.75 } else { 1.0 }; }
+        if thermique_ok { conso[ME] += 3.0 * b.n("centrale_thermique") * if spe == "energetique" { 0.75 } else { 1.0 }; }
         let logistique = 1.0 - 0.04 * p.niv("logistique");
         for (t, n) in &b.unites {
             if let Some(u) = unite(t) {
                 let n = *n as f64;
                 conso[CR] += u.entretien[0] * n * logistique;
-                conso[NO] += u.entretien[1] * n * logistique;
-                conso[PE] += u.entretien[2] * n * logistique;
+                conso[CR] += u.entretien[2] * 6.0 * n * logistique;
                 b.puissance += u.puissance * n;
-            }
-        }
-        // Commandants : entretien permanent, plus une ration de campagne.
-        for cd in &p.commandants {
-            let v = cd.vitesse as f64;
-            conso[NO] += ENTRETIEN_CMDT * v;
-            if p.chantiers.iter().any(|c| c.cmdt == Some(cd.id)) {
-                conso[NO] += CAMPAGNE_CMDT * v * v;
             }
         }
         b.conso = conso;
@@ -207,8 +221,10 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         let mut v = 1.0 + 0.12 * b.n("usine") * ratio;
         v += 0.06 * p.niv("productivite");
         if spe == "industrielle" { v += 0.15; }
+        v += fab::effet(&p.stock, "construction");
         b.vitesse = v;
         b.slots = (2 + (b.n("usine") as usize) / 3).min(5);
+        b.troupes_max = front::maximum(p, b);
     }
     out
 }
@@ -277,6 +293,35 @@ pub fn prix_unite_marche(p: &Pays, u: &UniteDef, prix: &Res) -> f64 {
     (valeur * marge).ceil()
 }
 
+/// Puissance d'une charge nucleaire, en « kg d'uranium enrichi » :
+/// plutonium x1,5 (+30 % au plus avec le double d'explosifs), ogive
+/// nucleaire 90 par ogive, bombe H 2 000 par bombe.
+pub fn puissance_nucleaire(fissile: &str, quantite: f64, explosifs: f64) -> f64 {
+    match fissile {
+        "ogive" => quantite * 90.0,
+        "ogive_h" => quantite * 2000.0,
+        _ => {
+            let mini = explosifs_requis(quantite);
+            let bonus = if explosifs > 0.0 { ((explosifs / mini) - 1.0).clamp(0.0, 1.0) * 0.3 } else { 0.0 };
+            quantite * if fissile == "plutonium" { 1.5 } else { 1.0 } * (1.0 + bonus)
+        }
+    }
+}
+
+fn charge_texte(fissile: &str, q: f64) -> String {
+    match fissile {
+        "ogive" => format!("{} ogive(s) nucléaire(s)", q),
+        "ogive_h" => format!("{} bombe(s) H", q),
+        "plutonium" => format!("{} kg de plutonium", q.round()),
+        _ => format!("{} kg d'uranium", q.round()),
+    }
+}
+
+/// Explosifs minimum pour faire detoner `kg` de matiere fissile.
+pub fn explosifs_requis(kg: f64) -> f64 {
+    (5.0 + kg / 4.0).ceil()
+}
+
 /// Risque d'accident a la mise en service d'une centrale nucleaire sans
 /// la technologie « Nucleaire civil ».
 pub const RISQUE_ACCIDENT: f64 = 0.25;
@@ -330,7 +375,6 @@ fn nuages(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
 /// Anciennes sauvegardes : les technologies-bonus supprimees deviennent
 /// des niveaux d'amelioration equivalents ; les ids inconnus sont retires.
 pub fn migrer(m: &mut Monde) {
-    let mut sans_cmdt = Vec::new();
     const CORRESPONDANCES: &[(&str, &str, u8)] = &[
         ("mil_doctrine", "armement", 2), ("eco_fiscalite", "fiscalite", 2), ("eco_bourse", "fiscalite", 3),
         ("eco_agriculture", "agronomie", 3), ("eco_urbanisme", "urbanisme", 4), ("eco_logistique", "logistique", 5),
@@ -347,9 +391,6 @@ pub fn migrer(m: &mut Monde) {
             }
         }
         p.techs.retain(|t| tech(t).is_some());
-        if !p.elimine && p.commandants.is_empty() {
-            sans_cmdt.push(p.id);
-        }
         let valide = |x: &String| cout_recherche_valide(x);
         p.file_recherche.retain(valide);
         if p.recherche.as_ref().map(|r| !cout_recherche_valide(r)).unwrap_or(false) {
@@ -358,9 +399,51 @@ pub fn migrer(m: &mut Monde) {
             p.recherche = None;
         }
     }
-    // Parties commencées avant les commandants : un chacun.
-    for pid in sans_cmdt {
-        nouveau_commandant(m, pid, &mut rand::thread_rng());
+    // Annexions des anciennes parties (systeme des commandants, retire).
+    for p in m.pays.values_mut() {
+        p.chantiers.retain(|c| c.bat != "annexion");
+    }
+    // Version 2 : plus de petrole, les minerais deviennent les ressources de
+    // base. L'ancien petrole compte comme minerai commun, les minerais du
+    // stock passent dans les ressources, les gisements de petrole deviennent
+    // des filons de minerai commun.
+    if m.version < 2 {
+        m.prix[LE] = 0.0;
+        for p in m.pays.values_mut() {
+            p.res[ME] += p.res[LE];
+            p.res[LE] = 0.0;
+            for (id, i) in [("minerai_commun", ME), ("minerai_legendaire", LE), ("minerai_radioactif", UR), ("minerai_rare", TR)] {
+                p.res[i] += p.stock.remove(id).unwrap_or(0.0);
+            }
+            p.fabrications.retain(|f| !f.objet.starts_with("res:"));
+        }
+        for c in m.cases.iter_mut() {
+            if c.depot == D_PETROLE {
+                c.depot = D_METAL;
+            }
+        }
+        m.version = 2;
+    }
+    // Version 3 : plus de nourriture.
+    if m.version < 3 {
+        m.prix[NO] = 0.0;
+        for p in m.pays.values_mut() {
+            p.res[NO] = 0.0;
+        }
+        m.version = 3;
+    }
+    // Version 4 : duree des lots en qte^0,75 (avant : proportionnelle).
+    if m.version < 4 {
+        for p in m.pays.values_mut() {
+            for f in p.fabrications.iter_mut() {
+                let q = f.qte.max(1) as f64;
+                let nouveau = f.total / q * q.powf(0.75);
+                let fait = if f.total > 0.0 { 1.0 - f.reste / f.total } else { 0.0 };
+                f.total = nouveau;
+                f.reste = nouveau * (1.0 - fait);
+            }
+        }
+        m.version = 4;
     }
 }
 
@@ -377,6 +460,10 @@ const VOLATILITE: f64 = 0.012;
 const CHOC_PAR_S: f64 = 0.004;
 
 fn marche(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
+    for c in m.cours.values_mut() {
+        *c += (1.0 - *c) * (0.003 * dt).min(1.0);
+    }
+    m.cours.retain(|_, c| (*c - 1.0).abs() > 0.005);
     for i in 1..NB_RES {
         let base = RESSOURCES[i].prix_base;
         // Bruit gaussien (Box-Muller)
@@ -474,78 +561,6 @@ fn encerclements(m: &mut Monde) {
     }
 }
 
-/// Hommes (milliers d'habitants) envoyés tenir chaque province conquise.
-pub const HOMMES_ANNEXION: f64 = 3.0;
-/// Nourriture par minute et par étoile de vitesse (entretien), et ration
-/// de campagne (x vitesse²) pendant une conquête.
-pub const ENTRETIEN_CMDT: f64 = 1.0;
-pub const CAMPAGNE_CMDT: f64 = 2.0;
-const MAX_CMDTS: usize = 4;
-
-/// Durée (s) d'une annexion selon la vitesse du commandant (1 à 5).
-pub fn duree_annexion(vitesse: u8) -> f64 {
-    (50.0 / (0.55 + 0.3 * vitesse as f64)).round()
-}
-
-const PRENOMS: &[&str] = &["Armand", "Louise", "Victor", "Hélène", "Gaspard", "Irène", "Théodore", "Margot", "Anselme",
-    "Clémence", "Bastien", "Odile", "Léandre", "Suzanne", "Félix", "Adèle", "Raoul", "Colette", "Émile", "Jeanne"];
-const NOMS_CMDT: &[&str] = &["Duvall", "Marchetti", "Kerbrat", "Novak", "Lindqvist", "Ferrand", "Okafor", "Castel",
-    "Moreau", "Haldane", "Varga", "Roussel", "Ibarra", "Delorme", "Sokolov", "Brunet", "Achterberg", "Lacroix"];
-
-/// Un commandant apparaît au hasard dans le pays. Vitesse tirée au sort
-/// (les 2 et 3 étoiles sont les plus fréquents).
-pub fn nouveau_commandant(m: &mut Monde, pid: u32, rng: &mut impl Rng) {
-    let cases: Vec<usize> = (0..m.cases.len()).filter(|&i| m.cases[i].proprio == Some(pid) && est_terre(m.cases[i].terrain)).collect();
-    let Some(&case) = cases.choose(rng) else { return };
-    let vitesse = [1u8, 2, 2, 2, 3, 3, 3, 4, 4, 5][rng.gen_range(0..10)];
-    let grade = match vitesse { 5 => "Maréchal", 4 => "Général", 3 => "Colonel", 2 => "Commandant", _ => "Capitaine" };
-    let nom = format!("{} {} {}", grade, PRENOMS.choose(rng).unwrap(), NOMS_CMDT.choose(rng).unwrap());
-    let id = m.nouvel_id();
-    let etoiles = "★".repeat(vitesse as usize);
-    m.pays.get_mut(&pid).unwrap().commandants.push(Commandant { id, nom: nom.clone(), vitesse, case });
-    m.evenement(Some(pid), "militaire", format!("Nouveau commandant : {} ({}), prêt à conquérir.", nom, etoiles), Some(case));
-}
-
-/// Apparitions périodiques et pertes (commandant dont la case est prise).
-fn commandants(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
-    let ids: Vec<u32> = m.pays.keys().copied().collect();
-    for pid in ids {
-        let perdus: Vec<(String, usize)> = {
-            let cases = &m.cases;
-            let p = m.pays.get_mut(&pid).unwrap();
-            let mut out = Vec::new();
-            p.commandants.retain(|cd| {
-                let ok = cases[cd.case].proprio == Some(pid);
-                if !ok { out.push((cd.nom.clone(), cd.case)); }
-                ok
-            });
-            out
-        };
-        for (nom, case) in perdus {
-            m.evenement(Some(pid), "alerte", format!("{} a été capturé par l'ennemi.", nom), Some(case));
-        }
-        let p = &m.pays[&pid];
-        if p.elimine || p.commandants.len() >= MAX_CMDTS {
-            continue;
-        }
-        // Toutes les ~6 min de jeu, une chance sur deux (decale par pays).
-        let phase = pid as f64 * 37.0;
-        if ((m.temps + phase) / 360.0).floor() != ((m.temps - dt + phase) / 360.0).floor() && rng.gen_bool(0.5) {
-            nouveau_commandant(m, pid, rng);
-        }
-    }
-}
-
-pub fn cout_annexion(p: &Pays, cases: u32) -> (f64, f64) {
-    let mut cr = 80.0 + 14.0 * cases as f64;
-    let mut inf: f64 = 3.0;
-    let r = 1.0 - 0.05 * p.niv("rayonnement");
-    cr *= r;
-    inf *= r;
-    if p.spe == "batisseuse" { cr *= 0.75; inf *= 0.75; }
-    (cr.round(), (inf * 10.0).round() / 10.0)
-}
-
 pub fn frais_marche(p: &Pays) -> f64 {
     if p.a("eco_mondialisation") {
         0.0
@@ -592,12 +607,6 @@ fn mod_attaque(p: &Pays, u: &UniteDef) -> f64 {
 // ══════════════════════════════════════════════════════════════════
 pub fn domaine(a: &Armee) -> &'static str {
     a.unites.keys().next().and_then(|t| unite(t)).map(|u| u.domaine).unwrap_or(DOM_TERRE)
-}
-
-/// Une flotte de `pid` se trouve sur une case voisine de `i`.
-fn flotte_adjacente(m: &Monde, pid: u32, i: usize) -> bool {
-    let voisins = m.voisins(i);
-    m.armees.values().any(|a| a.proprio == pid && domaine(a) == DOM_MER && voisins.contains(&a.case))
 }
 
 fn domaine_unites(u: &BTreeMap<String, u32>) -> &'static str {
@@ -879,7 +888,7 @@ fn relocaliser_capitale(m: &mut Monde, pid: u32) {
     }
 }
 
-fn capturer(m: &mut Monde, pid: u32, i: usize) {
+pub fn capturer(m: &mut Monde, pid: u32, i: usize) {
     let ancien = m.cases[i].proprio;
     if ancien == Some(pid) {
         return;
@@ -996,8 +1005,34 @@ fn apparition(m: &Monde) -> Option<usize> {
     None
 }
 
+/// Plus de terre libre : on prend une case d'une nation jouee par
+/// l'ordinateur, la plus eloignee de toutes les capitales, avec ses voisines
+/// tenues par des bots. Un joueur peut ainsi toujours rejoindre la partie.
+fn apparition_chez_un_bot(m: &mut Monde) -> Option<usize> {
+    let capitales: Vec<usize> = m.pays.values().filter(|p| !p.elimine).map(|p| p.capitale).collect();
+    let est_bot = |m: &Monde, o: Option<u32>| o.and_then(|o| m.pays.get(&o)).map(|p| crate::bots::est_bot(p.user_id)).unwrap_or(false);
+    let i = (0..m.cases.len())
+        .filter(|&i| est_terre(m.cases[i].terrain) && est_bot(m, m.cases[i].proprio) && m.cases[i].bat.as_deref() != Some("capitale"))
+        .max_by_key(|&i| capitales.iter().map(|&c| m.distance(c, i)).min().unwrap_or(0))?;
+    for v in m.rayon(i, 1) {
+        if est_terre(m.cases[v].terrain) && est_bot(m, m.cases[v].proprio) && m.cases[v].bat.as_deref() != Some("capitale") {
+            m.cases[v].proprio = None;
+            m.cases[v].bat = None;
+            m.cases[v].niv = 0;
+            m.toucher(v);
+        }
+    }
+    let zone = m.rayon(i, 1);
+    let bots: HashSet<u32> = m.pays.values().filter(|p| crate::bots::est_bot(p.user_id)).map(|p| p.id).collect();
+    m.armees.retain(|_, a| !(zone.contains(&a.case) && bots.contains(&a.proprio)));
+    Some(i)
+}
+
 fn installer_pays(m: &mut Monde, pid: u32, regles: &Regles) -> Result<(), String> {
-    let cap = apparition(m).ok_or("Plus aucune terre libre pour fonder une nation.")?;
+    let cap = match apparition(m) {
+        Some(c) => c,
+        None => apparition_chez_un_bot(m).ok_or("Plus aucune terre libre pour fonder une nation.")?,
+    };
     let maint = maintenant();
     m.cases[cap].proprio = Some(pid);
     m.cases[cap].bat = Some("capitale".into());
@@ -1011,7 +1046,7 @@ fn installer_pays(m: &mut Monde, pid: u32, regles: &Regles) -> Result<(), String
     }
     let p = m.pays.get_mut(&pid).unwrap();
     p.capitale = cap;
-    p.res = [1500.0, 600.0, 400.0, 250.0, 0.0, 0.0];
+    p.res = [1500.0, 0.0, 650.0, 0.0, 0.0, 0.0];
     p.pop = 120.0;
     p.influence = 20.0;
     p.recherche_stock = if p.spe == "scientifique" { 160.0 } else { 80.0 };
@@ -1025,13 +1060,389 @@ fn installer_pays(m: &mut Monde, pid: u32, regles: &Regles) -> Result<(), String
     p.productions.clear();
     p.protection = maint + regles.protection_s;
     p.elimine = false;
-    p.commandants.clear();
+    p.troupes = front::TROUPES_DEPART;
+    p.stock.clear();
+    p.fabrications.clear();
     let mut garnison = BTreeMap::new();
     garnison.insert("infanterie".to_string(), 6);
     deposer_unites(m, pid, cap, &garnison);
-    // Premier commandant, pour pouvoir s'étendre dès le début.
-    nouveau_commandant(m, pid, &mut rand::thread_rng());
     Ok(())
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Fabrication : minerais, raffinerie, fabrique
+// ══════════════════════════════════════════════════════════════════
+/// Commandes en attente au maximum par atelier.
+pub const FILE_FABRICATION: usize = 40;
+/// Lignes qui tournent en meme temps dans un atelier, au plus.
+pub const LIGNES_MAX: usize = 12;
+
+/// Niveaux cumules d'un atelier : la raffinerie, ou pour la fabrication le
+/// complexe industriel (plus les anciennes fabriques).
+pub fn niveau_atelier(b: &Bilan, atelier: &str) -> f64 {
+    if atelier == "raffinerie" { b.n("raffinerie") } else { b.n("usine") + b.n("fabrique") }
+}
+
+/// Credits par point de recherche pour acheter un plan au marche.
+pub const PRIX_PLAN: f64 = 5.0;
+
+/// Prix d'un plan (technologie, ou « am:<id> » pour le niveau suivant d'une
+/// amelioration). None si deja acquis ou inconnu.
+pub fn prix_plan(p: &Pays, id: &str) -> Option<f64> {
+    let k = if p.spe == "scientifique" { 0.8 } else { 1.0 };
+    cout_recherche(p, id).map(|c| (c * PRIX_PLAN * k).round())
+}
+
+/// Les laboratoires inventent parfois tout seuls une technologie (environ
+/// 5 % de chances par minute et par niveau, deux fois plus pour une elite
+/// scientifique) : de preference les moins cheres.
+fn inventions(m: &mut Monde, bl: &HashMap<u32, Bilan>, dt: f64, rng: &mut impl Rng) {
+    let ids: Vec<u32> = m.pays.keys().copied().collect();
+    for pid in ids {
+        let p = &m.pays[&pid];
+        let Some(b) = bl.get(&pid) else { continue };
+        if p.elimine || b.n("laboratoire") <= 0.0 {
+            continue;
+        }
+        let k = (if p.spe == "scientifique" { 2.0 } else { 1.0 }) * (1.0 + fab::effet(&p.stock, "invention"));
+        let chance = (0.05 / 60.0 * b.n("laboratoire") * b.elec_ratio * k * dt).min(0.5);
+        if !rng.gen_bool(chance) {
+            continue;
+        }
+        let dispo: Vec<(&str, f64)> = TECHS.iter().filter(|t| !p.a(t.id)).map(|t| (t.id, 1.0 / t.cout.max(1.0))).collect();
+        let total: f64 = dispo.iter().map(|(_, w)| w).sum();
+        if total <= 0.0 {
+            continue;
+        }
+        let mut x = rng.gen::<f64>() * total;
+        let Some(&(id, _)) = dispo.iter().find(|(_, w)| { x -= w; x <= 0.0 }).or(dispo.last()) else { continue };
+        let id = id.to_string();
+        let nom = nom_recherche(&id).unwrap_or_default();
+        m.pays.get_mut(&pid).unwrap().techs.push(id);
+        m.evenement(Some(pid), "recherche", format!("Vos laboratoires ont mis au point : {} !", nom), None);
+    }
+}
+
+/// Planifie tout ce qu'il faut pour obtenir `n` x `id` : ce qui manque est
+/// raffine (elements) ou fabrique (produits), recursivement. `dispo` est le
+/// stock virtuel (deja reserve retire). Rend les lignes, feuilles d'abord.
+fn planifier(
+    id: &str, n: f64, dispo: &mut HashMap<String, f64>, b: &Bilan,
+    plan: &mut Vec<(&'static str, String, u32)>, minerai: &mut HashMap<&'static str, f64>, profondeur: u32,
+) -> Result<(), String> {
+    if profondeur > 30 {
+        return Err("Recette trop profonde.".into());
+    }
+    let a = dispo.entry(id.to_string()).or_insert(0.0);
+    let pris = a.min(n);
+    *a -= pris;
+    let reste = n - pris;
+    if reste <= 1e-9 {
+        return Ok(());
+    }
+    if let Some(e) = fab::element(id) {
+        let lots = reste.ceil();
+        *minerai.entry(fab::minerai_de(e.categorie)).or_insert(0.0) += lots * fab::minerai_par_element(e);
+        plan.push(("raffinerie", id.to_string(), lots as u32));
+        *dispo.get_mut(id).unwrap() += lots - reste;
+        return Ok(());
+    }
+    let d = fab::produit(id).ok_or_else(|| format!("{} ne se fabrique pas.", fab::nom_objet(id)))?;
+    if d.niveau > b.fab_max {
+        return Err(format!("{} demande un complexe industriel de niveau {} (le vôtre : {}).", d.nom, d.niveau, b.fab_max));
+    }
+    let lots = (reste / d.sortie).ceil();
+    if lots > 1000.0 {
+        return Err("Quantité trop grande.".into());
+    }
+    for (i, q) in d.entrees {
+        planifier(i, q * lots, dispo, b, plan, minerai, profondeur + 1)?;
+    }
+    plan.push(("fabrique", id.to_string(), lots as u32));
+    *dispo.entry(id.to_string()).or_insert(0.0) += lots * d.sortie - reste;
+    Ok(())
+}
+
+/// « Tout fabriquer » : lance d'un coup toute la chaine d'un produit. Chaque
+/// etape demarre des que les etapes precedentes ont livre leurs matieres.
+fn fabriquer_chaine(m: &mut Monde, pid: u32, b: &Bilan, cmd: &Value) -> Result<String, String> {
+    let objet = s(cmd, "objet").to_string();
+    let qte = u(cmd, "qte").unwrap_or(1).clamp(1, 1000) as f64;
+    let d = fab::produit(&objet).ok_or("Recette inconnue.")?;
+    let p = &m.pays[&pid];
+    let mut dispo: HashMap<String, f64> = p.stock.clone().into_iter().collect();
+    let mut plan = Vec::new();
+    let mut minerai = HashMap::new();
+    // On vise qte produits EN PLUS de ceux deja en stock.
+    dispo.insert(objet.clone(), 0.0);
+    planifier(&objet, qte * d.sortie, &mut dispo, b, &mut plan, &mut minerai, 0)?;
+    let manque: Vec<String> = minerai
+        .iter()
+        .filter_map(|(mi, n)| {
+            let i = fab::index_minerai(mi)?;
+            (p.res[i] + 1e-9 < *n).then(|| format!("{} {}", (n - p.res[i]).ceil(), fab::nom_objet(mi).to_lowercase()))
+        })
+        .collect();
+    if !manque.is_empty() {
+        return Err(format!("Pas assez de minerai pour toute la chaîne : il manque {}.", manque.join(", ")));
+    }
+    if plan.iter().any(|(a, _, _)| *a == "raffinerie") && niveau_atelier(b, "raffinerie") <= 0.0 {
+        return Err("La chaîne demande de raffiner des éléments : construisez une raffinerie.".into());
+    }
+    if niveau_atelier(b, "fabrique") <= 0.0 {
+        return Err("Construisez d'abord un complexe industriel.".into());
+    }
+    let deja = p.fabrications.len();
+    if deja + plan.len() > 2 * FILE_FABRICATION {
+        return Err(format!("Trop d'étapes en attente ({} + {}).", deja, plan.len()));
+    }
+    let etapes = plan.len();
+    for (atelier, id, lots) in plan {
+        let unite = if atelier == "raffinerie" {
+            fab::recette_raffinage(&id).map(|r| r.2).unwrap_or(2.0)
+        } else {
+            fab::produit(&id).map(|d| d.temps).unwrap_or(10.0)
+        };
+        let fid = m.nouvel_id();
+        let t = duree_lot(unite, lots);
+        m.pays.get_mut(&pid).unwrap().fabrications.push(Fabrication {
+            id: fid, atelier: atelier.into(), objet: id, qte: lots, reste: t, total: t, auto: false, cible: 0.0, paye: false,
+        });
+    }
+    Ok(format!("Chaîne lancée : {} × {} en {} étapes.", qte * d.sortie, d.nom, etapes))
+}
+
+/// Matieres consommees par une commande (rendues si on l'annule).
+fn entrees_fabrication(atelier: &str, objet: &str, qte: u32) -> Vec<(String, f64)> {
+    let q = qte as f64;
+    if atelier == "raffinerie" {
+        fab::recette_raffinage(objet).map(|(m, n, _)| vec![(m.to_string(), n * q)]).unwrap_or_default()
+    } else {
+        fab::produit(objet).map(|p| p.entrees.iter().map(|(i, n)| (i.to_string(), n * q)).collect()).unwrap_or_default()
+    }
+}
+
+fn commander_fabrication(m: &mut Monde, pid: u32, b: &Bilan, action: &str, cmd: &Value) -> Result<String, String> {
+    let objet = s(cmd, "objet").to_string();
+    let qte = u(cmd, "qte").unwrap_or(1).clamp(1, 1000) as u32;
+    let auto = cmd.get("auto").and_then(|v| v.as_bool()).unwrap_or(false);
+    let cible = cmd.get("cible").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 1e7);
+    let (atelier, temps, nom) = if action == "raffiner" {
+        let (_, _, t) = fab::recette_raffinage(&objet).ok_or("La raffinerie ne sait pas produire ça.")?;
+        ("raffinerie", duree_lot(t, qte), fab::nom_objet(&objet))
+    } else {
+        let d = fab::produit(&objet).ok_or("Recette inconnue.")?;
+        if b.fab_max < d.niveau {
+            return Err(format!("{} demande un complexe industriel de niveau {} (le vôtre : {}).", d.nom, d.niveau, b.fab_max));
+        }
+        ("fabrique", duree_lot(d.temps, qte), d.nom.to_string())
+    };
+    if niveau_atelier(b, atelier) <= 0.0 {
+        return Err(if atelier == "raffinerie" { "Construisez d'abord une raffinerie." } else { "Construisez d'abord un complexe industriel." }.into());
+    }
+    let p = m.pays.get(&pid).unwrap();
+    if p.fabrications.iter().filter(|f| f.atelier == atelier).count() >= FILE_FABRICATION {
+        return Err(format!("File pleine ({} commandes).", FILE_FABRICATION));
+    }
+    let entrees = entrees_fabrication(atelier, &objet, qte);
+    let manquants: Vec<String> = entrees
+        .iter()
+        .filter(|(i, n)| fab::possede(p, i) + 1e-9 < *n)
+        .map(|(i, n)| format!("{} {}", (n - fab::possede(p, i)).ceil(), fab::nom_objet(i)))
+        .collect();
+    // Il manque des matieres pour une fabrication simple : on lance toute la
+    // chaine (raffinage des elements, etapes intermediaires) avec le minerai.
+    if !manquants.is_empty() && !auto && atelier == "fabrique" {
+        return fabriquer_chaine(m, pid, b, cmd);
+    }
+    // Une ligne automatique peut attendre ses matieres ; une commande simple non.
+    if !manquants.is_empty() && !auto {
+        return Err(format!("Il manque : {}.", manquants.join(", ")));
+    }
+    let id = m.nouvel_id();
+    let p = m.pays.get_mut(&pid).unwrap();
+    let paye = manquants.is_empty();
+    if paye {
+        for (i, n) in &entrees {
+            fab::retirer(p, i, *n);
+        }
+    }
+    p.fabrications.push(Fabrication { id, atelier: atelier.into(), objet, qte, reste: temps, total: temps, auto, cible, paye });
+    Ok(if auto {
+        format!("Ligne automatique : {} × {} en continu{}.", qte, nom, if cible > 0.0 { format!(" (jusqu'à {} en stock)", cible) } else { String::new() })
+    } else {
+        format!("{} × {} commandés.", qte, nom)
+    })
+}
+
+/// Une seconde de vie economique « materielle » d'un pays : extraction des
+/// minerais, desintegration des legendaires, avancee des deux ateliers.
+/// Rend les messages a afficher dans le journal.
+/// Duree d'un lot de `qte` (secondes a la vitesse d'un niveau d'atelier) :
+/// les grandes series vont plus vite a l'unite (qte^0,75 au lieu de qte).
+pub fn duree_lot(unite: f64, qte: u32) -> f64 {
+    unite * (qte.max(1) as f64).powf(0.75)
+}
+
+/// Lignes qui tournent en parallele dans un atelier : une par niveau.
+pub fn lignes_atelier(b: &Bilan, atelier: &str) -> usize {
+    (niveau_atelier(b, atelier).floor() as usize).min(LIGNES_MAX)
+}
+
+/// Production des ateliers : chaque ligne active avance a la vitesse d'un
+/// niveau d'atelier ; une ligne automatique terminee repart d'elle-meme des
+/// que ses matieres sont la. Rend les messages a afficher dans le journal.
+fn fabriquer(p: &mut Pays, b: &Bilan, dt: f64) -> Vec<String> {
+    let r = b.elec_ratio;
+    fab::desintegrer(&mut p.stock, dt);
+    let vitesse = r * (1.0 + 0.07 * p.niv("robotique"));
+    let mut msgs = Vec::new();
+    for atelier in ["raffinerie", "fabrique"] {
+        let lignes = lignes_atelier(b, atelier);
+        // Toute la puissance de l'atelier (un niveau = une unite de vitesse)
+        // est partagee entre les lignes actives : une commande seule profite
+        // de tous les niveaux.
+        let mut choisies = Vec::new();
+        for k in 0..p.fabrications.len() {
+            if p.fabrications[k].atelier != atelier || choisies.len() >= lignes {
+                continue;
+            }
+            // Ligne automatique en attente : preleve les matieres du lot suivant.
+            if !p.fabrications[k].paye {
+                let f = &p.fabrications[k];
+                let plein = f.cible > 0.0 && fab::possede(p, &f.objet) >= f.cible;
+                let entrees = entrees_fabrication(&f.atelier, &f.objet, f.qte);
+                if plein || !entrees.iter().all(|(i, n)| fab::possede(p, i) + 1e-9 >= *n) {
+                    continue;
+                }
+                for (i, n) in &entrees {
+                    fab::retirer(p, i, *n);
+                }
+                p.fabrications[k].paye = true;
+            }
+            choisies.push(k);
+        }
+        if !choisies.is_empty() {
+            let part = vitesse * niveau_atelier(b, atelier) / choisies.len() as f64;
+            for &k in &choisies {
+                p.fabrications[k].reste -= dt * part;
+            }
+        }
+        let mut k = 0;
+        while k < p.fabrications.len() {
+            let f = &p.fabrications[k];
+            if f.atelier != atelier || !f.paye || f.reste > 0.0 {
+                k += 1;
+                continue;
+            }
+            let (objet, q, auto) = (f.objet.clone(), f.qte as f64, f.auto);
+            let sortie = if atelier == "raffinerie" { q } else { fab::produit(&objet).map(|d| d.sortie).unwrap_or(1.0) * q };
+            fab::ajouter(&mut p.stock, &objet, sortie);
+            if auto {
+                let f = &mut p.fabrications[k];
+                f.reste = f.total;
+                f.paye = false;
+                k += 1;
+            } else {
+                p.fabrications.remove(k);
+                let quoi = if atelier == "raffinerie" { "Raffinage" } else { "Fabrication" };
+                msgs.push(format!("{} terminé : {} × {}.", quoi, sortie, fab::nom_objet(&objet)));
+            }
+        }
+    }
+    msgs
+}
+
+/// Bombe a trou noir ou a antimatiere, tiree depuis un silo (portee
+/// illimitee, impossible a intercepter).
+fn arme_speciale(m: &mut Monde, pid: u32, cmd: &Value, regles: &Regles) -> Result<String, String> {
+    let objet = s(cmd, "objet").to_string();
+    if !matches!(objet.as_str(), "bombe_trou_noir" | "bombe_antimatiere") {
+        return Err("Arme inconnue.".into());
+    }
+    let cible = u(cmd, "cible").ok_or("Cible manquante.")? as usize;
+    if cible >= m.cases.len() {
+        return Err("Cible invalide.".into());
+    }
+    if !m.cases[cible].proprio.map(|o| hostile(m, pid, o)).unwrap_or(false) {
+        return Err("La cible doit appartenir à une nation en guerre avec vous.".into());
+    }
+    if fab::qte(&m.pays[&pid].stock, &objet) < 1.0 {
+        return Err(format!("Aucune {} en stock : fabriquez-en une.", fab::nom_objet(&objet).to_lowercase()));
+    }
+    let depart = (0..m.cases.len())
+        .filter(|&i| m.cases[i].proprio == Some(pid) && m.cases[i].bat.as_deref() == Some("silo"))
+        .min_by_key(|&i| m.distance(i, cible))
+        .ok_or("Il faut un silo à missiles pour tirer.")?;
+    fab::ajouter(&mut m.pays.get_mut(&pid).unwrap().stock, &objet, -1.0);
+    let duree = (m.distance(depart, cible) as f64 / 12.0 * 60.0).max(10.0);
+    let mid = m.nouvel_id();
+    m.missiles.insert(mid, MissileVol {
+        id: mid, proprio: pid, genre: objet.clone(), depart, cible, progres: 0.0, duree,
+        matiere: 0.0, explosifs: 0.0, fissile: String::new(),
+    });
+    let nom = m.nom_pays(pid);
+    let quoi = fab::nom_objet(&objet);
+    m.evenement(None, "nucleaire", format!("ALERTE MONDIALE : {} a lancé une {} !", nom, quoi.to_lowercase()), Some(cible));
+    Ok(format!("{} lancée, impact dans {} s.", quoi, (duree / regles.vitesse).round()))
+}
+
+/// Pertes de population et de troupes d'une frappe : proportionnelles a la
+/// densite de chaque pays touche et au nombre de ses cases dans la zone.
+/// `zone` : (case, letalite 0..1). Rend les morts (milliers d'habitants).
+fn pertes_frappe(m: &mut Monde, zone: &[(usize, f64)]) -> f64 {
+    let mut touches: HashMap<u32, f64> = HashMap::new();
+    for &(v, letal) in zone {
+        if let Some(o) = m.cases[v].proprio {
+            *touches.entry(o).or_insert(0.0) += letal;
+        }
+    }
+    let mut morts = 0.0;
+    for (o, poids) in touches {
+        let cases = m.cases.iter().filter(|c| c.proprio == Some(o)).count().max(1) as f64;
+        if let Some(p) = m.pays.get_mut(&o) {
+            let tues = (p.pop / cases * poids).min(p.pop - 10.0).max(0.0);
+            p.pop -= tues;
+            p.troupes = (p.troupes - p.troupes / cases * poids).max(0.0);
+            morts += tues;
+        }
+    }
+    morts
+}
+
+/// Impact d'une bombe a trou noir ou a antimatiere.
+fn frappe_speciale(m: &mut Monde, pid: u32, genre: &str, cible: usize) {
+    let trou_noir = genre == "bombe_trou_noir";
+    let zone: Vec<(usize, f64)> = m.rayon(cible, 3).into_iter().map(|v| (v, if trou_noir { 0.98 } else { 0.9 })).collect();
+    let defenseur = m.cases[cible].proprio;
+    let morts = pertes_frappe(m, &zone);
+    for &(v, _) in &zone {
+        m.armees.retain(|_, a| a.case != v);
+        let c = &mut m.cases[v];
+        if c.bat.as_deref() == Some("capitale") && !trou_noir {
+            c.niv = 1;
+        } else {
+            c.bat = None;
+            c.niv = 0;
+        }
+        if trou_noir {
+            // Zone morte : plus personne, plus rien ne s'y construit.
+            c.proprio = None;
+            c.irradiee = m.temps + 1.0e9;
+        }
+        m.toucher(v);
+    }
+    if trou_noir {
+        let touches: Vec<u32> = m.pays.values().filter(|p| !p.elimine && zone.iter().any(|&(v, _)| v == p.capitale)).map(|p| p.id).collect();
+        for o in touches {
+            relocaliser_capitale(m, o);
+        }
+    }
+    m.effets.push(Effet { genre: "nucleaire".into(), case: cible });
+    let nom_att = m.nom_pays(pid);
+    let cible_nom = defenseur.map(|d| m.nom_pays(d)).unwrap_or_else(|| "une zone neutre".into());
+    let quoi = if trou_noir { "UN TROU NOIR A AVALÉ" } else { "ANNIHILATION : l'antimatière a frappé" };
+    m.evenement(None, "nucleaire", format!("{} {} (tiré par {}) : {} milliers de morts.", quoi, cible_nom, nom_att, morts.round()), Some(cible));
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1050,6 +1461,7 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
     let mut chantiers_finis: Vec<(u32, Chantier)> = Vec::new();
     let mut techs_finies: Vec<(u32, String)> = Vec::new();
     let mut desertion: Vec<u32> = Vec::new();
+    let mut evts_fab: Vec<(u32, String)> = Vec::new();
 
     for pid in &ids {
         let Some(b) = bl.get(pid) else { continue };
@@ -1057,10 +1469,16 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
         if p.elimine {
             continue;
         }
+        // Le stockage limite seulement ce que la PRODUCTION ajoute : ce qui
+        // est deja au-dessus (dons de l'admin, achats, butin) n'est pas perdu.
         for i in 0..NB_RES {
-            p.res[i] += (b.prod[i] - b.conso[i]) * dm;
+            let delta = (b.prod[i] - b.conso[i]) * dm;
             let plafond = if i == CR { b.stock * 20.0 } else { b.stock };
-            p.res[i] = p.res[i].max(0.0).min(plafond);
+            p.res[i] = if delta > 0.0 {
+                if p.res[i] >= plafond { p.res[i] } else { (p.res[i] + delta).min(plafond) }
+            } else {
+                (p.res[i] + delta).max(0.0)
+            };
         }
         if p.res[CR] <= 0.0 && b.prod[CR] < b.conso[CR] {
             desertion.push(*pid);
@@ -1115,20 +1533,15 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
             None => p.recherche_stock += pts,
         }
 
-        // Chantiers : les `slots` premiers batiments avancent en parallele ;
-        // chaque annexion avance avec son commandant (a l'arret sans nourriture).
+        // Chantiers : plus de file d'attente, tous avancent en meme temps.
         let vit = b.vitesse * dt;
-        let affame = p.res[NO] <= 0.0 && b.prod[NO] < b.conso[NO];
-        let mut k = 0;
         for c in p.chantiers.iter_mut() {
-            if c.bat == "annexion" {
-                if !affame {
-                    c.reste -= dt;
-                }
-            } else if k < b.slots {
-                c.reste -= vit;
-                k += 1;
-            }
+            c.reste -= vit;
+        }
+
+        // Minerais, raffinerie, fabrique, desintegration des legendaires.
+        for t in fabriquer(p, b, dt) {
+            evts_fab.push((*pid, t));
         }
         let (finis, encours): (Vec<Chantier>, Vec<Chantier>) = p.chantiers.drain(..).partition(|c| c.reste <= 0.0);
         p.chantiers = encours;
@@ -1152,6 +1565,9 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
         }
     }
 
+    for (pid, t) in evts_fab {
+        m.evenement(Some(pid), "construction", t, None);
+    }
     for (pid, t) in techs_finies {
         let nom = match t.strip_prefix("am:") {
             Some(a) => format!("{} niveau {}", nom_recherche(&t).unwrap_or_default(), m.pays[&pid].niv(a)),
@@ -1162,23 +1578,6 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
 
     for (pid, c) in chantiers_finis {
         let i = c.case;
-        if c.bat == "annexion" {
-            // Une province cotiere prise depuis la mer reste valable meme si
-            // la flotte est repartie entre-temps.
-            let adj = m.voisins(i).iter().any(|&v| m.cases[v].proprio == Some(pid))
-                || m.voisins(i).iter().any(|&v| !est_terre(m.cases[v].terrain));
-            if m.cases[i].proprio.is_none() && adj {
-                m.cases[i].proprio = Some(pid);
-                m.toucher(i);
-                if let Some(cd) = m.pays.get_mut(&pid).and_then(|p| p.commandants.iter_mut().find(|cd| Some(cd.id) == c.cmdt)) {
-                    cd.case = i;
-                }
-                m.evenement(Some(pid), "construction", "Annexion terminée : nouvelle province.".into(), Some(i));
-            } else {
-                m.evenement(Some(pid), "alerte", "Annexion annulée : la province n'est plus disponible.".into(), Some(i));
-            }
-            continue;
-        }
         if m.cases[i].proprio != Some(pid) {
             continue;
         }
@@ -1256,7 +1655,10 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
     // ── Missiles ──
     missiles(m, dt, &mut rng);
     nuages(m, dt, &mut rng);
-    commandants(m, dt, &mut rng);
+    inventions(m, &bl, dt, &mut rng);
+    // ── Troupes et offensives (facon OpenFront) ──
+    front::reserves(m, &bl, dt);
+    front::avancer(m, dt);
     if (m.temps / 5.0).floor() != ((m.temps - dt) / 5.0).floor() {
         encerclements(m);
     }
@@ -1281,8 +1683,29 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
     bilans(m)
 }
 
+/// Retire une nation et rend toutes ses terres neutres (administration).
+fn supprimer_pays(m: &mut Monde, cible: u32) {
+    for c in m.cases.iter_mut().filter(|c| c.proprio == Some(cible)) {
+        c.proprio = None;
+        if c.bat.is_some() {
+            c.bat = None;
+            c.niv = 0;
+        }
+    }
+    for i in 0..m.cases.len() {
+        if m.cases[i].proprio.is_none() {
+            m.rev += 1;
+            m.cases[i].rev = m.rev;
+        }
+    }
+    eliminer(m, cible);
+    m.attaques.retain(|_, a| a.cible != Some(cible));
+    m.pays.remove(&cible);
+}
+
 fn eliminer(m: &mut Monde, pid: u32) {
     m.armees.retain(|_, a| a.proprio != pid);
+    m.attaques.retain(|_, a| a.de != pid);
     m.missions.retain(|_, a| a.proprio != pid);
     quitter_bloc(m, pid);
     let nom = m.nom_pays(pid);
@@ -1669,6 +2092,10 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
         let cible = mv.cible;
         let nucleaire = mv.genre == "missile_nucleaire";
         let defenseur = m.cases[cible].proprio;
+        if mv.genre == "bombe_trou_noir" || mv.genre == "bombe_antimatiere" {
+            frappe_speciale(m, pid, &mv.genre, cible);
+            continue;
+        }
 
         // Interception par les batteries du defenseur et de son bloc
         let mut niveaux = 0.0;
@@ -1693,6 +2120,8 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
         } else {
             (0.08 * niveaux * if bouclier { 1.5 } else { 1.0 }).min(0.75)
         };
+        // Radars et boucliers fabriques par le defenseur.
+        let chance = (chance + defenseur.and_then(|d| m.pays.get(&d)).map(|p| fab::effet(&p.stock, "interception")).unwrap_or(0.0)).min(0.9);
         let nom_att = m.nom_pays(pid);
         let nom_u = unite(&mv.genre).map(|u| u.nom).unwrap_or("Missile");
         if rng.gen::<f64>() < chance {
@@ -1709,33 +2138,59 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
 
         let Some(u) = unite(&mv.genre) else { continue };
         if nucleaire {
-            // Frappe renforcee (demande joueur) : rayon 2 au lieu de 1.
-            // Coeur (distance <= 1) : degats pleins, batiments rases (la
-            // capitale retombe au niveau 1), irradiation 30 min. Couronne
-            // (distance 2) : moitie des degats, batiments -2 niveaux, 15 min.
-            let zone = m.rayon(cible, 2);
-            let mut touches: HashSet<u32> = HashSet::new();
-            for &v in &zone {
-                let coeur = m.distance(cible, v) <= 1;
-                let facteur = if coeur { 1.0 } else { 0.5 };
+            // Puissance proportionnelle a la matiere fissile embarquee (le
+            // plutonium rend 1,5 fois plus que l'uranium enrichi), avec
+            // jusqu'a +30 % si on double les explosifs de mise a feu.
+            let kg = if mv.matiere > 0.0 { mv.matiere } else { 20.0 };
+            let rend = puissance_nucleaire(&mv.fissile, kg, mv.explosifs);
+            let k = rend / 20.0;
+            // Pas de plafond : une charge assez grosse couvre toute la carte.
+            let rayon = ((1.0 + k.sqrt()).floor() as i64).clamp(1, m.largeur.max(m.hauteur) as i64);
+            let coeur = ((rayon + 1) / 2).max(1);
+            let zone: Vec<(usize, f64)> = m
+                .rayon(cible, rayon)
+                .into_iter()
+                .map(|v| (v, if m.distance(cible, v) <= coeur { 0.9 } else { 0.35 } * k.sqrt().min(1.5)))
+                .collect();
+            let morts = pertes_frappe(m, &zone);
+            for &(v, _) in &zone {
+                let au_coeur = m.distance(cible, v) <= coeur;
+                let facteur = if au_coeur { 1.0 } else { 0.45 };
                 let victimes: Vec<u32> = m.armees.values().filter(|a| a.case == v && a.proprio != pid).map(|a| a.id).collect();
-                let (_, pu) = blesser_armees(m, &victimes, u.att_sol * facteur);
+                let (_, pu) = blesser_armees(m, &victimes, u.att_sol * facteur * k);
                 if let Some(p) = m.pays.get_mut(&pid) {
                     p.stats.unites_detruites += pu;
                 }
                 if m.cases[v].proprio.is_some() {
-                    reduire_batiment(m, v, if coeur { 10 } else { 2 });
+                    reduire_batiment(m, v, if au_coeur { 10 } else { (1.0 + rend / 15.0).min(10.0).round() as u8 });
                 }
-                m.cases[v].irradiee = m.temps + if coeur { 1800.0 } else { 900.0 };
+                // Le coeur de l'explosion est rase : la terre redevient neutre.
+                if au_coeur {
+                    if let Some(o) = m.cases[v].proprio {
+                        if m.cases[v].bat.as_deref() == Some("capitale") {
+                            m.cases[v].bat = None;
+                            m.cases[v].niv = 0;
+                        }
+                        m.cases[v].proprio = None;
+                        if let Some(p) = m.pays.get_mut(&o) {
+                            p.chantiers.retain(|c| c.case != v);
+                            p.productions.retain(|c| c.case != v);
+                        }
+                    }
+                    m.armees.retain(|_, a| a.case != v);
+                }
+                m.cases[v].irradiee = m.temps + if au_coeur { 1800.0 } else { 900.0 } * k.sqrt().clamp(0.5, 4.0);
                 m.toucher(v);
-                if let Some(o) = m.cases[v].proprio {
-                    touches.insert(o);
-                }
             }
-            for o in &touches {
-                if let Some(p) = m.pays.get_mut(o) {
-                    p.pop *= 0.5;
-                }
+            // Les capitales rasees se replient ailleurs.
+            let sans_capitale: Vec<u32> = m
+                .pays
+                .values()
+                .filter(|p| !p.elimine && m.cases[p.capitale].proprio != Some(p.id))
+                .map(|p| p.id)
+                .collect();
+            for o in sans_capitale {
+                relocaliser_capitale(m, o);
             }
             if let Some(p) = m.pays.get_mut(&pid) {
                 p.influence = (p.influence - 200.0).max(0.0);
@@ -1743,7 +2198,12 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
             }
             m.effets.push(Effet { genre: "nucleaire".into(), case: cible });
             let cible_nom = defenseur.map(|d| m.nom_pays(d)).unwrap_or_else(|| "une zone neutre".into());
-            m.evenement(None, "nucleaire", format!("FRAPPE NUCLÉAIRE : {} a frappé {}.", nom_att, cible_nom), Some(cible));
+            m.evenement(
+                None,
+                "nucleaire",
+                format!("FRAPPE NUCLÉAIRE : {} a frappé {} ({}, rayon {} cases) : {} milliers de morts.", nom_att, cible_nom, charge_texte(&mv.fissile, kg), rayon, morts.round()),
+                Some(cible),
+            );
         } else {
             let (rayon, niv, dmg_voisins) = if mv.genre == "missile_balistique" { (1, 2, 0.3) } else { (0, 1, 0.0) };
             for v in m.rayon(cible, rayon) {
@@ -1820,26 +2280,104 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             m.evenement(None, "annonce", t, None);
             return Ok("Annonce publiée.".into());
         }
+        "admin_donner" if j.admin => {
+            let cible = u(cmd, "pays").ok_or("Pays manquant.")? as u32;
+            let p = m.pays.get_mut(&cible).ok_or("Pays introuvable.")?;
+            if let Some(r) = cmd.get("res").and_then(|v| v.as_array()) {
+                for (i, v) in r.iter().enumerate().take(NB_RES) {
+                    p.res[i] = (p.res[i] + v.as_f64().unwrap_or(0.0)).max(0.0);
+                }
+            }
+            if let Some(t) = cmd.get("troupes").and_then(|v| v.as_f64()) {
+                p.troupes = (p.troupes + t).max(0.0);
+            }
+            if let Some(n) = cmd.get("elements").and_then(|v| v.as_f64()) {
+                for e in fab::ELEMENTS.iter() {
+                    fab::ajouter(&mut p.stock, e.id, n);
+                }
+            }
+            // Un element ou un produit precis.
+            let objet = s(cmd, "objet");
+            if !objet.is_empty() {
+                if fab::element(objet).is_none() && fab::produit(objet).is_none() {
+                    return Err("Objet inconnu.".into());
+                }
+                let n = cmd.get("qte").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                fab::ajouter(&mut p.stock, objet, n);
+            }
+            if cmd.get("techs").and_then(|v| v.as_bool()).unwrap_or(false) {
+                p.techs = TECHS.iter().map(|t| t.id.to_string()).collect();
+                p.amelio = AMELIORATIONS.iter().map(|a| (a.id.to_string(), a.max)).collect();
+            }
+            // Unites livrees a la capitale (missiles et avions compris).
+            let unite_id = s(cmd, "unite");
+            if !unite_id.is_empty() {
+                unite(unite_id).ok_or("Unité inconnue.")?;
+                let n = u(cmd, "unites_qte").unwrap_or(1).clamp(1, 1000) as u32;
+                let cap = p.capitale;
+                let mut lot = BTreeMap::new();
+                lot.insert(unite_id.to_string(), n);
+                deposer_unites(m, cible, cap, &lot);
+            }
+            let p = m.pays.get(&cible).unwrap();
+            let nom = p.nom.clone();
+            return Ok(format!("Ressources envoyées à {}.", nom));
+        }
+        "admin_protection" if j.admin => {
+            let cible = u(cmd, "pays").ok_or("Pays manquant.")? as u32;
+            let minutes = cmd.get("minutes").and_then(|v| v.as_f64()).unwrap_or(0.0).clamp(0.0, 10_000.0);
+            let p = m.pays.get_mut(&cible).ok_or("Pays introuvable.")?;
+            p.protection = if minutes > 0.0 { maint + (minutes * 60.0) as i64 } else { 0 };
+            return Ok(if minutes > 0.0 { format!("{} protégé {} min.", p.nom, minutes) } else { format!("Protection de {} levée.", p.nom) });
+        }
+        "admin_paix_mondiale" if j.admin => {
+            let mut n = 0;
+            for r in m.relations.values_mut() {
+                if r.etat == Etat::Guerre {
+                    r.etat = Etat::Paix;
+                    r.depuis = maint;
+                    n += 1;
+                }
+            }
+            m.attaques.retain(|_, a| a.cible.is_none());
+            for a in m.armees.values_mut() {
+                a.assaut = None;
+                a.bombarde = None;
+            }
+            m.evenement(None, "annonce", "L'administration impose la paix mondiale : toutes les guerres s'arrêtent.".into(), None);
+            return Ok(format!("{} guerre(s) arrêtée(s).", n));
+        }
+        "admin_bots" if j.admin => {
+            let nb = u(cmd, "nb").unwrap_or(0).min(16) as usize;
+            m.bots_admin = Some(nb);
+            // Les bots en trop disparaissent et leurs terres redeviennent neutres.
+            let trop: Vec<u32> = m
+                .pays
+                .values()
+                .filter(|p| crate::bots::est_bot(p.user_id) && crate::bots::rang_bot(p.user_id) >= nb)
+                .map(|p| p.id)
+                .collect();
+            for pid in &trop {
+                supprimer_pays(m, *pid);
+            }
+            // Et ceux qui manquent sont crees tout de suite.
+            crate::bots::creer(m, nb, regles);
+            return Ok(format!("{} nation(s) jouée(s) par l'ordinateur ({} retirée(s)).", nb, trop.len()));
+        }
+        "admin_nouvelle_carte" if j.admin => {
+            let graine = rand::thread_rng().gen_range(1..u32::MAX as u64);
+            let (l, h, bots) = (m.largeur, m.hauteur, m.bots_admin);
+            *m = Monde::generer(l, h, graine);
+            m.bots_admin = bots;
+            m.evenement(None, "annonce", "Nouveau monde : l'administration a généré une nouvelle carte. Fondez votre nation !".into(), None);
+            return Ok(format!("Nouvelle carte générée (graine {}).", graine));
+        }
         "admin_supprimer_pays" if j.admin => {
             let cible = u(cmd, "pays").ok_or("Pays manquant.")? as u32;
             if !m.pays.contains_key(&cible) {
                 return Err("Pays introuvable.".into());
             }
-            for c in m.cases.iter_mut().filter(|c| c.proprio == Some(cible)) {
-                c.proprio = None;
-                if c.bat.is_some() {
-                    c.bat = None;
-                    c.niv = 0;
-                }
-            }
-            for i in 0..m.cases.len() {
-                if m.cases[i].proprio.is_none() {
-                    m.rev += 1;
-                    m.cases[i].rev = m.rev;
-                }
-            }
-            eliminer(m, cible);
-            m.pays.remove(&cible);
+            supprimer_pays(m, cible);
             return Ok("Pays supprimé.".into());
         }
         _ => {}
@@ -1864,8 +2402,13 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
         p.amelio = AMELIORATIONS.iter().map(|a| (a.id.to_string(), a.max)).collect();
         p.recherche = None;
         p.file_recherche.clear();
-        p.res = [60_000.0, 8_000.0, 8_000.0, 8_000.0, 2_000.0, 2_000.0];
+        p.res = [60_000.0, 0.0, 8_000.0, 8_000.0, 2_000.0, 2_000.0];
         p.influence = 800.0;
+        p.troupes = p.troupes.max(5_000.0);
+        for e in fab::ELEMENTS.iter() {
+            fab::ajouter(&mut p.stock, e.id, 200.0);
+        }
+
         return Ok("[dev] Toutes les technologies et des ressources.".into());
     }
     if m.pays[&pid].elimine && action != "chat" {
@@ -1905,8 +2448,8 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             if p.chantiers.iter().any(|x| x.case == i) {
                 return Err("Un chantier est déjà en cours ici.".into());
             }
-            if p.chantiers.len() >= 12 {
-                return Err("File de construction pleine (12).".into());
+            if p.chantiers.len() >= 500 {
+                return Err("Trop de chantiers en cours (500).".into());
             }
             let cout = cout_batiment(p, d, 1);
             if !peut_payer(p, &cout) {
@@ -1916,7 +2459,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             let cid = m.nouvel_id();
             let p = m.pays.get_mut(&pid).unwrap();
             payer(p, &cout);
-            p.chantiers.push(Chantier { id: cid, case: i, bat: id.into(), niv: 1, reste: t, total: t, cmdt: None });
+            p.chantiers.push(Chantier { id: cid, case: i, bat: id.into(), niv: 1, reste: t, total: t, });
             Ok(format!("Chantier lancé : {}.", d.nom))
         }
         "ameliorer" => {
@@ -1937,8 +2480,8 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             if p.chantiers.iter().any(|x| x.case == i) {
                 return Err("Un chantier est déjà en cours ici.".into());
             }
-            if p.chantiers.len() >= 12 {
-                return Err("File de construction pleine (12).".into());
+            if p.chantiers.len() >= 500 {
+                return Err("Trop de chantiers en cours (500).".into());
             }
             let niv = c.niv + 1;
             let cout = cout_batiment(p, d, niv);
@@ -1949,7 +2492,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             let cid = m.nouvel_id();
             let p = m.pays.get_mut(&pid).unwrap();
             payer(p, &cout);
-            p.chantiers.push(Chantier { id: cid, case: i, bat: id.clone(), niv, reste: t, total: t, cmdt: None });
+            p.chantiers.push(Chantier { id: cid, case: i, bat: id.clone(), niv, reste: t, total: t });
             Ok(format!("Amélioration lancée : {} niveau {}.", d.nom, niv))
         }
         "demolir" => {
@@ -1977,74 +2520,142 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             let p = m.pays.get(&pid).unwrap();
             let pos = p.chantiers.iter().position(|c| c.id == id).ok_or("Chantier introuvable.")?;
             let c = p.chantiers[pos].clone();
-            let cout = if c.bat == "annexion" {
-                let (cr, _) = cout_annexion(p, b.cases);
-                [cr, 0.0, 0.0, 0.0, 0.0, 0.0]
-            } else {
-                bat(&c.bat).map(|d| cout_batiment(p, d, c.niv)).unwrap_or([0.0; NB_RES])
-            };
+            let cout = bat(&c.bat).map(|d| cout_batiment(p, d, c.niv)).unwrap_or([0.0; NB_RES]);
             let p = m.pays.get_mut(&pid).unwrap();
             p.chantiers.remove(pos);
             rembourser(p, &cout, 0.5);
-            if c.bat == "annexion" && c.cmdt.is_some() {
-                p.pop += HOMMES_ANNEXION;
-            }
             Ok("Chantier annulé (50 % remboursés).".into())
         }
-        "annexer" => {
+        // ── Troupes (facon OpenFront) : clic droit sur une case ──
+        "etendre" | "annexer" => {
             let i = u(cmd, "case").ok_or("Case manquante.")? as usize;
-            let c = m.cases.get(i).ok_or("Case invalide.")?;
-            if !est_terre(c.terrain) {
-                return Err("On n'annexe que des terres.".into());
-            }
-            if c.proprio.is_some() {
-                return Err("Cette province appartient déjà à une nation.".into());
-            }
-            // Une de vos flottes juste a cote suffit aussi (debarquement) :
-            // demande joueur, pour prendre une cote qui ne touche pas le pays.
-            if !m.voisins(i).iter().any(|&v| m.cases[v].proprio == Some(pid)) && !flotte_adjacente(m, pid, i) {
-                return Err("La province doit toucher votre territoire, ou une de vos flottes doit être juste à côté.".into());
-            }
-            let p = &m.pays[&pid];
-            let en_cours = p.chantiers.iter().filter(|c| c.bat == "annexion").count() as u32;
-            if b.cases + en_cours >= b.capacite {
-                return Err(format!(
-                    "Capacité territoriale atteinte ({} / {}). Construisez des centres administratifs ou des villes.",
-                    b.cases + en_cours, b.capacite
-                ));
-            }
-            if p.chantiers.iter().any(|x| x.case == i) {
-                return Err("Annexion déjà en cours.".into());
-            }
-            let (cr, inf) = cout_annexion(p, b.cases + en_cours);
-            if p.res[CR] < cr || p.influence < inf {
-                return Err(format!("Il faut {} crédits et {} d'influence.", cr, inf));
-            }
-            // Un commandant libre (celui demandé, sinon le plus rapide).
-            let libres: Vec<&Commandant> = p.commandants.iter().filter(|cd| !p.chantiers.iter().any(|c| c.cmdt == Some(cd.id))).collect();
-            let choisi = match u(cmd, "cmdt") {
-                Some(id) => libres.iter().find(|cd| cd.id == id as u32).copied().ok_or("Ce commandant est déjà en campagne.")?,
-                None => *libres.iter().max_by_key(|cd| cd.vitesse).ok_or(if p.commandants.is_empty() {
-                    "Aucun commandant : il en apparaît de temps en temps dans votre pays."
-                } else {
-                    "Tous vos commandants sont déjà en campagne."
-                })?,
-            };
-            if p.pop < HOMMES_ANNEXION + 20.0 {
-                return Err(format!("Il faut {} 000 hommes pour tenir la province : population trop faible.", HOMMES_ANNEXION));
-            }
-            let (cmdt, duree) = (choisi.id, duree_annexion(choisi.vitesse));
-            let cid = m.nouvel_id();
-            let p = m.pays.get_mut(&pid).unwrap();
-            p.res[CR] -= cr;
-            p.influence -= inf;
-            p.pop -= HOMMES_ANNEXION;
-            p.chantiers.push(Chantier { id: cid, case: i, bat: "annexion".into(), niv: 0, reste: duree, total: duree, cmdt: Some(cmdt) });
-            let nom = p.commandants.iter().find(|c| c.id == cmdt).map(|c| c.nom.clone()).unwrap_or_default();
-            Ok(format!("{} part à la conquête ({} s).", nom, duree.round()))
+            let ratio = cmd.get("ratio").and_then(|v| v.as_f64()).unwrap_or(0.3);
+            front::etendre(m, pid, i, ratio, maint)
+        }
+        "rappeler" => {
+            let id = u(cmd, "id").ok_or("Offensive manquante.")? as u32;
+            front::rappeler(m, pid, id)
         }
 
+        // ── Fabrication ──
+        "raffiner" | "fabriquer" => commander_fabrication(m, pid, &b, action, cmd),
+        "annuler_fabrication" => {
+            let id = u(cmd, "id").ok_or("Commande manquante.")? as u32;
+            let p = m.pays.get_mut(&pid).unwrap();
+            let pos = p.fabrications.iter().position(|f| f.id == id).ok_or("Commande introuvable.")?;
+            let f = p.fabrications.remove(pos);
+            if f.paye {
+                for (objet, q) in entrees_fabrication(&f.atelier, &f.objet, f.qte) {
+                    fab::retirer(p, &objet, -q);
+                }
+            }
+            Ok("Ligne arrêtée, matières rendues.".into())
+        }
+        // Reglage d'une ligne : automatique ou non, stock vise, taille du lot.
+        "regler_fabrication" => {
+            let id = u(cmd, "id").ok_or("Ligne manquante.")? as u32;
+            let p = m.pays.get_mut(&pid).unwrap();
+            let pos = p.fabrications.iter().position(|f| f.id == id).ok_or("Ligne introuvable.")?;
+            if let Some(a) = cmd.get("auto").and_then(|v| v.as_bool()) {
+                p.fabrications[pos].auto = a;
+            }
+            if let Some(c) = cmd.get("cible").and_then(|v| v.as_f64()) {
+                p.fabrications[pos].cible = c.clamp(0.0, 1e7);
+            }
+            if let Some(q) = u(cmd, "qte") {
+                let q = q.clamp(1, 1000) as u32;
+                let f = p.fabrications[pos].clone();
+                if q != f.qte {
+                    // Le lot change : on rend les matieres deja prelevees, la
+                    // ligne reprendra les nouvelles quantites.
+                    if f.paye {
+                        for (objet, n) in entrees_fabrication(&f.atelier, &f.objet, f.qte) {
+                            fab::retirer(p, &objet, -n);
+                        }
+                    }
+                    let unite = f.total / (f.qte.max(1) as f64).powf(0.75);
+                    let l = &mut p.fabrications[pos];
+                    l.qte = q;
+                    l.total = duree_lot(unite, q);
+                    l.reste = l.total;
+                    l.paye = false;
+                    if !l.auto {
+                        // Une commande simple doit pouvoir payer tout de suite.
+                        let entrees = entrees_fabrication(&l.atelier, &l.objet, q);
+                        if entrees.iter().all(|(i, n)| fab::possede(p, i) + 1e-9 >= *n) {
+                            for (i, n) in &entrees {
+                                fab::retirer(p, i, *n);
+                            }
+                            p.fabrications[pos].paye = true;
+                        } else {
+                            p.fabrications[pos].auto = true;
+                        }
+                    }
+                }
+            }
+            Ok("Ligne réglée.".into())
+        }
+        "vendre_objet" => {
+            let objet = s(cmd, "objet");
+            let q = cmd.get("qte").and_then(|v| v.as_f64()).unwrap_or(1.0).floor();
+            if !(q >= 1.0) {
+                return Err("Quantité invalide.".into());
+            }
+            let p = m.pays.get_mut(&pid).unwrap();
+            if fab::qte(&p.stock, objet) + 1e-9 < q {
+                return Err("Vous n'en avez pas assez.".into());
+            }
+            // Chaque unite vendue fait baisser le cours de 0,3 % (plancher 30 %).
+            let cours = m.cours.get(objet).copied().unwrap_or(1.0);
+            let apres = (cours * 0.997f64.powf(q)).max(0.3);
+            let gain = (fab::prix_objet(objet) * (cours + apres) / 2.0 * q).floor();
+            let p = m.pays.get_mut(&pid).unwrap();
+            fab::ajouter(&mut p.stock, objet, -q);
+            p.res[CR] += gain;
+            m.cours.insert(objet.to_string(), apres);
+            Ok(format!("{} × {} vendus pour {} crédits.", q, fab::nom_objet(objet), gain))
+        }
+        "acheter_objet" => {
+            let objet = s(cmd, "objet");
+            if fab::element(objet).is_none() && fab::produit(objet).is_none() {
+                return Err("Objet inconnu.".into());
+            }
+            let q = cmd.get("qte").and_then(|v| v.as_f64()).unwrap_or(1.0).floor().clamp(0.0, 1000.0);
+            if q < 1.0 {
+                return Err("Quantité invalide.".into());
+            }
+            // Achat : prix de reference x 1,5, et le cours monte de 0,3 % par unite.
+            let cours = m.cours.get(objet).copied().unwrap_or(1.0);
+            let apres = (cours * 1.003f64.powf(q)).min(4.0);
+            let cout = (fab::prix_objet(objet) * 1.5 * (cours + apres) / 2.0 * q).ceil();
+            let p = m.pays.get_mut(&pid).unwrap();
+            if p.res[CR] + 1e-9 < cout {
+                return Err(format!("Il faut {} crédits.", cout));
+            }
+            p.res[CR] -= cout;
+            fab::ajouter(&mut p.stock, objet, q);
+            m.cours.insert(objet.to_string(), apres);
+            Ok(format!("{} × {} achetés pour {} crédits.", q, fab::nom_objet(objet), cout))
+        }
+        "fabriquer_chaine" => fabriquer_chaine(m, pid, &b, cmd),
+        "arme_speciale" => arme_speciale(m, pid, cmd, regles),
+
         // ── Recherche ──
+        "acheter_plan" => {
+            let id = s(cmd, "plan");
+            let nom = nom_recherche(id).ok_or("Plan inconnu.")?;
+            let prix = prix_plan(&m.pays[&pid], id).ok_or("Vous avez déjà ce plan.")?;
+            let p = m.pays.get_mut(&pid).unwrap();
+            if p.res[CR] + 1e-9 < prix {
+                return Err(format!("Il faut {} crédits.", prix));
+            }
+            p.res[CR] -= prix;
+            match id.strip_prefix("am:") {
+                Some(a) => *p.amelio.entry(a.to_string()).or_insert(0) += 1,
+                None => p.techs.push(id.to_string()),
+            }
+            Ok(format!("Plan acheté : {}.", nom))
+        }
         "rechercher" => {
             let t = s(cmd, "tech");
             let nom = nom_recherche(t).ok_or("Recherche inconnue.")?;
@@ -2319,13 +2930,58 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
                 return Err("La cible doit appartenir à une nation en guerre avec vous.".into());
             }
             let depart = a.case;
+            // Arme nucleaire : soit de la matiere fissile brute (uranium enrichi
+            // ou plutonium) + des explosifs de mise a feu, soit des ogives
+            // fabriquees (ogive nucleaire, bombe H) qui contiennent deja tout.
+            let (matiere, explosifs, fissile) = if genre == "missile_nucleaire" && matches!(s(cmd, "fissile"), "ogive" | "ogive_h") {
+                let objet = if s(cmd, "fissile") == "ogive_h" { "ogive_h" } else { "ogive_nucleaire" };
+                let n = cmd.get("matiere").and_then(|v| v.as_f64()).unwrap_or(1.0).floor();
+                if !(1.0..=100_000.0).contains(&n) {
+                    return Err("Nombre d'ogives invalide.".into());
+                }
+                let dispo = fab::qte(&m.pays[&pid].stock, objet);
+                if dispo + 1e-9 < n {
+                    return Err(format!("Il faut {} × {} (vous en avez {}). Fabriquez-en au complexe industriel.", n, fab::nom_objet(objet), dispo.floor()));
+                }
+                fab::ajouter(&mut m.pays.get_mut(&pid).unwrap().stock, objet, -n);
+                (n, 0.0, s(cmd, "fissile").to_string())
+            } else if genre == "missile_nucleaire" {
+                let kg = cmd.get("matiere").and_then(|v| v.as_f64()).unwrap_or(20.0);
+                if !(5.0..=1_000_000.0).contains(&kg) {
+                    return Err("Matière fissile : au moins 5 kg.".into());
+                }
+                let fissile = if s(cmd, "fissile") == "plutonium" { "plutonium" } else { "uranium" };
+                let mini = explosifs_requis(kg);
+                let expl = cmd.get("explosifs").and_then(|v| v.as_f64()).unwrap_or(mini).max(mini).min(mini * 2.0).ceil();
+                let p = &m.pays[&pid];
+                let dispo = if fissile == "plutonium" { fab::qte(&p.stock, "Pu") } else { p.ur_enrichi };
+                if dispo + 1e-9 < kg {
+                    return Err(format!(
+                        "Il faut {} kg de {} (vous en avez {}).",
+                        kg, if fissile == "plutonium" { "plutonium" } else { "uranium enrichi" }, dispo.floor()
+                    ));
+                }
+                if fab::qte(&p.stock, "explosifs") + 1e-9 < expl {
+                    return Err(format!("Il faut {} explosifs pour la mise à feu (Fabrique niveau 2).", expl));
+                }
+                let p = m.pays.get_mut(&pid).unwrap();
+                if fissile == "plutonium" {
+                    fab::ajouter(&mut p.stock, "Pu", -kg);
+                } else {
+                    p.ur_enrichi -= kg;
+                }
+                fab::ajouter(&mut p.stock, "explosifs", -expl);
+                (kg, expl, fissile.to_string())
+            } else {
+                (0.0, 0.0, String::new())
+            };
             let a = m.armees.get_mut(&aid).unwrap();
             *a.unites.get_mut(&genre).unwrap() -= 1;
             a.unites.retain(|_, n| *n > 0);
             m.armees.retain(|_, a| !a.unites.is_empty());
             let duree = (d.max(1.0) / ud.vitesse * 60.0).max(5.0);
             let mid = m.nouvel_id();
-            m.missiles.insert(mid, MissileVol { id: mid, proprio: pid, genre: genre.clone(), depart, cible, progres: 0.0, duree });
+            m.missiles.insert(mid, MissileVol { id: mid, proprio: pid, genre: genre.clone(), depart, cible, progres: 0.0, duree, matiere, explosifs, fissile });
             if let Some(p) = m.pays.get_mut(&pid) {
                 p.stats.missiles_lances += 1;
             }
@@ -2347,7 +3003,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
         "proposer" => {
             let cible = u(cmd, "pays").ok_or("Pays manquant.")? as u32;
             let genre = s(cmd, "genre");
-            if !matches!(genre, "paix" | "pna") {
+            if !matches!(genre, "paix" | "pna" | "alliance") {
                 return Err("Proposition inconnue.".into());
             }
             if cible == pid || !m.pays.get(&cible).map(|p| !p.elimine).unwrap_or(false) {
@@ -2360,12 +3016,23 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             if genre == "pna" && etat != Etat::Paix {
                 return Err("Un pacte n'est possible qu'en temps de paix.".into());
             }
+            if genre == "alliance" {
+                if etat == Etat::Guerre {
+                    return Err("Faites d'abord la paix.".into());
+                }
+                if m.meme_bloc(pid, cible) {
+                    return Err("Vous êtes déjà alliés.".into());
+                }
+                if m.pays[&pid].bloc.is_some() && m.pays[&cible].bloc.is_some() {
+                    return Err("Vous êtes chacun dans une alliance : l'un de vous doit d'abord quitter la sienne.".into());
+                }
+            }
             if m.propositions.iter().any(|x| x.de == pid && x.a == cible && x.genre == genre) {
                 return Err("Proposition déjà envoyée.".into());
             }
             m.propositions.push(Proposition { de: pid, a: cible, genre: genre.into(), t: maint });
             let nom = m.nom_pays(pid);
-            let quoi = if genre == "paix" { "un traité de paix" } else { "un pacte de non-agression" };
+            let quoi = match genre { "paix" => "un traité de paix", "alliance" => "une alliance", _ => "un pacte de non-agression" };
             m.evenement(Some(cible), "diplomatie", format!("{} vous propose {}.", nom, quoi), None);
             Ok("Proposition envoyée.".into())
         }
@@ -2385,6 +3052,9 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
                 return Ok("Proposition rejetée.".into());
             }
             let cle = Monde::cle_rel(pid, de);
+            if genre == "alliance" {
+                return allier(m, de, pid);
+            }
             if genre == "paix" {
                 m.relations.insert(cle, Relation { etat: Etat::Paix, depuis: maint, jusqu: 0 });
                 for a in m.armees.values_mut() {
@@ -2687,6 +3357,9 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             if r == CR || r >= NB_RES || qte <= 0.0 {
                 return Err("Ordre invalide.".into());
             }
+            if RESSOURCES[r].prix_base <= 0.0 {
+                return Err(format!("{} ne s'échange pas au marché.", RESSOURCES[r].nom));
+            }
             let achat = s(cmd, "sens") == "achat";
             let p = &m.pays[&pid];
             let frais = frais_marche(p);
@@ -2826,7 +3499,9 @@ fn rejoindre(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Result<
         elimine: false,
         amelio: BTreeMap::new(),
         ur_enrichi: 0.0,
-        commandants: vec![],
+        troupes: 0.0,
+        stock: Default::default(),
+        fabrications: vec![],
     });
     if let Err(e) = installer_pays(m, pid, regles) {
         m.pays.remove(&pid);
@@ -2892,6 +3567,40 @@ fn declarer_guerre(m: &mut Monde, pid: u32, cible: u32) -> Result<String, String
         m.evenement(Some(x), "alerte", format!("{} vous a déclaré la guerre !", na), None);
     }
     Ok(format!("Guerre déclarée à {}.", nc))
+}
+
+/// Alliance acceptee : celui qui n'a pas d'alliance rejoint celle de l'autre,
+/// ou une nouvelle alliance est fondee pour les deux (chef : `de`).
+fn allier(m: &mut Monde, de: u32, a: u32) -> Result<String, String> {
+    match (m.pays[&de].bloc, m.pays[&a].bloc) {
+        (Some(b), None) => rejoindre_bloc(m, a, b),
+        (None, Some(b)) => rejoindre_bloc(m, de, b),
+        (Some(_), Some(_)) => Err("Vous êtes chacun dans une alliance : l'un de vous doit d'abord quitter la sienne.".into()),
+        (None, None) => {
+            let (n1, n2) = (m.nom_pays(de), m.nom_pays(a));
+            let mut nom = format!("Alliance {} – {}", n1, n2).chars().take(40).collect::<String>();
+            let mut sigle: String = n1.chars().filter(|c| c.is_alphabetic()).take(2).chain(n2.chars().filter(|c| c.is_alphabetic()).take(2)).collect::<String>().to_uppercase();
+            let id = m.nouvel_id();
+            if m.blocs.values().any(|b| b.nom == nom || b.sigle == sigle) {
+                nom = format!("Alliance {}", id);
+                sigle = format!("A{}", id % 10000);
+            }
+            let couleur = m.pays[&de].couleur.clone();
+            m.blocs.insert(id, Bloc {
+                id, nom: nom.clone(), sigle, couleur, charte: String::new(),
+                chef: de, membres: vec![de, a], candidats: vec![], invites: vec![], cree: maintenant(), tresor: 0.0,
+            });
+            for p in [de, a] {
+                m.pays.get_mut(&p).unwrap().bloc = Some(id);
+                for b in m.blocs.values_mut() {
+                    b.candidats.retain(|&x| x != p);
+                    b.invites.retain(|&x| x != p);
+                }
+            }
+            m.evenement(None, "diplomatie", format!("{} et {} fondent l'{}.", n1, n2, nom), None);
+            Ok(format!("Alliance fondée : {}.", nom))
+        }
+    }
 }
 
 fn rejoindre_bloc(m: &mut Monde, pid: u32, bid: u32) -> Result<String, String> {

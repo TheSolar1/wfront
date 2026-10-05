@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 tokio      = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal", "fs"] }
 axum       = { version = "0.8", features = ["ws"] }
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.6", features = ["fs", "set-header"] }
 futures-util = "0.3"
 
 serde      = { version = "1", features = ["derive"] }

@@ -415,7 +415,16 @@ export class Carte {
   construireBords() {
     const pos = [], col = [];
     const c = new THREE.Color(), bc = new THREE.Color();
-    const y = (x, z) => Math.max(0.03, this.altitude(x, z)) + 0.07;
+    // Le relief ne change jamais : la hauteur de chaque point de frontiere
+    // est calculee une seule fois (altitude() est couteuse), puis reprise a
+    // chaque reconstruction.
+    const cache = this.cacheBords ??= new Map();
+    const y = (x, z) => {
+      const k = Math.round(x * 512) * 65536 + Math.round(z * 512);
+      let h = cache.get(k);
+      if (h === undefined) { h = Math.max(0.03, this.altitude(x, z)) + 0.07; cache.set(k, h); }
+      return h;
+    };
     const ruban = (x, z, a1, a2, e1, e2, coul) => {
       const N = 4;
       for (let s = 0; s < N; s++) {
@@ -452,7 +461,8 @@ export class Carte {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-    this.bordMesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4 }));
+    this.bordMat ??= new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -4 });
+    this.bordMesh = new THREE.Mesh(g, this.bordMat);
     this.bordMesh.renderOrder = 2;
     this.groupes.bords.add(this.bordMesh);
     this.bordSale = false;
@@ -1144,8 +1154,12 @@ export class Carte {
       if (k >= 1) this.anim = null;
     }
     if (this.couleursSales) this.recolorer();
-    if (this.bordSale) this.construireBords();
-    if (this.labelsSales) this.majLabels();
+    // Avec les offensives, des cases changent de main chaque seconde : on
+    // regroupe les reconstructions (frontieres, noms) au lieu de tout
+    // refaire a chaque message du serveur.
+    const maintenant = performance.now();
+    if (this.bordSale && maintenant - (this.dernierBords || 0) > 700) { this.construireBords(); this.dernierBords = maintenant; }
+    if (this.labelsSales && maintenant - (this.derniersLabels || 0) > 1500) { this.majLabels(); this.derniersLabels = maintenant; }
     this.majDepots();
 
     const c = this.cam;

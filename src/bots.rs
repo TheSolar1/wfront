@@ -25,7 +25,6 @@ const BASE_ID: i64 = -2_000_000_000;
 /// Un bot reflechit toutes les N secondes de jeu.
 const REFLEXION_S: f64 = 6.0;
 /// Delai (s de jeu) avant de refonder une nation de bot aneantie.
-const DELAI_REFONDATION: f64 = 300.0;
 
 pub const NOMS: &[&str] = &[
     "Royaume d'Astrée", "République de Kalvar", "Empire de Solmar", "Fédération d'Orvanie",
@@ -38,6 +37,11 @@ pub const NOMS: &[&str] = &[
 /// (decale de `phase`) pendant ce tick de duree `dt`.
 fn franchi(temps: f64, dt: f64, periode: f64, phase: f64) -> bool {
     ((temps + phase) / periode).floor() != ((temps - dt + phase) / periode).floor()
+}
+
+/// Rang d'un bot (0 pour le premier cree), pour en retirer depuis l'admin.
+pub fn rang_bot(user_id: i64) -> usize {
+    (BASE_ID - user_id).max(0) as usize
 }
 
 pub fn est_bot(user_id: i64) -> bool {
@@ -53,17 +57,25 @@ fn cmd(m: &mut Monde, uid: i64, regles: &Regles, v: serde_json::Value) -> bool {
 }
 
 /// Cree les bots manquants et refonde ceux qui ont ete aneantis.
+/// Les bots ne sont crees qu'au debut d'une partie (2 premieres minutes) :
+/// ils n'apparaissent plus en cours de jeu et ne se refondent pas une fois
+/// elimines. Le nombre se regle dans l'administration.
+pub const FENETRE_BOTS: f64 = 120.0;
+
 pub fn assurer(m: &mut Monde, nb: usize, regles: &Regles, dt: f64) {
+    let _ = dt;
+    if m.temps <= FENETRE_BOTS {
+        creer(m, nb, regles);
+    }
+}
+
+/// Cree les bots manquants (debut de partie, ou demande de l'admin).
+pub fn creer(m: &mut Monde, nb: usize, regles: &Regles) {
     let mut rng = rand::thread_rng();
     for k in 0..nb.min(NOMS.len()) {
         let uid = BASE_ID - k as i64;
         match jeu::pays_du_joueur(m, uid) {
-            Some(pid) => {
-                let p = &m.pays[&pid];
-                if p.elimine && franchi(m.temps, dt, DELAI_REFONDATION, 0.0) {
-                    cmd(m, uid, regles, json!({ "action": "refonder" }));
-                }
-            }
+            Some(_) => {}
             None => {
                 let libres: Vec<&str> = NOMS
                     .iter()
@@ -113,13 +125,26 @@ fn tour(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan) {
     repondre_propositions(m, pid, uid, regles, b);
     rechercher(m, pid, uid, regles);
     construire(m, pid, uid, regles, b, &mut rng);
-    annexer(m, pid, uid, regles, &mut rng);
+    etendre(m, pid, uid, regles, b, &mut rng);
+    fabriquer(m, pid, uid, regles, b);
     armer(m, pid, uid, regles, b);
     guerroyer(m, pid, uid, regles, b, &mut rng);
 }
 
 // ── Recherche : la technologie disponible la moins chere ──────────
 fn rechercher(m: &mut Monde, pid: u32, uid: i64, regles: &Regles) {
+    // Credits en trop : le plan le moins cher au marche.
+    let p = &m.pays[&pid];
+    let plan = TECHS
+        .iter()
+        .filter(|t| t.id != "mil_nucleaire")
+        .filter_map(|t| jeu::prix_plan(p, t.id).map(|c| (t.id, c)))
+        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+    if let Some((id, prix)) = plan {
+        if p.res[CR] > (prix * 2.0).max(1500.0) {
+            cmd(m, uid, regles, json!({ "action": "acheter_plan", "plan": id }));
+        }
+    }
     let p = &m.pays[&pid];
     if p.recherche.is_some() {
         return;
@@ -153,33 +178,46 @@ fn construire(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng
         .collect();
     let net = |r: usize| b.prod[r] - b.conso[r];
 
+    // Des credits mais plus de minerai commun : on en achete au marche.
+    if p.res[ME] < 150.0 && p.res[CR] > 600.0 {
+        let qte = ((p.res[CR] - 300.0) / (m.prix[ME] * 1.1)).floor().clamp(0.0, 400.0);
+        if qte >= 20.0 {
+            cmd(m, uid, regles, json!({ "action": "marche", "res": ME, "sens": "achat", "qte": qte }));
+        }
+    }
+
     // Priorites, de la plus urgente a la moins urgente.
     let mut voeux: Vec<&str> = Vec::new();
     if b.elec_ratio < 1.0 || b.elec_prod - b.elec_cons < 6.0 {
         voeux.push("centrale_thermique");
     }
-    if net(NO) < 8.0 {
+    if false && net(NO) < 8.0 {
         voeux.push("ferme");
     }
-    if b.n("mine") < 1.0 + b.cases as f64 / 6.0 {
+    // Objectifs plafonnes : un grand territoire ne doit pas viser 150 mines.
+    let selon = |div: f64, max: f64| (1.0 + b.cases as f64 / div).min(max);
+    if b.n("mine") < selon(6.0, 14.0) {
         voeux.push("mine");
     }
-    if b.n("puits_petrole") < 1.0 + b.cases as f64 / 10.0 {
-        voeux.push("puits_petrole");
+    if b.n("carriere") < selon(12.0, 8.0) {
+        voeux.push("carriere");
     }
     if b.n("caserne") < 1.0 {
         voeux.push("caserne");
     }
-    if b.n("laboratoire") < 1.0 + b.cases as f64 / 8.0 {
+    if b.cases > 25 && b.n("raffinerie") < selon(60.0, 4.0) {
+        voeux.push("raffinerie");
+    }
+    if b.n("laboratoire") < selon(8.0, 10.0) {
         voeux.push("laboratoire");
     }
     if b.cases + 2 >= b.capacite {
         voeux.push("centre_admin");
     }
-    if b.n("ville") < b.cases as f64 / 5.0 {
+    if b.n("ville") < selon(5.0, 20.0) - 1.0 {
         voeux.push("ville");
     }
-    if b.n("usine") < b.cases as f64 / 9.0 {
+    if b.n("usine") < selon(9.0, 8.0) - 1.0 {
         voeux.push("usine");
     }
     for extra in ["mine_uranium", "extracteur_tr", "banque", "hopital", "entrepot", "fort"] {
@@ -188,6 +226,9 @@ fn construire(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng
         }
     }
 
+    // Electricite insuffisante : tout tourne au ralenti. On economise pour
+    // une centrale plutot que de depenser dans autre chose.
+    let manque_elec = b.elec_ratio < 0.9;
     for id in voeux {
         let Some(d) = bat(id) else { continue };
         // Deja en chantier : on attend qu'il soit fini avant d'en relancer un.
@@ -203,8 +244,16 @@ fn construire(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng
                     || c.depot == d.depot
             })
             .collect();
-        // Les gisements sont reserves aux batiments qui les exploitent.
-        if d.depot == D_AUCUN && id != "ferme" {
+        // Les gisements sont reserves aux batiments qui les exploitent, sauf
+        // pour la carriere qui en tire le minerai (rare, radioactif, legendaire).
+        if id == "carriere" {
+            let precieux = |i: usize| matches!(m.cases[i].depot, D_TERRES_RARES | D_URANIUM | D_METEORITE);
+            let tous: Vec<usize> = libres.iter().copied().filter(|&i| m.cases[i].depot == D_AUCUN || precieux(i)).collect();
+            cases = tous.iter().copied().filter(|&i| precieux(i)).collect();
+            if cases.is_empty() {
+                cases = tous;
+            }
+        } else if d.depot == D_AUCUN && id != "ferme" {
             cases.retain(|&i| m.cases[i].depot == D_AUCUN);
         }
         if id == "ferme" {
@@ -216,6 +265,10 @@ fn construire(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng
             if cmd(m, uid, regles, json!({ "action": "construire", "case": i, "bat": id })) {
                 return;
             }
+        }
+        // Pas de quoi payer la centrale : on garde les credits pour elle.
+        if manque_elec && id == "centrale_thermique" {
+            return;
         }
     }
 
@@ -245,29 +298,61 @@ fn construire(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng
     }
 }
 
-fn annexer(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, rng: &mut impl Rng) {
+// ── Expansion : une part des troupes vers les terres neutres ──────
+fn etendre(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng: &mut impl Rng) {
     let p = &m.pays[&pid];
-    if p.chantiers.iter().filter(|c| c.bat == "annexion").count() >= 2 {
+    if p.troupes < 0.45 * b.troupes_max || m.attaques.values().any(|a| a.de == pid && a.cible.is_none()) {
+        return;
+    }
+    // Les bots laissent toujours de la place aux joueurs : ils arretent de
+    // s'etendre quand il reste moins d'un tiers de terres neutres.
+    let terres = m.cases.iter().filter(|c| est_terre(c.terrain)).count().max(1);
+    let neutres = m.cases.iter().filter(|c| est_terre(c.terrain) && c.proprio.is_none()).count();
+    if neutres * 3 < terres {
         return;
     }
     let mut cibles: Vec<(usize, i32)> = Vec::new();
     for i in 0..m.cases.len() {
         let c = &m.cases[i];
-        if c.proprio.is_some() || !est_terre(c.terrain) || p.chantiers.iter().any(|x| x.case == i) {
+        if c.proprio.is_some() || !est_terre(c.terrain) {
             continue;
         }
-        let voisins = m.voisins(i);
-        let miens = voisins.iter().filter(|&&v| m.cases[v].proprio == Some(pid)).count() as i32;
+        let miens = m.voisins(i).iter().filter(|&&v| m.cases[v].proprio == Some(pid)).count() as i32;
         if miens == 0 {
             continue;
         }
-        // Prefere les cases compactes et les gisements.
+        // Prefere les gisements, puis les cases compactes.
         let score = miens * 10 + if c.depot != D_AUCUN { 15 } else { 0 } + rng.gen_range(0..6);
         cibles.push((i, score));
     }
     cibles.sort_by_key(|&(_, s)| -s);
     if let Some(&(i, _)) = cibles.first() {
-        cmd(m, uid, regles, json!({ "action": "annexer", "case": i }));
+        cmd(m, uid, regles, json!({ "action": "etendre", "case": i, "ratio": 0.35 }));
+    }
+}
+
+// ── Fabrication : les bots se constituent des bonus ───────────────
+/// Produits qui donnent un bonus, du plus puissant au plus simple : le bot
+/// lance la chaine complete du premier qu'il peut s'offrir.
+fn fabriquer(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan) {
+    use crate::fabrication as fab;
+    let p = &m.pays[&pid];
+    if b.fab_max == 0 || b.n("raffinerie") <= 0.0 || p.fabrications.len() >= 3 {
+        return;
+    }
+    let mut choix: Vec<&fab::ProduitDef> = fab::tous_produits()
+        .filter(|d| d.niveau <= b.fab_max && fab::effet_de(d.id).is_some())
+        .filter(|d| {
+            // Inutile de depasser le plafond du bonus.
+            let e = fab::effet_de(d.id).unwrap();
+            fab::qte(&p.stock, d.id) * e.par_unite < e.max
+        })
+        .collect();
+    choix.sort_by_key(|d| std::cmp::Reverse(d.niveau));
+    for d in choix.into_iter().take(12) {
+        if cmd(m, uid, regles, json!({ "action": "fabriquer_chaine", "objet": d.id, "qte": 2 })) {
+            return;
+        }
     }
 }
 
@@ -323,8 +408,18 @@ fn guerroyer(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng:
         return;
     }
 
-    // En guerre : chaque armee terrestre au repos marche sur la case
-    // ennemie la plus proche. On garde une garnison a la capitale.
+    // En guerre : la moitie des troupes part a l'offensive (une a la fois).
+    let p = &m.pays[&pid];
+    if p.troupes > 0.5 * b.troupes_max && !m.attaques.values().any(|a| a.de == pid && a.cible.is_some()) {
+        let front: Option<usize> = (0..m.cases.len())
+            .filter(|&i| m.cases[i].proprio.map(|o| ennemis.contains(&o)).unwrap_or(false))
+            .find(|&i| m.voisins(i).iter().any(|&v| m.cases[v].proprio == Some(pid)));
+        if let Some(i) = front {
+            cmd(m, uid, regles, json!({ "action": "etendre", "case": i, "ratio": 0.5 }));
+        }
+    }
+    // Et chaque armee terrestre au repos marche sur la case ennemie la plus
+    // proche. On garde une garnison a la capitale.
     let capitale = m.pays[&pid].capitale;
     // Les renforts rejoignent l'armee de la capitale : on en detache les
     // deux tiers pour le front, le reste garde la capitale.
@@ -463,7 +558,7 @@ mod tests {
             let id = m.nouvel_id();
             let p = m.pays.get_mut(&a).unwrap();
             p.chantiers.clear();
-            p.chantiers.push(Chantier { id, case, bat: "centrale_nucleaire".into(), niv: 1, reste: 0.1, total: 120.0, cmdt: None });
+            p.chantiers.push(Chantier { id, case, bat: "centrale_nucleaire".into(), niv: 1, reste: 0.1, total: 120.0 });
             jeu::tick(&mut m, 1.0);
             if !m.nuages.is_empty() { accident = true; break; }
             assert_eq!(m.cases[case].bat.as_deref(), Some("centrale_nucleaire"));
@@ -528,75 +623,288 @@ mod tests {
         assert_eq!(m.cases[c].proprio, Some(a), "poche cotiere non prise ({} voisins de terre)", terres.len());
     }
 
-    /// Conquête : il faut un commandant libre et des hommes ; la durée dépend
-    /// de sa vitesse, il mange plus en campagne, puis avance sur la case prise.
+    /// Les bots s'etendent avec leurs troupes, sans commandant.
     #[test]
-    fn conquete_avec_commandant() {
+    fn un_bot_s_etend_avec_ses_troupes() {
         let regles = Regles { protection_s: 0, vitesse: 1.0 };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
-        m.pays.get_mut(&a).unwrap().chantiers.clear();
-        assert_eq!(m.pays[&a].commandants.len(), 1, "un commandant a la fondation");
-        let cd = m.pays[&a].commandants[0].clone();
-        let cible = (0..m.cases.len()).find(|&i| m.cases[i].proprio.is_none() && est_terre(m.cases[i].terrain)
-            && m.voisins(i).iter().any(|&v| m.cases[v].proprio == Some(a))).unwrap();
-        let autre = (0..m.cases.len()).find(|&i| i != cible && m.cases[i].proprio.is_none() && est_terre(m.cases[i].terrain)
-            && m.voisins(i).iter().any(|&v| m.cases[v].proprio == Some(a))).unwrap();
-        let j = joueur(BASE_ID);
-        let pop0 = m.pays[&a].pop;
-        let nourriture0 = jeu::bilans(&m)[&a].conso[NO];
-        jeu::commande(&mut m, &j, &json!({ "action": "annexer", "case": cible }), &regles).unwrap();
-        assert!((pop0 - m.pays[&a].pop - jeu::HOMMES_ANNEXION).abs() < 1e-6, "les hommes partent");
-        assert!(jeu::bilans(&m)[&a].conso[NO] > nourriture0, "la campagne consomme de la nourriture");
-        // Un seul commandant : pas de seconde conquete en parallele.
-        assert!(jeu::commande(&mut m, &j, &json!({ "action": "annexer", "case": autre }), &regles).is_err());
-        let duree = jeu::duree_annexion(cd.vitesse);
-        let mut t = 0.0;
-        while m.cases[cible].proprio.is_none() && t < duree + 5.0 {
-            m.pays.get_mut(&a).unwrap().res[NO] = 5000.0;
-            jeu::tick(&mut m, 1.0);
-            t += 1.0;
+        let avant = m.cases.iter().filter(|c| c.proprio == Some(a)).count();
+        for _ in 0..240 {
+            let bl = jeu::tick(&mut m, 1.0);
+            jouer(&mut m, &regles, &bl, 1.0);
         }
-        assert_eq!(m.cases[cible].proprio, Some(a));
-        assert!((t - duree).abs() <= 2.0, "duree {} au lieu de {}", t, duree);
-        assert_eq!(m.pays[&a].commandants[0].case, cible, "le commandant avance sur la case prise");
+        let apres = m.cases.iter().filter(|c| c.proprio == Some(a)).count();
+        assert!(apres > avant + 5, "le bot ne s'est pas etendu : {} -> {}", avant, apres);
     }
 
-    /// Une province cotiere qui ne touche pas le pays se conquiert si une
-    /// flotte est juste a cote -- et reste acquise si la flotte repart.
+    /// Une cote qui ne touche pas le pays se prend par debarquement depuis
+    /// un chantier naval, et reste acquise.
     #[test]
-    fn conquete_depuis_la_mer() {
+    fn debarquement_depuis_un_port() {
         let regles = Regles { protection_s: 0, vitesse: 1.0 };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
-        m.pays.get_mut(&a).unwrap().chantiers.clear();
-        let (cible, mer) = (0..m.cases.len())
-            .filter(|&i| m.cases[i].proprio.is_none() && est_terre(m.cases[i].terrain)
-                && !m.voisins(i).iter().any(|&v| m.cases[v].proprio.is_some()))
-            .find_map(|i| m.voisins(i).into_iter().find(|&v| !est_terre(m.cases[v].terrain)).map(|v| (i, v)))
+        let cap = m.pays[&a].capitale;
+        // Cote isolee hors de portee sans port (plus de PORTEE_COTE cases).
+        let cible = (0..m.cases.len())
+            .filter(|&i| m.cases[i].proprio.is_none() && est_terre(m.cases[i].terrain) && m.est_cote(i)
+                && !m.voisins(i).iter().any(|&v| m.cases[v].proprio.is_some())
+                && m.distance(i, cap) > crate::front::PORTEE_COTE + 2)
+            .min_by_key(|&i| m.distance(i, cap))
             .expect("cote neutre isolee");
         let j = joueur(BASE_ID);
-        let r = jeu::commande(&mut m, &j, &json!({ "action": "annexer", "case": cible }), &regles);
-        assert!(r.is_err(), "sans flotte, la province ne doit pas etre annexable");
-        let aid = m.armees.values().find(|x| x.proprio == a).map(|x| x.id).expect("une armee");
-        {
-            let ar = m.armees.get_mut(&aid).unwrap();
-            ar.unites = [("fregate".to_string(), 1u32)].into_iter().collect();
-            ar.case = mer;
-            ar.chemin.clear();
+        let r = jeu::commande(&mut m, &j, &json!({ "action": "etendre", "case": cible, "ratio": 0.5 }), &regles);
+        assert!(r.is_err(), "sans chantier naval, pas de debarquement");
+        m.cases[cap].bat = Some("port".into());
+        m.pays.get_mut(&a).unwrap().troupes = 2000.0;
+        let r = jeu::commande(&mut m, &j, &json!({ "action": "etendre", "case": cible, "ratio": 0.5 }), &regles);
+        if m.distance(cap, cible) > crate::front::PORTEE_BATEAU {
+            assert!(r.is_err());
+            return;
         }
-        let r = jeu::commande(&mut m, &j, &json!({ "action": "annexer", "case": cible }), &regles);
-        assert!(r.is_ok(), "avec une flotte a cote : {:?}", r);
-        // La flotte repart : la conquete doit quand meme aboutir.
-        m.armees.get_mut(&aid).unwrap().case = m.pays[&a].capitale;
-        for _ in 0..200 {
+        assert!(r.is_ok(), "debarquement : {:?}", r);
+        for _ in 0..120 {
             m.pays.get_mut(&a).unwrap().res[NO] = 5000.0;
             jeu::tick(&mut m, 1.0);
             if m.cases[cible].proprio.is_some() { break; }
         }
-        assert_eq!(m.cases[cible].proprio, Some(a), "province cotiere non acquise");
+        assert_eq!(m.cases[cible].proprio, Some(a), "cote non prise");
+    }
+
+    /// Une terre proche de l'autre cote de la mer se prend sans chantier naval.
+    #[test]
+    fn traversee_d_un_bras_de_mer() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(84, 52, 20260925);
+        assurer(&mut m, 1, &regles, 0.0);
+        let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        // Une cote du pays, et une terre neutre a 3 cases qui ne la touche pas.
+        let mes_cotes: Vec<usize> = (0..m.cases.len()).filter(|&i| m.cases[i].proprio == Some(a) && m.est_cote(i)).collect();
+        let Some((cible, _)) = (0..m.cases.len())
+            .filter(|&i| m.cases[i].proprio.is_none() && est_terre(m.cases[i].terrain) && m.est_cote(i)
+                && !m.voisins(i).iter().any(|&v| m.cases[v].proprio == Some(a)))
+            .filter_map(|i| mes_cotes.iter().map(|&k| m.distance(k, i)).min().map(|d| (i, d)))
+            .find(|&(_, d)| (2..=crate::front::PORTEE_COTE).contains(&d))
+        else { return };
+        m.pays.get_mut(&a).unwrap().troupes = 2000.0;
+        let j = joueur(BASE_ID);
+        let r = jeu::commande(&mut m, &j, &json!({ "action": "etendre", "case": cible, "ratio": 0.5 }), &regles);
+        assert!(r.is_ok(), "traversee : {:?}", r);
+        for _ in 0..60 {
+            m.pays.get_mut(&a).unwrap().res[NO] = 5000.0;
+            jeu::tick(&mut m, 1.0);
+            if m.cases[cible].proprio.is_some() { break; }
+        }
+        assert_eq!(m.cases[cible].proprio, Some(a));
+    }
+
+    /// Monde entierement pris par les bots : un joueur peut quand meme fonder
+    /// sa nation (sur des terres reprises a un bot).
+    #[test]
+    fn fonder_quand_les_bots_ont_tout_pris() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(60, 40, 7);
+        assurer(&mut m, 2, &regles, 0.0);
+        let bot = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        for c in m.cases.iter_mut() {
+            if est_terre(c.terrain) && c.proprio.is_none() {
+                c.proprio = Some(bot);
+            }
+        }
+        let j = Joueur { user_id: 42, nom: "Humain", admin: false, triche: false };
+        let r = jeu::commande(&mut m, &j, &json!({ "action": "rejoindre", "nom": "Humania", "couleur": "#ef4444", "spe": "militaire" }), &regles);
+        assert!(r.is_ok(), "fondation : {:?}", r);
+        let h = jeu::pays_du_joueur(&m, 42).unwrap();
+        assert!(m.cases.iter().filter(|c| c.proprio == Some(h)).count() >= 2);
+    }
+
+    /// Lignes automatiques : en parallele (une par niveau), relancees seules
+    /// tant qu'il y a du minerai, arretees au stock vise.
+    #[test]
+    fn lignes_automatiques_en_parallele() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(84, 52, 20260925);
+        assurer(&mut m, 1, &regles, 0.0);
+        let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        let j = joueur(BASE_ID);
+        let c = m.voisins(m.pays[&a].capitale).into_iter().find(|&v| m.cases[v].proprio == Some(a)).unwrap();
+        m.cases[c].bat = Some("raffinerie".into());
+        m.cases[c].niv = 2;
+        m.pays.get_mut(&a).unwrap().res[ME] = 1000.0;
+        jeu::commande(&mut m, &j, &json!({ "action": "raffiner", "objet": "Fe", "qte": 1, "auto": true, "cible": 6 }), &regles).unwrap();
+        jeu::commande(&mut m, &j, &json!({ "action": "raffiner", "objet": "C", "qte": 1, "auto": true }), &regles).unwrap();
+        for _ in 0..120 { jeu::tick(&mut m, 1.0); }
+        let p = &m.pays[&a];
+        let fe = crate::fabrication::qte(&p.stock, "Fe");
+        let c_ = crate::fabrication::qte(&p.stock, "C");
+        assert!((6.0..=7.0).contains(&fe), "fer arrete a 6 : {}", fe);
+        assert!(c_ > 6.0, "les deux lignes tournent en parallele : C = {}", c_);
+        assert_eq!(p.fabrications.len(), 2, "les lignes automatiques restent");
+    }
+
+    /// Une carriere sur un gisement radioactif extrait du minerai radioactif.
+    #[test]
+    fn carriere_sur_gisement_radioactif() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(84, 52, 20260925);
+        assurer(&mut m, 1, &regles, 0.0);
+        let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        let c = m.voisins(m.pays[&a].capitale).into_iter().find(|&v| m.cases[v].proprio == Some(a)).unwrap();
+        m.cases[c].depot = D_URANIUM;
+        m.cases[c].bat = Some("carriere".into());
+        m.cases[c].niv = 2;
+        let b = &jeu::bilans(&m)[&a];
+        assert!(b.prod[UR] > 2.9, "minerai radioactif : {}", b.prod[UR]);
+    }
+
+    /// « Tout fabriquer » : depuis du minerai seul, la chaine raffine puis
+    /// assemble tout jusqu'au produit voulu.
+    #[test]
+    fn fabrication_en_chaine() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(84, 52, 20260925);
+        assurer(&mut m, 1, &regles, 0.0);
+        let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        let j = joueur(BASE_ID);
+        let cases: Vec<usize> = m.voisins(m.pays[&a].capitale).into_iter().filter(|&v| m.cases[v].proprio == Some(a)).collect();
+        m.cases[cases[0]].bat = Some("raffinerie".into());
+        m.cases[cases[0]].niv = 4;
+        m.cases[cases[1]].bat = Some("usine".into());
+        m.cases[cases[1]].niv = 2;
+        m.pays.get_mut(&a).unwrap().res[ME] = 5000.0;
+        m.pays.get_mut(&a).unwrap().res[TR] = 5000.0;
+        // Tole blindee (niv 2) : acier (Fe + C) + manganese. Un simple
+        // « fabriquer » sans les elements lance toute la chaine.
+        let r = jeu::commande(&mut m, &j, &json!({ "action": "fabriquer", "objet": "tole_blindee", "qte": 2 }), &regles);
+        assert!(r.is_ok(), "chaine : {:?}", r);
+        for _ in 0..600 {
+            jeu::tick(&mut m, 1.0);
+            if crate::fabrication::qte(&m.pays[&a].stock, "tole_blindee") >= 4.0 { break; }
+        }
+        assert!(crate::fabrication::qte(&m.pays[&a].stock, "tole_blindee") >= 4.0, "2 lots x 2 toles");
+        assert!(m.pays[&a].fabrications.is_empty(), "toutes les etapes sont finies");
+    }
+
+    /// Admin : « Tout donner » marche dans tous les modes, dons precis.
+    #[test]
+    fn admin_dons() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(60, 40, 7);
+        assurer(&mut m, 1, &regles, 0.0);
+        let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        let admin = Joueur { user_id: BASE_ID, nom: "Admin", admin: true, triche: true };
+        jeu::commande(&mut m, &admin, &json!({ "action": "dev_tout" }), &regles).unwrap();
+        assert!(m.pays[&a].techs.len() > 10);
+        jeu::commande(&mut m, &admin, &json!({ "action": "admin_donner", "pays": a, "objet": "robot", "qte": 7, "troupes": 100 }), &regles).unwrap();
+        assert_eq!(crate::fabrication::qte(&m.pays[&a].stock, "robot"), 7.0);
+        // Un don au-dessus de la capacite de stockage n'est plus perdu.
+        jeu::commande(&mut m, &admin, &json!({ "action": "admin_donner", "pays": a, "res": [0, 0, 50000, 0, 0, 0] }), &regles).unwrap();
+        let avant = m.pays[&a].res[ME];
+        for _ in 0..10 { jeu::tick(&mut m, 1.0); }
+        assert!(m.pays[&a].res[ME] > avant - 50.0 && avant > 40000.0, "don garde : {} -> {}", avant, m.pays[&a].res[ME]);
+        let normal = Joueur { user_id: 99, nom: "X", admin: false, triche: false };
+        assert!(jeu::commande(&mut m, &normal, &json!({ "action": "admin_donner", "pays": a, "objet": "robot", "qte": 7 }), &regles).is_err());
+    }
+
+    /// Simulation d'une heure avec 6 bots (equilibre de l'economie) :
+    /// `cargo test --release simulation_economie -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn simulation_economie() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(128, 80, 12345);
+        assurer(&mut m, 6, &regles, 0.0);
+        for t in 0..3600 {
+            let bl = jeu::tick(&mut m, 1.0);
+            jouer(&mut m, &regles, &bl, 1.0);
+            assurer(&mut m, 6, &regles, 1.0);
+            if t % 900 == 899 {
+                let bl = jeu::bilans(&m);
+                println!("── {} min", (t + 1) / 60);
+                for p in m.pays.values().filter(|p| !p.elimine) {
+                    let b = &bl[&p.id];
+                    println!("{:<14} cases {:>4} cr {:>7.0} (+{:>5.1}/min) commun {:>6.0} rare {:>5.0} radio {:>5.0} pop {:>5.0} troupes {:>5.0}/{:>5.0} techs {:>2} elec {:>4.0}/{:>4.0} bat {} produits {:.0}",
+                        p.nom, b.cases, p.res[CR], b.prod[CR] - b.conso[CR], p.res[ME], p.res[TR], p.res[UR], p.pop, p.troupes, b.troupes_max, p.techs.len(), b.elec_prod, b.elec_cons, b.niv.values().sum::<u32>(), p.stock.iter().filter(|(k, _)| crate::fabrication::produit(k).is_some()).map(|(_, v)| v).sum::<f64>());
+                }
+            }
+        }
+    }
+
+    /// Un bot avec raffinerie et complexe industriel fabrique des produits a bonus.
+    #[test]
+    fn un_bot_fabrique() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(84, 52, 20260925);
+        assurer(&mut m, 1, &regles, 0.0);
+        let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        let cases: Vec<usize> = m.voisins(m.pays[&a].capitale).into_iter().filter(|&v| m.cases[v].proprio == Some(a)).collect();
+        m.cases[cases[0]].bat = Some("raffinerie".into());
+        m.cases[cases[0]].niv = 3;
+        m.cases[cases[1]].bat = Some("usine".into());
+        m.cases[cases[1]].niv = 2;
+        m.pays.get_mut(&a).unwrap().res[ME] = 3000.0;
+        let b = jeu::bilans(&m).remove(&a).unwrap();
+        fabriquer(&mut m, a, BASE_ID, &regles, &b);
+        assert!(!m.pays[&a].fabrications.is_empty(), "le bot lance une chaine");
+        for _ in 0..400 { jeu::tick(&mut m, 1.0); }
+        let bonus = crate::fabrication::tous_effets().any(|e| crate::fabrication::qte(&m.pays[&a].stock, e.produit) > 0.0);
+        assert!(bonus, "le bot possede un produit a bonus");
+    }
+
+    /// Plans au marche, et alliance proposee puis acceptee.
+    #[test]
+    fn plans_et_alliance() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(84, 52, 20260925);
+        assurer(&mut m, 2, &regles, 0.0);
+        let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        let b = jeu::pays_du_joueur(&m, BASE_ID - 1).unwrap();
+        let ja = joueur(BASE_ID);
+        let jb = joueur(BASE_ID - 1);
+        let prix = jeu::prix_plan(&m.pays[&a], "mil_blindes").unwrap();
+        m.pays.get_mut(&a).unwrap().res[CR] = prix;
+        jeu::commande(&mut m, &ja, &json!({ "action": "acheter_plan", "plan": "mil_blindes" }), &regles).unwrap();
+        assert!(m.pays[&a].a("mil_blindes") && m.pays[&a].res[CR] < 1.0);
+        assert!(jeu::commande(&mut m, &ja, &json!({ "action": "acheter_plan", "plan": "mil_blindes" }), &regles).is_err());
+        m.pays.get_mut(&a).unwrap().bloc = None;
+        m.pays.get_mut(&b).unwrap().bloc = None;
+        jeu::commande(&mut m, &ja, &json!({ "action": "proposer", "pays": b, "genre": "alliance" }), &regles).unwrap();
+        jeu::commande(&mut m, &jb, &json!({ "action": "repondre", "pays": a, "genre": "alliance", "accepte": true }), &regles).unwrap();
+        assert!(m.meme_bloc(a, b), "alliance fondee");
+        assert_eq!(m.pays[&a].res[NO], 0.0, "plus de nourriture");
+    }
+
+    /// Minerai -> raffinerie -> elements -> fabrique -> produit.
+    #[test]
+    fn chaine_de_fabrication() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(84, 52, 20260925);
+        assurer(&mut m, 1, &regles, 0.0);
+        let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        let j = joueur(BASE_ID);
+        let r = jeu::commande(&mut m, &j, &json!({ "action": "raffiner", "objet": "Fe", "qte": 2 }), &regles);
+        assert!(r.is_err(), "pas de raffinerie : refuse");
+        let cases: Vec<usize> = m.voisins(m.pays[&a].capitale).into_iter().filter(|&v| m.cases[v].proprio == Some(a)).collect();
+        m.cases[cases[0]].bat = Some("raffinerie".into());
+        m.cases[cases[0]].niv = 3;
+        m.cases[cases[1]].bat = Some("usine".into());
+        m.cases[cases[1]].niv = 1;
+        m.pays.get_mut(&a).unwrap().res[ME] = 100.0;
+        jeu::commande(&mut m, &j, &json!({ "action": "raffiner", "objet": "Fe", "qte": 4 }), &regles).unwrap();
+        jeu::commande(&mut m, &j, &json!({ "action": "raffiner", "objet": "C", "qte": 2 }), &regles).unwrap();
+        let r = jeu::commande(&mut m, &j, &json!({ "action": "fabriquer", "objet": "processeur" }), &regles);
+        assert!(r.is_err(), "processeur : fabrique de niveau 3 requise");
+        for _ in 0..120 { jeu::tick(&mut m, 1.0); }
+        assert!(crate::fabrication::qte(&m.pays[&a].stock, "Fe") >= 4.0);
+        jeu::commande(&mut m, &j, &json!({ "action": "fabriquer", "objet": "acier", "qte": 2 }), &regles).unwrap();
+        for _ in 0..60 { jeu::tick(&mut m, 1.0); }
+        assert_eq!(crate::fabrication::qte(&m.pays[&a].stock, "acier"), 4.0, "2 commandes x 2 acier");
+        let credits = m.pays[&a].res[CR];
+        jeu::commande(&mut m, &j, &json!({ "action": "vendre_objet", "objet": "acier", "qte": 1 }), &regles).unwrap();
+        assert!(m.pays[&a].res[CR] > credits);
     }
 
     /// Le centre d'enrichissement transforme 1,5 uranium brut en 1 enrichi.
@@ -652,10 +960,35 @@ mod tests {
         let r = jeu::commande(&mut m, &j, &json!({ "action": "guerre", "pays": b }), &regles);
         assert!(r.is_ok(), "guerre : {:?}", r);
         let cible = m.pays[&b].capitale;
-        let r = jeu::commande(&mut m, &j, &json!({ "action": "missile", "armee": aid, "genre": "missile_nucleaire", "cible": cible }), &regles);
+        let tir = json!({ "action": "missile", "armee": aid, "genre": "missile_nucleaire", "cible": cible, "matiere": 40 });
+        let r = jeu::commande(&mut m, &j, &tir, &regles);
+        assert!(r.is_err(), "sans matiere fissile ni explosifs : refuse");
+        {
+            let p = m.pays.get_mut(&a).unwrap();
+            p.ur_enrichi = 100.0;
+            p.stock.insert("explosifs".into(), 50.0);
+        }
+        let pop_b = m.pays[&b].pop;
+        let r = jeu::commande(&mut m, &j, &tir, &regles);
         assert!(r.is_ok(), "tir : {:?}", r);
+        assert!((m.pays[&a].ur_enrichi - 60.0).abs() < 1e-6, "40 kg d'uranium consommes");
+        assert_eq!(crate::fabrication::qte(&m.pays[&a].stock, "explosifs"), 50.0 - jeu::explosifs_requis(40.0));
         for _ in 0..600 { jeu::tick(&mut m, 1.0); }
         assert!(m.missiles.is_empty(), "missile toujours en vol");
         assert!(m.cases[cible].irradiee > m.temps, "cible non irradiee");
+        assert!(m.pays[&b].pop < pop_b * 0.95, "la population touchee baisse");
+        // 40 kg : rayon 2 (1 + racine(2)), donc une case a distance 2 est touchee.
+        let anneau = m.rayon(cible, 2).into_iter().find(|&v| m.distance(cible, v) == 2).unwrap();
+        assert!(m.cases[anneau].irradiee > m.temps);
+        assert_eq!(m.cases[cible].proprio, None, "le coeur de l'explosion devient neutre");
+    }
+
+    /// Une bombe H assez puissante peut couvrir toute la carte.
+    #[test]
+    fn bombe_h_sans_limite() {
+        assert!(jeu::puissance_nucleaire("ogive_h", 1.0, 0.0) > jeu::puissance_nucleaire("plutonium", 500.0, 0.0));
+        // 70 bombes H sur une carte 84 x 52 : rayon >= 84.
+        let k = jeu::puissance_nucleaire("ogive_h", 70.0, 0.0) / 20.0;
+        assert!(1.0 + k.sqrt() >= 84.0);
     }
 }

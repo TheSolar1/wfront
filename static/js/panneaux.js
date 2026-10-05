@@ -78,14 +78,10 @@ function joueurDe(p) {
 function listeChantiers(S) {
   const m = S.moi;
   if (!m || !m.chantiers.length) return vide('Aucun chantier en cours.', 'helmet-safety');
-  const slots = m.bilan.slots;
-  let k = 0;
   return `<div class="wf-liste">${m.chantiers.map(c => {
-    const annexion = c.bat === 'annexion';
-    const cd = annexion ? m.commandants?.find(x => x.id === c.cmdt) : null;
-    const d = annexion ? { nom: cd ? `Conquête · ${cd.nom}` : 'Annexion', icone: 'map-location-dot' } : batDef(S, c.bat);
-    const actif = annexion || k++ < slots;
-    const reste = c.reste / (annexion ? 1 : Math.max(0.01, m.bilan.vitesse)) / S.vitesse;
+    const d = batDef(S, c.bat);
+    const actif = true; // tous les chantiers avancent en meme temps
+    const reste = c.reste / Math.max(0.01, m.bilan.vitesse) / S.vitesse;
     return `<div class="wf-ligne">
       <span class="wf-ligne-ic">${ico(d?.icone)}</span>
       <div class="wf-ligne-corps">
@@ -157,12 +153,13 @@ function panneauPays(S) {
 
   <div class="wf-stats">
     <div class="wf-stat">${ico('people-group')}<b>${fmtPop(m.pop)}</b><span>Population · capacité ${fmtPop(b.pop_cap)}</span>${barre(m.pop / Math.max(1, b.pop_cap))}</div>
-    <div class="wf-stat">${ico('map-location-dot')}<b>${b.cases} / ${b.capacite}</b><span>Provinces · capacité territoriale</span>${barre(b.cases / Math.max(1, b.capacite))}</div>
+    <div class="wf-stat">${ico('map-location-dot')}<b>${b.cases}</b><span>Provinces</span></div>
+    <div class="wf-stat">${ico('person-military-rifle')}<b>${fmt(S.moi.troupes)} / ${fmt(b.troupes_max)}</b><span>Troupes</span>${barre(S.moi.troupes / Math.max(1, b.troupes_max))}</div>
     <div class="wf-stat">${ico('handshake')}<b>${fmt(m.influence)}</b><span>Influence · ${signe(b.influence)}/min</span></div>
     <div class="wf-stat">${ico('flask')}<b>${signe(b.recherche)}/min</b><span>Recherche · ${fmt(m.recherche_stock)} pts en réserve</span></div>
     <div class="wf-stat ${elecOk ? '' : 'alerte'}">${ico('bolt')}<b>${fmt(b.elec_prod)} / ${fmt(b.elec_cons)}</b><span>Électricité ${elecOk ? 'suffisante' : '— rendement ' + Math.round(b.elec_ratio * 100) + ' %'}</span>${barre(b.elec_cons ? Math.min(1, b.elec_prod / b.elec_cons) : 1, elecOk ? '' : 'rouge')}</div>
     <div class="wf-stat">${ico('shield-halved')}<b>${fmt(b.puissance)}</b><span>Puissance militaire</span></div>
-    <div class="wf-stat">${ico('gears')}<b>×${b.vitesse.toFixed(2).replace('.', ',')}</b><span>Vitesse de construction · ${b.slots} chantiers</span></div>
+    <div class="wf-stat">${ico('gears')}<b>×${b.vitesse.toFixed(2).replace('.', ',')}</b><span>Vitesse de construction · chantiers illimités</span></div>
     <div class="wf-stat">${ico('ranking-star')}<b>${fmt(m.scores.global)}</b><span>Score global</span></div>
   </div>
 
@@ -172,9 +169,9 @@ function panneauPays(S) {
     <tbody>${lignesRes}</tbody>
   </table>
   ${m.res[0] <= 0 && b.conso[0] > b.prod[0] ? `<div class="wf-avert">${ico('triangle-exclamation')} Caisses vides : vos soldats désertent.</div>` : ''}
-  ${m.res[1] <= 0 && b.conso[1] > b.prod[1] ? `<div class="wf-avert">${ico('triangle-exclamation')} Famine : votre population décline.</div>` : ''}
 
-  ${titre('Chantiers', 'helmet-safety', `<small>${Math.min(b.slots, m.chantiers.length)} / ${b.slots} actifs</small>`)}
+
+  ${titre('Chantiers', 'helmet-safety', `<small>${m.chantiers.length} en cours</small>`)}
   ${listeChantiers(S)}
   ${titre('Commandes militaires', 'industry')}
   ${listeProductions(S)}
@@ -290,15 +287,15 @@ function panneauConstruction(S) {
       }
     }
   }
-  return `${titre('Chantiers en cours', 'helmet-safety', `<small>${Math.min(m.bilan.slots, m.chantiers.length)} / ${m.bilan.slots} actifs</small>`)}${listeChantiers(S)}${corps}`;
+  return `${titre('Chantiers en cours', 'helmet-safety', `<small>${m.chantiers.length} en même temps</small>`)}${listeChantiers(S)}${corps}`;
 }
 
 // ══════════════════════════════════════════════════════════════════
 // Menu de la case (inspecteur) : tout se fait depuis la case cliquée
 // ══════════════════════════════════════════════════════════════════
 const BAT_PRODUCTION = {
-  ferme: [1, 'nourriture'], mine: [2, 'métal'], puits_petrole: [3, 'pétrole'],
-  mine_uranium: [4, 'uranium'], extracteur_tr: [5, 'terres rares'],
+  ferme: [1, 'nourriture'], mine: [2, 'minerai commun'], carriere: [2, 'minerai commun'], puits_petrole: [2, 'minerai commun'],
+  foreuse: [3, 'minerai légendaire'], mine_uranium: [4, 'minerai radioactif'], extracteur_tr: [5, 'minerai rare'],
 };
 
 export function menuCase(S, i) {
@@ -312,7 +309,7 @@ export function menuCase(S, i) {
   const chantier = m.chantiers.find(c => c.case === i);
   if (irr) return `<div class="wf-insp-ligne neg">${ico('radiation')} Zone irradiée : rien ne peut y être bâti pour le moment.</div>`;
   if (chantier) {
-    const d = chantier.bat === 'annexion' ? { nom: 'Annexion', icone: 'map-location-dot' } : batDef(S, chantier.bat);
+    const d = batDef(S, chantier.bat);
     return `<div class="wf-menu-bloc"><div class="wf-insp-ligne">${ico(d?.icone || 'helmet-safety')} <b>Chantier : ${esc(d?.nom)}${chantier.niv > 1 ? ` niv. ${chantier.niv}` : ''}</b></div>
       ${barre(1 - chantier.reste / chantier.total)}
       <button class="wf-btn petit danger" data-act="annuler_chantier" data-id="${chantier.id}">${ico('xmark')} Annuler (50 % remboursés)</button></div>`;
@@ -344,13 +341,13 @@ export function menuCase(S, i) {
   } else if (b === 'enrichissement' || b === 'centrale_nucleaire') {
     const sur = m.techs.includes('ind_nucleaire_civil');
     html += `<div class="wf-menu-bloc">
-      <div class="wf-insp-ligne">${ico('radiation')} Uranium brut : <b>${fmt(m.res[4], 1)}</b> · enrichi : <b>${fmt(m.ur_enrichi, 1)}</b></div>
+      <div class="wf-insp-ligne">${ico('radiation')} Minerai radioactif : <b>${fmt(m.res[4], 1)}</b> · uranium enrichi : <b>${fmt(m.ur_enrichi, 1)}</b></div>
       <div class="wf-insp-ligne petit">${esc(d.desc)}</div>
-      ${m.res[4] < 1 && b === 'enrichissement' ? `<div class="wf-insp-ligne petit">${ico('scale-balanced')} Pas d'uranium brut : achetez-en au marché ou construisez une mine d'uranium.</div>` : ''}
+      ${m.res[4] < 1 && b === 'enrichissement' ? `<div class="wf-insp-ligne petit">${ico('scale-balanced')} Pas de minerai radioactif : achetez-en au marché ou construisez une mine radioactive.</div>` : ''}
       ${b === 'centrale_nucleaire' && !sur ? `<div class="wf-insp-ligne neg">${ico('triangle-exclamation')} Sans « Nucléaire civil », chaque amélioration a 25 % de risque d'accident.</div>` : ''}
     </div>`;
   } else if (b === 'usine') {
-    html += `<div class="wf-menu-bloc"><div class="wf-insp-ligne">${ico('gears')} Vitesse de construction <b>×${m.bilan.vitesse.toFixed(2).replace('.', ',')}</b> · ${m.bilan.slots} chantiers en parallèle</div></div>`;
+    html += `<div class="wf-menu-bloc"><div class="wf-insp-ligne">${ico('gears')} Vitesse de construction <b>×${m.bilan.vitesse.toFixed(2).replace('.', ',')}</b> · chantiers illimités en parallèle</div></div>`;
   } else if (b === 'banque') {
     html += `<div class="wf-menu-bloc">${menuMarche(S)}</div>`;
   } else {
@@ -360,38 +357,55 @@ export function menuCase(S, i) {
   return html;
 }
 
-/** Durée d'une conquête (s de jeu) selon la vitesse du commandant (jeu.rs duree_annexion). */
-export const dureeConquete = v => Math.round(50 / (0.55 + 0.3 * v));
-const etoiles = v => '★'.repeat(v) + '☆'.repeat(5 - v);
+/** Coût en troupes d'une case (front.rs cout_case), côté client. */
+function coutTroupes(S, i) {
+  const t = S.defs.terrains[S.carte.terrain[i]];
+  const pid = S.carte.proprio[i];
+  if (pid < 0) return S.defs.troupes.cout_neutre * t.cout_mvt;
+  const fort = S.carte.bat[i] === 'fort' ? 1 + 0.3 * S.carte.niv[i] : 1;
+  return 9 * t.cout_mvt * (1 + t.defense) * fort;
+}
 
-/** Conquête d'une province neutre voisine : il faut un commandant libre,
- *  3 000 hommes, des crédits et de l'influence. */
-export function menuConquete(S, i) {
+/** Province neutre voisine, ou ennemie en guerre : envoyer des troupes
+ *  (comme un clic droit sur la carte). */
+export function menuTroupes(S, i, mode) {
   const m = S.moi;
-  const [cr, inf] = m.mods.annexion;
-  const cmdts = m.commandants || [];
-  const occupe = cd => m.chantiers.some(c => c.cmdt === cd.id);
-  const enCours = m.chantiers.find(c => c.case === i && c.bat === 'annexion');
-  if (enCours) {
-    const cd = cmdts.find(x => x.id === enCours.cmdt);
-    return `<div class="wf-menu-bloc"><div class="wf-menu-titre">${ico('person-military-pointing')} Conquête en cours</div>
-      <div class="wf-insp-ligne">${cd ? `${esc(cd.nom)} <span class="wf-etoiles">${etoiles(cd.vitesse)}</span>` : 'Annexion'}</div>
-      ${barre(1 - enCours.reste / enCours.total)}
-      <button class="wf-btn petit danger" data-act="annuler_chantier" data-id="${enCours.id}">${ico('xmark')} Rappeler (50 % remboursés)</button></div>`;
-  }
-  const ok = m.res[0] >= cr && m.influence >= inf && m.pop >= 23;
-  return `<div class="wf-menu-bloc"><div class="wf-menu-titre">${ico('person-military-pointing')} Conquérir cette province</div>
-    <div class="wf-insp-ligne petit">Coût : ${fmt(cr)} ${ico('coins')} · ${inf} ${ico('handshake')} · 3 000 hommes ${ico('people-group')}</div>
-    ${cmdts.length ? `<div class="wf-menu-liste">${cmdts.map(cd => {
-      const libre = !occupe(cd);
-      return `<div class="wf-menu-item ${libre ? '' : 'cher'}">
-        <span class="wf-bat-ic">${ico('user-tie')}</span>
-        <div class="wf-ligne-corps"><b>${esc(cd.nom)}</b>
-          <small><span class="wf-etoiles">${etoiles(cd.vitesse)}</span> · ${ico('clock')} ${duree(dureeConquete(cd.vitesse) / S.vitesse)} · ${ico('wheat-awn')} ${cd.vitesse + 2 * cd.vitesse * cd.vitesse}/min en campagne</small></div>
-        ${libre ? `<button class="wf-btn petit" data-act="annexer" data-case="${i}" data-cmdt="${cd.id}" ${ok ? '' : 'disabled'}>Envoyer</button>` : '<span class="wf-puce">En campagne</span>'}
-      </div>`;
-    }).join('')}</div>` : `<div class="wf-insp-ligne petit">${ico('user-clock')} Aucun commandant pour l'instant : il en apparaît au hasard dans votre pays (environ toutes les 6 minutes, 4 au maximum).</div>`}
-    <div class="wf-insp-ligne petit">${ico('circle-info')} Plus un commandant est rapide, plus il mange : sans nourriture, la conquête s'arrête.</div>
+  const envoi = Math.floor(m.troupes * S.ratio);
+  const enCours = (S.attaques || []).filter(a => a.de === m.id && (mode === 'neutre' ? a.cible == null : a.cible === S.carte.proprio[i]));
+  const titreBloc = mode === 'neutre' ? "S'étendre ici" : mode === 'bateau' ? 'Débarquer ici' : 'Attaquer ici';
+  const icone = mode === 'neutre' ? 'map-location-dot' : mode === 'bateau' ? 'ship' : 'person-military-pointing';
+  return `<div class="wf-menu-bloc"><div class="wf-menu-titre">${ico(icone)} ${titreBloc}</div>
+    <div class="wf-insp-ligne petit">${ico('person-military-rifle')} ${fmt(envoi)} troupes envoyées (${Math.round(S.ratio * 100)} % de la réserve) · environ ${fmt(coutTroupes(S, i), 0)} par case${mode === 'attaque' ? ' + la densité de ses troupes' : ''}</div>
+    ${enCours.map(a => `<div class="wf-insp-ligne petit">${ico('flag')} Offensive en cours : ${fmt(a.troupes)} troupes, ${a.prises} cases prises
+      ${a.bateau ? ` · en mer ${duree(a.bateau.reste / S.vitesse)}` : `<button class="wf-lien" data-act="rappeler" data-id="${a.id}">Rappeler</button>`}</div>`).join('')}
+    <button class="wf-btn petit ${mode === 'attaque' ? 'danger' : ''}" data-act="etendre" data-case="${i}" ${envoi >= 10 ? '' : 'disabled'}>${ico(icone)} Envoyer ${fmt(envoi)} troupes</button>
+    <div class="wf-insp-ligne petit">${ico('computer-mouse')} Raccourci : clic droit sur la case. Le curseur « Envoyer » en bas à gauche de la carte règle la part des troupes.</div>
+  </div>`;
+}
+
+/** Diplomatie directe : cliquez sur une case d'un pays pour l'attaquer, lui
+ *  proposer la paix, un pacte ou une alliance, l'aider ou l'espionner. */
+export function menuDiplomatie(S, p) {
+  const m = S.moi;
+  const rel = S.relations[p.id]?.etat || 'paix';
+  const allies = m.bloc != null && m.bloc === p.bloc;
+  const envoyee = g => S.propositions.some(x => x.de === m.id && x.a === p.id && x.genre === g);
+  const recue = S.propositions.filter(x => x.de === p.id && x.a === m.id);
+  const b = [];
+  if (rel === 'guerre') b.push(`<button class="wf-btn petit" data-act="proposer" data-pays="${p.id}" data-genre="paix" ${envoyee('paix') ? 'disabled' : ''}>${ico('dove')} ${envoyee('paix') ? 'Paix proposée' : 'Proposer la paix'}</button>`);
+  else if (!allies) b.push(`<button class="wf-btn petit danger" data-act="guerre" data-pays="${p.id}">${ico('burst')} Attaquer (déclarer la guerre)</button>`);
+  if (rel === 'paix' && !allies) b.push(`<button class="wf-btn petit secondaire" data-act="proposer" data-pays="${p.id}" data-genre="pna" ${envoyee('pna') ? 'disabled' : ''}>${ico('file-signature')} ${envoyee('pna') ? 'Pacte proposé' : 'Pacte de non-agression'}</button>`);
+  if (rel !== 'guerre' && !allies) b.push(`<button class="wf-btn petit secondaire" data-act="proposer" data-pays="${p.id}" data-genre="alliance" ${envoyee('alliance') ? 'disabled' : ''}>${ico('people-group')} ${envoyee('alliance') ? 'Alliance proposée' : 'Créer une alliance'}</button>`);
+  b.push(`<button class="wf-btn petit secondaire" data-act="aide_form" data-pays="${p.id}">${ico('box-open')} Envoyer une aide</button>`);
+  return `<div class="wf-menu-bloc"><div class="wf-menu-titre">${ico('handshake')} Diplomatie avec ${esc(p.nom)}</div>
+    ${recue.map(x => `<div class="wf-insp-ligne">${ico('envelope')} Vous propose ${x.genre === 'paix' ? 'la paix' : x.genre === 'alliance' ? 'une alliance' : 'un pacte'}
+      <button class="wf-btn petit" data-act="repondre" data-pays="${p.id}" data-genre="${x.genre}" data-accepte="1">Accepter</button>
+      <button class="wf-btn petit secondaire" data-act="repondre" data-pays="${p.id}" data-genre="${x.genre}" data-accepte="0">Refuser</button></div>`).join('')}
+    <div class="wf-boutons wf-diplo">${b.join('')}</div>
+    <div class="wf-insp-ligne petit">${ico('user-secret')} Espionner :
+      <button class="wf-lien" data-act="espion" data-pays="${p.id}" data-op="sabotage">sabotage</button> ·
+      <button class="wf-lien" data-act="espion" data-pays="${p.id}" data-op="vol">vol de technologie</button> ·
+      <button class="wf-lien" data-act="espion" data-pays="${p.id}" data-op="destabilisation">déstabilisation</button></div>
   </div>`;
 }
 
@@ -402,8 +416,12 @@ function menuConstruire(S, i) {
   // Les bâtiments qui exploitent le gisement de la case d'abord.
   possibles.sort((a, b) => (b.depot ? 1 : 0) - (a.depot ? 1 : 0));
   const verrous = S.defs.batiments.filter(d => d.constructible && d.tech && !aTech(S, d.tech)).length;
+  // Une categorie a la fois : le menu reste court.
+  const cats = [...new Set(possibles.map(d => d.categorie))];
+  const cat = cats.includes(S.catConstruire) ? S.catConstruire : (possibles[0]?.categorie || cats[0]);
   return `<div class="wf-menu-bloc"><div class="wf-menu-titre">${ico('helmet-safety')} Construire ici</div>
-    <div class="wf-menu-liste">${possibles.map(d => {
+    <div class="wf-fab-niveaux">${cats.map(c => `<button class="wf-chip ${c === cat ? 'actif' : ''}" data-act="cat_construire" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+    <div class="wf-menu-liste">${possibles.filter(d => d.categorie === cat).map(d => {
       const c = coutBatiment(d, 1, m.mods, m.spe);
       const ok = peutPayer(S, c);
       return `<div class="wf-menu-item ${ok ? '' : 'cher'}" title="${esc(d.desc)}">
@@ -412,7 +430,7 @@ function menuConstruire(S, i) {
         <button class="wf-btn petit" data-act="construire" data-case="${i}" data-bat="${d.id}" ${ok ? '' : 'disabled'}>Bâtir</button>
       </div>`;
     }).join('')}</div>
-    ${verrous ? `<div class="wf-insp-ligne petit">${ico('flask')} ${verrous} autres bâtiments se débloquent par la recherche (cliquez sur un laboratoire).</div>` : ''}</div>`;
+    ${verrous ? `<div class="wf-insp-ligne petit">${ico('scroll')} ${verrous} autres bâtiments se débloquent avec des plans (Marché › Plans).</div>` : ''}</div>`;
 }
 
 function menuProduction(S, i) {
@@ -525,20 +543,24 @@ function panneauArmee(S) {
   }
 
   return `
-  ${titre('Forces armées', 'shield-halved', `<small>Entretien : ${fmt(entretien[0], 1)} ${ico('coins')} · ${fmt(entretien[1], 1)} ${ico('wheat-awn')} · ${fmt(entretien[2], 1)} ${ico('oil-well')} /min</small>`)}
+  ${titre('Forces armées', 'shield-halved', `<small>Entretien : ${fmt(entretien[0] + 6 * entretien[2], 1)} ${ico('coins')} /min</small>`)}
   <div class="wf-totaux">${Object.keys(totaux).length ? composition(S, totaux) : '<small>Aucune unité</small>'}</div>
 
-  ${titre('Commandants', 'user-tie', `<small>${(m.commandants || []).length} / 4</small>`)}
-  <div class="wf-liste">${(m.commandants || []).map(cd => {
-    const c = m.chantiers.find(x => x.cmdt === cd.id);
-    return `<div class="wf-ligne cliquable" data-act="voir" data-case="${c ? c.case : cd.case}">
-      <span class="wf-ligne-ic">${ico('user-tie')}</span>
-      <div class="wf-ligne-corps"><div class="wf-ligne-titre">${esc(cd.nom)} <span class="wf-etoiles">${etoiles(cd.vitesse)}</span></div>
-      <div class="wf-ligne-sous">${c ? `En campagne · ${duree(c.reste / S.vitesse)}` : 'Disponible'} · conquête en ${duree(dureeConquete(cd.vitesse) / S.vitesse)} · ${ico('wheat-awn')} ${cd.vitesse}/min (${cd.vitesse + 2 * cd.vitesse * cd.vitesse}/min en campagne)</div>
-      ${c ? barre(1 - c.reste / c.total) : ''}</div>
+  ${titre('Troupes', 'person-military-rifle', `<small>${fmt(m.troupes)} / ${fmt(m.bilan.troupes_max)}</small>`)}
+  ${barre(m.troupes / Math.max(1, m.bilan.troupes_max))}
+  <p class="wf-note">${ico('circle-info')} Votre réserve se remplit toute seule, plus vite quand elle est vide. Son maximum grandit avec votre territoire, vos villes, votre capitale, vos casernes et vos centres administratifs. <b>Clic droit sur une case</b> : vous y envoyez ${Math.round(S.ratio * 100)} % de vos troupes (terre neutre : votre pays s'agrandit ; ennemi en guerre : vous l'envahissez ; côte lointaine : débarquement depuis un chantier naval).</p>
+  ${titre('Offensives', 'flag', `<small>${(S.attaques || []).filter(a => a.de === m.id).length}</small>`)}
+  <div class="wf-liste">${(S.attaques || []).filter(a => a.de === m.id || a.cible === m.id).map(a => {
+    const mienne = a.de === m.id;
+    const autre = mienne ? (a.cible != null ? S.pays.get(a.cible) : null) : S.pays.get(a.de);
+    const quoi = mienne ? (a.cible == null ? 'Expansion en terres neutres' : `Offensive contre ${esc(autre?.nom || '?')}`) : `${esc(autre?.nom || '?')} vous envahit`;
+    return `<div class="wf-ligne cliquable" data-act="voir" data-case="${a.bateau ? a.bateau.case : a.vise}">
+      <span class="wf-ligne-ic">${ico(a.bateau ? 'ship' : mienne ? 'person-military-pointing' : 'triangle-exclamation')}</span>
+      <div class="wf-ligne-corps"><div class="wf-ligne-titre">${quoi}</div>
+      <div class="wf-ligne-sous">${fmt(a.troupes)} troupes · ${a.prises} cases prises${a.bateau ? ` · en mer, débarquement dans ${duree(a.bateau.reste / S.vitesse)}` : ''}</div></div>
+      ${mienne && !a.bateau ? `<button class="wf-btn petit secondaire" data-act="rappeler" data-id="${a.id}">Rappeler</button>` : ''}
     </div>`;
-  }).join('') || vide('Aucun commandant : il en apparaît au hasard dans votre pays, environ toutes les 6 minutes.', 'user-clock')}</div>
-  <p class="wf-note">${ico('circle-info')} Pour conquérir une province neutre, cliquez dessus et envoyez un commandant libre.</p>
+  }).join('') || vide('Aucune offensive. Faites un clic droit sur une case neutre qui touche votre pays pour vous agrandir.', 'map-location-dot')}</div>
 
   ${titre('Armées, flottes et escadres', 'flag', `<small>${miennes.length}</small>`)}
   <div class="wf-liste">${miennes.map(a => {
@@ -792,6 +814,53 @@ function panneauBlocs(S) {
 // ══════════════════════════════════════════════════════════════════
 // Marche
 // ══════════════════════════════════════════════════════════════════
+/** Elements et produits au marche : on achete 1,5 fois le prix du jour ; le
+ *  cours baisse quand on vend et monte quand on achete. */
+function marcheObjets(S) {
+  const filtre = (S.marcheFiltre || '').trim().toLowerCase();
+  // Sans recherche : ce que vous possedez ; avec : les 60 premiers resultats.
+  const tous = [...S.defs.elements.map(e => ({ id: e.id, nom: e.nom, ic: null, el: e })), ...S.defs.produits.map(p => ({ id: p.id, nom: p.nom, ic: p.icone, pr: p }))];
+  const liste = (filtre ? tous.filter(o => (o.nom + ' ' + o.id).toLowerCase().includes(filtre)) : tous.filter(o => possede(S, o.id) >= 1)).slice(0, 60);
+  return `<div class="wf-info">${ico('scale-balanced')} Achetez ce qui vous manque, vendez vos surplus. Chaque vente fait baisser le cours, chaque achat le fait monter ; il revient lentement à la normale.</div>
+    <div class="wf-livre-outils"><input type="search" id="marche-filtre" data-filtre="marcheFiltre" data-cible=".wf-objet-ligne" placeholder="Chercher (fer, acier, robot…)" value="${esc(S.marcheFiltre || '')}" data-garder>
+      <label class="wf-ligne-form">Quantité <input type="number" id="marche-qte" min="1" max="1000" value="${S.marcheQte || 10}" class="wf-qte" data-garder></label></div>
+    <div class="wf-liste">${liste.map(o => {
+      const cours = S.cours?.[o.id] ?? 1;
+      const prix = prixCours(S, o.id);
+      const cherche = (o.nom + ' ' + o.id).toLowerCase();
+      return `<div class="wf-plan wf-objet-ligne" data-nom="${esc(cherche)}" ${filtre && !cherche.includes(filtre) ? 'hidden' : ''}>
+        ${o.el ? `<b class="wf-symbole grand" style="--c:${FAMILLES[o.el.categorie][1]}">${esc(o.id)}</b>` : `<span class="wf-bat-ic" style="color:${COULEURS_NIVEAU[o.pr.niveau]}">${ico(o.ic)}</span>`}
+        <div class="wf-ligne-corps"><b>${esc(o.nom)}</b><small>${fmt(possede(S, o.id), 1)} en stock · vente ${fmt(prix)} · achat ${fmt(prix * 1.5)} ${ico('coins')}
+          ${Math.abs(cours - 1) > 0.01 ? `<span class="${cours >= 1 ? 'pos' : 'neg'}">${cours >= 1 ? '▲' : '▼'} ${Math.round(Math.abs(cours - 1) * 100)} %</span>` : ''}</small></div>
+        <button class="wf-btn petit" data-act="acheter_objet" data-objet="${o.id}">Acheter</button>
+        <button class="wf-btn petit secondaire" data-act="vendre_marche" data-objet="${o.id}" ${possede(S, o.id) >= 1 ? '' : 'disabled'}>Vendre</button>
+      </div>`;
+    }).join('') || vide(filtre ? 'Aucun résultat.' : 'Vous ne possédez encore aucun élément ni produit : cherchez ce que vous voulez acheter.', 'magnifying-glass')}</div>`;
+}
+
+/** Plans de technologies et d'améliorations, achetés au marché (la recherche
+ *  n'existe plus : sinon, les laboratoires en inventent de temps en temps). */
+function marchePlans(S) {
+  const m = S.moi;
+  const k = S.defs.prix_plan * (m.spe === 'scientifique' ? 0.8 : 1);
+  const branche = S.branchePlans || S.defs.branches[0].id;
+  const techs = S.defs.techs.filter(t => t.branche === branche).sort((a, b) => a.rang - b.rang || a.cout - b.cout);
+  const amelios = S.defs.ameliorations.filter(a => a.branche === branche);
+  const ligne = (id, nom, desc, icone, prix, possede, extra = '') => `<div class="wf-plan ${possede ? 'possede' : ''}">
+      <span class="wf-bat-ic">${ico(possede ? 'circle-check' : icone)}</span>
+      <div class="wf-ligne-corps"><b>${esc(nom)}</b>${extra}<small>${esc(desc)}</small></div>
+      ${possede ? '<span class="wf-puce accent">Acquis</span>' : `<button class="wf-btn petit" data-act="acheter_plan" data-plan="${id}" ${m.res[0] >= prix ? '' : 'disabled'}>${fmt(prix)} ${ico('coins')}</button>`}
+    </div>`;
+  return `<div class="wf-info">${ico('scroll')} Achetez les plans des technologies et des améliorations. Vos <b>laboratoires</b> en inventent aussi tout seuls de temps en temps (plus vous avez de niveaux, plus c'est fréquent).</div>
+    <div class="wf-fab-niveaux">${S.defs.branches.map(b => `<button class="wf-chip ${b.id === branche ? 'actif' : ''}" data-act="branche_plans" data-branche="${b.id}">${ico(b.icone)} ${esc(b.nom)}</button>`).join('')}</div>
+    ${titre('Technologies', 'flask')}
+    <div class="wf-liste">${techs.map(t => ligne(t.id, t.nom, t.desc, t.icone, Math.round(t.cout * k), m.techs.includes(t.id))).join('')}</div>
+    ${amelios.length ? titre('Améliorations', 'arrow-up-right-dots') + `<div class="wf-liste">${amelios.map(a => {
+      const n = m.amelio?.[a.id] || 0;
+      return ligne('am:' + a.id, a.nom, a.desc, a.icone, Math.round(a.cout * Math.pow(1.5, n) * k), n >= a.max, ` <small>niv. ${n} / ${a.max}</small>`);
+    }).join('')}</div>` : ''}`;
+}
+
 function sparkline(valeurs, couleur) {
   if (!valeurs || valeurs.length < 2) return '';
   const min = Math.min(...valeurs), max = Math.max(...valeurs);
@@ -804,13 +873,13 @@ function panneauMarche(S) {
   const m = S.moi;
   if (!m) return vide('Fondez d\'abord votre nation.', 'flag');
   const onglet = S.ongletMarche || 'ressources';
-  const onglets = [['ressources', 'Matières premières', 'cubes'], ['equipement', 'Équipement militaire', 'person-military-rifle'], ['services', 'Services', 'handshake']];
+  const onglets = [['ressources', 'Minerais', 'cubes'], ['objets', 'Éléments & produits', 'boxes-stacked'], ['plans', 'Plans', 'scroll'], ['equipement', 'Équipement militaire', 'person-military-rifle'], ['services', 'Services', 'handshake']];
   const frais = m.mods.frais;
   let corps = '';
   if (onglet === 'ressources') {
     corps = `<div class="wf-info">${ico('scale-balanced')} Marché partagé par toutes les nations : chaque achat fait monter le prix, chaque vente le fait baisser. Frais : <b>${Math.round(frais * 100)} %</b>${m.mods.mondialisation ? ' · ventes +20 %' : ''}.</div>
     <div class="wf-marche">${S.defs.ressources.map((r, i) => {
-      if (i === 0) return '';
+      if (i === 0 || !(r.prix_base > 0)) return '';
       const p = S.prix[i];
       const ecart = (p / r.prix_base - 1) * 100;
       return `<div class="wf-marche-ligne">
@@ -825,6 +894,10 @@ function panneauMarche(S) {
       </div>`;
     }).join('')}</div>
     <p class="wf-note">${ico('circle-info')} Les prix reviennent lentement vers leur valeur de référence. Maximum 5 000 unités par ordre.</p>`;
+  } else if (onglet === 'plans') {
+    corps = marchePlans(S);
+  } else if (onglet === 'objets') {
+    corps = marcheObjets(S);
   } else if (onglet === 'equipement') {
     corps = `<div class="wf-info">${ico('truck-fast')} Unités livrées tout de suite : à un bâtiment qui peut les accueillir (port, base aérienne, silo), sinon à la capitale pour les troupes terrestres. Sans la technologie, c'est possible mais plus cher. Vos unités au repos (ni en marche ni au combat) se revendent.</div>
     <div class="wf-menu-liste">${listeEquipement(S, 'mq')}</div>`;
@@ -988,11 +1061,13 @@ function panneauAide(S) {
   const u = S.defs.unites;
   return `<div class="wf-guide">
   <h3>${ico('flag')} Premiers pas</h3>
-  <p>Fondez votre nation : elle apparaît avec une capitale et quelques provinces. Bâtissez des <b>fermes</b> (nourriture), des <b>mines</b> et <b>puits</b> sur les gisements, une <b>centrale</b> pour l'électricité et des <b>laboratoires</b> pour la recherche. Les nouvelles nations sont protégées de toute déclaration de guerre pendant quelques heures.</p>
+  <p>Fondez votre nation : elle apparaît avec une capitale et quelques provinces. Faites un <b>clic gauche</b> sur une de vos cases pour construire : des <b>mines</b> sur les gisements (une par type de minerai) ou des carrières, une <b>centrale</b> pour l'électricité, une <b>raffinerie</b> et un <b>complexe industriel</b> pour fabriquer, et des <b>laboratoires</b> qui inventent parfois des technologies (sinon, achetez les plans au marché). Cliquez sur un autre pays pour l'attaquer, lui proposer la paix ou une alliance. Les nouvelles nations sont protégées de toute déclaration de guerre pendant quelques heures.</p>
   <h3>${ico('map-location-dot')} Faire grandir son pays</h3>
-  <p>La taille de votre pays dépend de ce que vous construisez : chaque <b>centre administratif</b> (+6) et chaque <b>ville</b> (+2) augmente votre capacité territoriale. Sélectionnez une province neutre qui touche vos frontières, <b>ou qu'une de vos flottes longe</b>, puis <b>Annexer</b> (crédits + influence). La guerre permet aussi de conquérir des provinces, sans limite de capacité.</p>
+  <p>Comme dans OpenFront, votre pays grandit avec vos <b>troupes</b>. Faites un <b>clic droit</b> sur une case : une part de votre réserve (curseur « Envoyer » en bas à gauche de la carte) part s'en emparer, case par case, en commençant par celle que vous avez visée. Sur une terre neutre, votre pays s'agrandit ; chez une nation avec qui vous êtes en guerre, vous l'envahissez (son relief, ses forts et ses troupes résistent) ; sur une côte lointaine, vos troupes débarquent depuis un chantier naval. Le <b>clic gauche</b> sert à construire.</p>
+  <h4>${ico('gears')} Minerais et fabrication</h4>
+  <p>Les <b>carrières</b> (partout) et les mines extraient quatre minerais : commun, rare (gisements de terres rares), radioactif (gisements d'uranium) et légendaire (cratères de météorite, très rares). La <b>raffinerie</b> les transforme en métal, terres rares, uranium, ou en n'importe lequel des 118 éléments du tableau périodique. La <b>fabrique</b> assemble ensuite plus de 100 produits, de l'acier jusqu'au trou noir : son niveau fixe la complexité des recettes. Les éléments légendaires se désintègrent vite, comme dans la réalité : utilisez-les sans attendre.</p>
   <h3>${ico('gem')} Ressources</h3>
-  <p>Chaque région a ses gisements : pétrole (déserts, plaines), métal (collines, montagnes), uranium (montagnes, toundra), terres rares (forêts, collines) et sols fertiles. Ce qui vous manque s'achète au <b>marché mondial</b> ou se négocie avec vos alliés. L'<b>électricité</b> n'est pas stockée : si la consommation dépasse la production, tous les bâtiments consommateurs tournent au ralenti.</p>
+  <p>Chaque région a ses gisements : filons de minerai commun (collines, montagnes, déserts), minerai radioactif (montagnes, toundra), minerai rare (forêts, collines), cratères de météorite (minerai légendaire, très rares) et sols fertiles. Une carrière extrait du minerai commun n'importe où. Ce qui vous manque s'achète au <b>marché mondial</b> ou se négocie avec vos alliés. L'<b>électricité</b> n'est pas stockée : si la consommation dépasse la production, tous les bâtiments consommateurs tournent au ralenti.</p>
   <h3>${ico('flask')} Recherche</h3>
   <p>Quatre branches (militaire, économie, diplomatie, industrie) débloquent bâtiments, unités et bonus. Les branches se croisent : les chars demandent la sidérurgie, les missiles l'aérospatiale, le nucléaire militaire le nucléaire civil.</p>
   <h3>${ico('person-military-rifle')} Armées et combat</h3>
@@ -1027,24 +1102,379 @@ function panneauAide(S) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Administration (privilege VEX)
+// Administration (detenteur de la cle d'administration uniquement)
 // ══════════════════════════════════════════════════════════════════
 function panneauAdmin(S) {
   const tous = [...S.pays.values()].sort((a, b) => a.id - b.id);
-  return `<div class="wf-avert">${ico('shield-halved')} Outils réservés aux administrateurs VEX.</div>
+  const vivants = tous.filter(p => !p.elimine);
+  const bots = vivants.filter(p => p.joueur === 'Ordinateur').length;
+  const guerres = Object.keys(S.relations || {}).length;
+  return `<div class="wf-avert">${ico('key')} Administration déverrouillée avec votre clé.
+      <a href="admin/sortir">Verrouiller</a> · <button class="wf-lien" data-act="admin_oublier">Oublier la clé sur ce navigateur</button></div>
+  <div class="wf-admin-grille">
+    <div class="wf-admin-stat"><b>${vivants.length}</b><small>nations</small></div>
+    <div class="wf-admin-stat"><b>${vivants.length - bots}</b><small>joueurs</small></div>
+    <div class="wf-admin-stat"><b>${bots}</b><small>bots</small></div>
+    <div class="wf-admin-stat"><b>${S.carte.terrain.length}</b><small>cases (graine ${S.graine ?? '?'})</small></div>
+  </div>
+  ${titre('Monde', 'earth-europe')}
+  <div class="wf-admin-actions">
+    <label class="wf-ligne-form">Bots <input type="number" id="admin-bots" min="0" max="16" value="${bots}" class="wf-qte" data-garder></label>
+    <button class="wf-btn petit" data-act="admin_bots">${ico('robot')} Appliquer</button>
+    <button class="wf-btn petit secondaire" data-act="admin_paix">${ico('dove')} Paix mondiale</button>
+    <button class="wf-btn petit danger" data-act="admin_carte">${ico('arrows-rotate')} Nouvelle carte</button>
+  </div>
+  ${titre('Moi', 'user-shield')}
+  <div class="wf-admin-actions">
+    <button class="wf-btn petit secondaire" data-act="admin_moi" ${S.moi ? '' : 'disabled'}>${ico('wand-magic-sparkles')} Tout me donner (mode dev)</button>
+    <small>Toutes les technologies, des ressources, 200 de chaque élément.</small>
+  </div>
   ${titre('Annonce mondiale', 'bullhorn')}
-  <div class="wf-form"><textarea id="admin-annonce" data-garder maxlength="300" placeholder="Message diffusé dans le journal de tous les joueurs"></textarea>
+  <div class="wf-form"><textarea id="admin-annonce" data-garder maxlength="300" placeholder="Message diffusé à tous les joueurs"></textarea>
   <button class="wf-btn" data-act="admin_annonce">${ico('bullhorn')} Publier</button></div>
-  ${titre('Nations', 'earth-europe', `<small>${tous.length}</small>`)}
-  <table class="wf-table"><thead><tr><th>Nation</th><th>Joueur</th><th class="num">Provinces</th><th></th></tr></thead><tbody>
+  ${titre('Nations', 'flag', `<small>${tous.length}</small>`)}
+  <table class="wf-table"><thead><tr><th>Nation</th><th>Joueur</th><th class="num">Prov.</th><th></th></tr></thead><tbody>
   ${tous.map(p => `<tr><td>${drapeau(p, 20)} ${esc(p.nom)} ${p.elimine ? '<small>(anéantie)</small>' : ''}</td><td>${joueurDe(p)}</td><td class="num">${p.cases}</td>
-    <td><button class="wf-btn-ic danger" data-act="admin_supprimer" data-pays="${p.id}" title="Supprimer définitivement">${ico('trash')}</button></td></tr>`).join('')}
+    <td class="num">
+      <button class="wf-btn-ic" data-act="voir" data-case="${p.capitale}" title="Voir sur la carte">${ico('location-crosshairs')}</button>
+      <button class="wf-btn-ic" data-act="admin_donner_form" data-pays="${p.id}" title="Donner des ressources">${ico('gift')}</button>
+      <button class="wf-btn-ic" data-act="admin_protection_form" data-pays="${p.id}" title="Protection">${ico('shield-halved')}</button>
+      <button class="wf-btn-ic danger" data-act="admin_supprimer" data-pays="${p.id}" title="Supprimer définitivement">${ico('trash')}</button></td></tr>`).join('')}
   </tbody></table>`;
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Fabrication : raffinerie (tableau periodique), fabrique, produits
+// ══════════════════════════════════════════════════════════════════
+const FAMILLES = { 1: ['Commun', '#94a3b8'], 2: ['Rare', '#a855f7'], 3: ['Radioactif', '#22c55e'], 4: ['Légendaire', '#f43f5e'] };
+
+export function nomObjet(S, id) {
+  return S.defs.elements.find(e => e.id === id)?.nom || S.defs.minerais.find(x => x.id === id)?.nom
+    || S.defs.produits.find(x => x.id === id)?.nom || id;
+}
+
+/** Quantite possedee : les minerais sont des ressources de base, le reste est dans le stock. */
+function possede(S, id) {
+  const i = S.defs.index_minerais?.[id];
+  return i != null ? (S.moi?.res?.[i] || 0) : (S.moi?.stock?.[id] || 0);
+}
+
+/** Case du tableau periodique (ligne, colonne) d'un numero atomique. */
+function posTableau(z) {
+  if (z === 1) return [1, 1];
+  if (z === 2) return [1, 18];
+  if (z <= 4) return [2, z - 2];
+  if (z <= 10) return [2, z + 8];
+  if (z <= 12) return [3, z - 10];
+  if (z <= 18) return [3, z];
+  if (z <= 36) return [4, z - 18];
+  if (z <= 54) return [5, z - 36];
+  if (z <= 56) return [6, z - 54];
+  if (z <= 71) return [9, z - 54];
+  if (z <= 86) return [6, z - 68];
+  if (z <= 88) return [7, z - 86];
+  if (z <= 103) return [10, z - 86];
+  return [7, z - 100];
+}
+
+/** Pastille d'une matiere demandee : verte si on l'a, rouge sinon. */
+function puceMatiere(S, id, q) {
+  const ok = possede(S, id) + 1e-6 >= q;
+  const el = S.defs.elements.find(e => e.id === id);
+  const mi = S.defs.minerais.find(x => x.id === id);
+  const pr = !el && !mi ? S.defs.produits.find(x => x.id === id) : null;
+  const label = el ? `<b class="wf-symbole" style="--c:${FAMILLES[el.categorie][1]}">${esc(el.id)}</b>`
+    : mi ? `${ico(mi.icone, '', `color:${mi.couleur}`)}${esc(mi.nom.replace('Minerai ', 'minerai '))}`
+      : `${ico(pr?.icone || 'box', '', `color:${COULEURS_NIVEAU[pr?.niveau || 1]}`)}${esc(pr?.nom || id)}`;
+  const ou = el ? `à raffiner (${fmt(el.qte)} ${el.minerai.replace('minerai_', 'minerai ')} chacun)`
+    : mi ? 'extrait par vos mines et carrières' : pr ? `à fabriquer (niveau ${pr.niveau})` : '';
+  return `<span class="wf-fab-puce ${ok ? 'ok' : 'manque'}" title="${esc(nomObjet(S, id))} : ${fmt(possede(S, id), 1)} / ${fmt(q, 1)}${ok ? '' : ' · ' + ou}">${fmt(q, 1)} ${label}</span>`;
+}
+
+/** Prix au marche d'un element ou d'un produit, au cours du jour. */
+export function prixCours(S, id) {
+  const base = S.defs.elements.find(e => e.id === id)?.prix ?? S.defs.produits.find(p => p.id === id)?.prix ?? 0;
+  return base * (S.cours?.[id] ?? 1);
+}
+
+/** Bonus que donnent les produits en stock (meme calcul que fabrication.rs). */
+function bonusActifs(S) {
+  const tot = {};
+  for (const p of S.defs.produits) {
+    if (!p.effet) continue;
+    const v = Math.min(p.effet.max, possede(S, p.id) * p.effet.par_unite);
+    if (v > 0) tot[p.effet.type] = (tot[p.effet.type] || 0) + v;
+  }
+  return tot;
+}
+const NOMS_EFFETS = {
+  attaque: ['Pertes en attaque', 'person-military-pointing', v => `−${Math.round(v * 100)} %`],
+  defense: ['Pertes de qui vous envahit', 'shield-halved', v => `+${Math.round(v * 100)} %`],
+  troupes: ['Troupes maximum', 'person-military-rifle', v => `+${Math.round(v * 100)} %`],
+  construction: ['Vitesse de construction', 'helmet-safety', v => `+${Math.round(v * 100)} %`],
+  electricite: ['Électricité', 'bolt', v => `+${Math.round(v)}`],
+  croissance: ['Croissance de la population', 'people-group', v => `+${Math.round(v * 100)} %`],
+  invention: ['Inventions des laboratoires', 'flask', v => `+${Math.round(v * 100)} %`],
+  interception: ['Missiles abattus', 'crosshairs', v => `+${Math.round(v * 100)} %`],
+  credits: ['Crédits', 'coins', v => `+${Math.round(v * 100)} %`],
+};
+
+/** Duree d'un lot (jeu.rs duree_lot) : les grandes series vont plus vite a l'unite. */
+const dureeLot = (unite, q) => unite * Math.pow(Math.max(1, q), 0.75);
+
+function vitesseAtelier(S, atelier) {
+  const m = S.moi;
+  const niv = atelier === 'raffinerie' ? (m.bilan.niv.raffinerie || 0) : (m.bilan.niv.usine || 0) + (m.bilan.niv.fabrique || 0);
+  return niv * m.bilan.elec_ratio * (1 + 0.07 * (m.mods.robotique || 0));
+}
+
+/** Lignes des deux ateliers : elles tournent en parallele (une par niveau
+ *  d'atelier), les automatiques recommencent seules et se reglent ici. */
+function fileFabrication(S) {
+  const m = S.moi;
+  const liste = m.fabrications || [];
+  if (!liste.length) return '';
+  const niv = a => a === 'raffinerie' ? (m.bilan.niv.raffinerie || 0) : (m.bilan.niv.usine || 0) + (m.bilan.niv.fabrique || 0);
+  const places = { raffinerie: Math.min(S.defs.lignes_max, Math.floor(niv('raffinerie'))), fabrique: Math.min(S.defs.lignes_max, Math.floor(niv('fabrique'))) };
+  const occupees = { raffinerie: 0, fabrique: 0 };
+  const actives = { raffinerie: 0, fabrique: 0 };
+  for (const f of liste) if (f.paye && actives[f.atelier] < places[f.atelier]) actives[f.atelier]++;
+  const lignes = liste.map(f => {
+    let etat;
+    if (!f.paye) etat = f.cible > 0 && possede(S, f.objet) >= f.cible ? `stock atteint (${fmt(f.cible)})` : 'attend ses matières';
+    else if (occupees[f.atelier] < places[f.atelier]) { occupees[f.atelier]++; etat = null; }
+    else etat = 'en attente d\'une ligne libre';
+    // Toute la puissance de l'atelier est partagee entre les lignes actives.
+    const v = vitesseAtelier(S, f.atelier) / Math.max(1, actives[f.atelier]);
+    const temps = etat ? etat : (v > 0 ? duree(f.reste / v / S.vitesse) : 'à l\'arrêt (électricité)');
+    return `<div class="wf-fab-cmd ${f.auto ? 'auto' : ''} ${etat ? 'attente' : ''}">
+      ${ico(f.atelier === 'raffinerie' ? 'flask-vial' : 'industry')}
+      <span class="wf-fab-cmd-nom">${f.auto ? ico('arrows-rotate') + ' ' : ''}${f.qte} × ${esc(nomObjet(S, f.objet))}</span>
+      <span class="wf-fab-cmd-temps">${temps}</span>
+      <button class="wf-btn-ic" data-act="annuler_fab" data-id="${f.id}" title="Arrêter la ligne (matières rendues)">${ico('xmark')}</button>
+      ${!etat ? barre(1 - f.reste / f.total) : ''}
+      <div class="wf-fab-reglages">
+        <label><input type="checkbox" data-act="regler_fab" data-id="${f.id}" data-champ="auto" ${f.auto ? 'checked' : ''}> en continu</label>
+        · lot <input type="number" min="1" max="1000" value="${f.qte}" id="lot-${f.id}" class="wf-qte" data-garder>
+        · s'arrêter à <input type="number" min="0" value="${f.cible || ''}" placeholder="∞" id="cible-${f.id}" class="wf-qte" data-garder> en stock
+        <button class="wf-lien" data-act="regler_fab" data-id="${f.id}" data-champ="valeurs">Appliquer</button>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div class="wf-fab-lignes-tete"><span>${ico('flask-vial')} Raffinerie : ${occupees.raffinerie} / ${places.raffinerie} lignes · ${ico('industry')} Complexe : ${occupees.fabrique} / ${places.fabrique} lignes</span><small>une ligne par niveau d'atelier</small></div>
+    <div class="wf-fab-file">${lignes}</div>`;
+}
+
+/** Case « en continu » + stock vise, sous les boutons Raffiner / Fabriquer. */
+function controleAuto(prefixe, S) {
+  return `<div class="wf-fab-auto">
+    <label><input type="checkbox" id="${prefixe}-auto" data-garder ${S[prefixe + 'Auto'] ? 'checked' : ''} data-act="fab_auto" data-cle="${prefixe}Auto"> ${ico('arrows-rotate')} Automatiser (recommence tout seul)</label>
+    <label>jusqu'à <input type="number" id="${prefixe}-cible" min="0" placeholder="∞" class="wf-qte" data-garder value="${S[prefixe + 'Cible'] || ''}"> en stock</label>
+  </div>`;
+}
+
+function controleQte(id, valeur, presets) {
+  return `<div class="wf-fab-qte">
+    <span>Quantité</span>
+    <input type="number" id="${id}" min="1" max="1000" value="${valeur}" class="wf-qte" data-garder>
+    ${presets.map(v => `<button class="wf-chip" data-act="fab_qte" data-champ="${id}" data-v="${v}">${v}</button>`).join('')}
+  </div>`;
+}
+
+function ongletRaffinerie(S) {
+  const m = S.moi;
+  const niv = m.bilan.niv.raffinerie || 0;
+  const q = Math.max(1, Math.min(1000, +S.qteRaf || 10));
+  const choisi = S.defs.elements.find(e => e.id === (S.fabElement || 'Fe'));
+  let html = `<div class="wf-fab-minerais">${S.defs.minerais.map(mi => `<div class="wf-fab-minerai" style="--c:${mi.couleur}" title="${esc(mi.desc)}">
+      ${ico(mi.icone)}<div><b>${fmt(possede(S, mi.id))}</b><small>${esc(mi.nom)}</small></div></div>`).join('')}</div>`;
+  if (!niv) html += `<div class="wf-avert">${ico('triangle-exclamation')} Construisez une <b>raffinerie</b> (Construction › Industrie) pour transformer vos minerais en éléments.</div>`;
+
+  // Tableau periodique
+  html += `<div class="wf-periodique">${S.defs.elements.map(e => {
+    const [l, c] = posTableau(e.z);
+    const n = possede(S, e.id);
+    return `<button class="wf-elem ${n > 0 ? 'possede' : ''} ${e.id === choisi.id ? 'choisi' : ''}" style="--c:${FAMILLES[e.categorie][1]};grid-row:${l};grid-column:${c}"
+      data-act="fab_element" data-objet="${e.id}" title="${esc(e.nom)} · ${FAMILLES[e.categorie][0].toLowerCase()}${n > 0 ? ` · ${fmt(n, 1)} en stock` : ''}">
+      <small>${e.z}</small><b>${esc(e.id)}</b>${n > 0 ? `<i>${fmt(n, n < 10 ? 1 : 0)}</i>` : ''}</button>`;
+  }).join('')}
+    <div class="wf-periodique-renvoi" style="grid-row:6;grid-column:3">57-71</div>
+    <div class="wf-periodique-renvoi" style="grid-row:7;grid-column:3">89-103</div>
+  </div>
+  <div class="wf-legende">${Object.values(FAMILLES).map(([n, c]) => `<span><i style="background:${c}"></i>${n}</span>`).join('')}</div>`;
+
+  // Fiche de l'element choisi
+  const parUnite = choisi.qte;
+  const peut = Math.floor(possede(S, choisi.minerai) / parUnite);
+  const ok = niv > 0 && peut >= q;
+  const temps = dureeLot(choisi.temps, q) / Math.max(0.01, vitesseAtelier(S, 'raffinerie') || niv || 1) / S.vitesse;
+  html += `<div class="wf-fab-fiche" style="--c:${FAMILLES[choisi.categorie][1]}">
+    <div class="wf-fab-fiche-symbole"><small>${choisi.z}</small><b>${esc(choisi.id)}</b></div>
+    <div class="wf-fab-fiche-corps">
+      <h4>${esc(choisi.nom)} <span class="wf-puce">${FAMILLES[choisi.categorie][0]}</span></h4>
+      <p>${fmt(possede(S, choisi.id), 1)} en stock · rachat ${fmt(choisi.prix)} ${ico('coins')}${choisi.demi_vie ? ` · ${ico('hourglass-half')} se désintègre (demi-vie ${duree(choisi.demi_vie / S.vitesse)})` : ''}</p>
+      <div class="wf-fab-recette">${puceMatiere(S, choisi.minerai, parUnite * q)} ${ico('arrow-right')} <b>${q} ${esc(choisi.id)}</b> · ${ico('clock')} ${duree(temps)}</div>
+      ${controleQte('qte-raf', q, [1, 10, 50, 100])}
+      ${controleAuto('raf', S)}
+      <div class="wf-boutons">
+        <button class="wf-btn" data-act="raffiner" data-objet="${choisi.id}" ${ok || (niv > 0 && S.rafAuto) ? '' : 'disabled'}>${ico(S.rafAuto ? 'arrows-rotate' : 'flask-vial')} ${S.rafAuto ? 'Lancer la ligne' : 'Raffiner'} ${q} ${esc(choisi.id)}</button>
+        <small>${niv ? `Vous pouvez en raffiner ${fmt(peut)} avec votre minerai.` : ''}</small>
+      </div>
+    </div>
+  </div>`;
+  return html;
+}
+
+/** Table de fabrication (facon Minecraft, mais sans forme imposee) : on pose
+ *  des quantites de materiaux sur 9 cases ; si la combinaison correspond a
+ *  une recette (ou a un multiple exact), le resultat apparait. */
+export function recetteDeTable(S) {
+  const t = S.table || [];
+  if (!t.length) return null;
+  for (const p of S.defs.produits) {
+    if (p.entrees.length !== t.length) continue;
+    let k = null;
+    const ok = p.entrees.every(([id, n]) => {
+      const c = t.find(x => x.id === id);
+      if (!c) return false;
+      const r = c.q / n;
+      if (!Number.isInteger(r) || r < 1 || (k !== null && r !== k)) return false;
+      k = r;
+      return true;
+    });
+    if (ok) return { p, k };
+  }
+  return null;
+}
+
+/** Couleur des produits selon leur niveau (1 gris … 8 or) : on les
+ *  distingue d'un coup d'oeil. */
+export const COULEURS_NIVEAU = ['#64748b', '#64748b', '#16a34a', '#0d9488', '#2563eb', '#4f46e5', '#9333ea', '#db2777', '#d97706'];
+
+function iconeObjet(S, id, grand = false) {
+  const el = S.defs.elements.find(e => e.id === id);
+  if (el) return `<b class="wf-symbole ${grand ? 'grand' : ''}" style="--c:${FAMILLES[el.categorie][1]}">${esc(el.id)}</b>`;
+  const pr = S.defs.produits.find(x => x.id === id);
+  return `<span class="wf-table-ic" style="--nc:${COULEURS_NIVEAU[pr?.niveau || 1]}">${ico(pr?.icone || 'box')}</span>`;
+}
+
+function ongletFabrique(S) {
+  const m = S.moi;
+  const nivMax = m.bilan.fab_max || 0;
+  const table = S.table || [];
+  const trouve = recetteDeTable(S);
+  const pose = id => table.find(x => x.id === id)?.q || 0;
+  let html = nivMax ? `<p class="wf-note">${ico('industry')} Complexe industriel niveau <b>${nivMax}</b> : recettes jusqu'au niveau ${nivMax}. Les niveaux 6 à 8 (jusqu'au trou noir) demandent la technologie « Grands travaux ».</p>`
+    : `<div class="wf-avert">${ico('triangle-exclamation')} Construisez un <b>complexe industriel</b> (clic gauche sur une de vos cases › Industrie) : c'est lui qui fabrique tout, avec les éléments de la raffinerie.</div>`;
+
+  // ── La table ──
+  const cases = Array.from({ length: 9 }, (_, k) => table[k]);
+  let resultat = `<div class="wf-table-case resultat vide">?</div>`;
+  let bouton = '';
+  if (trouve) {
+    const { p, k } = trouve;
+    const ok = p.niveau <= nivMax && p.entrees.every(([id, n]) => possede(S, id) + 1e-6 >= n * k);
+    resultat = `<div class="wf-table-case resultat trouve" title="${esc(p.desc)}${p.effet ? ' · ' + esc(p.effet.texte) : ''}">${iconeObjet(S, p.id, true)}<i>${fmt(p.sortie * k)}</i></div>`;
+    bouton = `<b>${esc(p.nom)}</b>
+      <small>${p.niveau > nivMax ? `${ico('lock')} Complexe industriel niveau ${p.niveau} requis` : `${ico('clock')} ${duree(dureeLot(p.temps, k) / Math.max(0.01, vitesseAtelier(S, 'fabrique') || 1) / S.vitesse)}`}</small>
+      ${controleAuto('fab', S)}
+      <button class="wf-btn" data-act="table_fabriquer" ${p.niveau <= nivMax ? '' : 'disabled'}>${ico(S.fabAuto ? 'arrows-rotate' : 'hammer')} ${S.fabAuto ? 'Lancer la ligne' : 'Fabriquer'}</button>`;
+  } else if (table.length) {
+    bouton = `<small>${ico('circle-question')} Aucune recette avec ces matériaux.</small>`;
+  }
+  html += `<div class="wf-etabli">
+    <div class="wf-table-grille">${cases.map((c, k) => c
+      ? `<button class="wf-table-case ${possede(S, c.id) + 1e-6 >= c.q ? '' : 'manque'}" data-act="table_retirer" data-k="${k}" title="${esc(nomObjet(S, c.id))} : clic pour en retirer">${iconeObjet(S, c.id)}<i>${fmt(c.q)}</i></button>`
+      : `<div class="wf-table-case vide"></div>`).join('')}</div>
+    <div class="wf-table-fleche">${ico('arrow-right')}</div>
+    <div class="wf-table-sortie">${resultat}<div class="wf-table-info">${bouton}</div></div>
+  </div>
+  <div class="wf-table-outils">
+    <span>Poser par</span>${[1, 5, 10].map(v => `<button class="wf-chip ${(S.tablePas || 1) === v ? 'actif' : ''}" data-act="table_pas" data-v="${v}">${v}</button>`).join('')}
+    <span class="wf-espace"></span>
+    ${table.length ? `<button class="wf-btn petit secondaire" data-act="table_vider">${ico('broom')} Vider la table</button>` : ''}
+  </div>`;
+
+  // ── Inventaire ──
+  const inventaire = [...S.defs.elements.map(e => e.id), ...S.defs.produits.map(p => p.id)].filter(id => possede(S, id) - pose(id) > 1e-6);
+  html += titre('Vos matériaux', 'boxes-stacked', '<small>cliquez pour poser sur la table</small>');
+  html += inventaire.length ? `<div class="wf-inventaire">${inventaire.map(id => `<button class="wf-table-case" data-act="table_poser" data-objet="${id}" title="${esc(nomObjet(S, id))}">
+      ${iconeObjet(S, id)}<i>${fmt(possede(S, id) - pose(id), possede(S, id) < 10 ? 1 : 0)}</i></button>`).join('')}</div>`
+    : vide('Aucun matériau : raffinez vos minerais dans l\'onglet Raffinerie.', 'flask-vial');
+
+  // ── Livre de recettes ──
+  const niv = Math.max(1, Math.min(8, +S.fabNiveau || Math.max(1, nivMax)));
+  const q = Math.max(1, Math.min(1000, +S.qteFab || 1));
+  const filtre = (S.fabFiltre || '').trim().toLowerCase();
+  html += titre('Livre de recettes', 'book', `<small>${S.defs.produits.length} recettes</small>`);
+  html += `<div class="wf-livre-outils">
+    <input type="search" id="fab-filtre" data-filtre="fabFiltre" data-cible=".wf-livre-ligne" placeholder="Chercher une recette (acier, trou noir, électricité…)" value="${esc(S.fabFiltre || '')}" data-garder>
+    ${controleQte('qte-fab', q, [1, 5, 10, 25])}
+  </div>`;
+  html += `<div class="wf-fab-niveaux">${[1, 2, 3, 4, 5, 6, 7, 8].map(n => `<button class="wf-chip ${n === niv && !filtre ? 'actif' : ''} ${n > nivMax ? 'verrou' : ''}" data-act="fab_niveau" data-niveau="${n}">${n > nivMax ? ico('lock') : ''}Niv. ${n}</button>`).join('')}</div>`;
+  const recettes = S.defs.produits.filter(p => filtre ? true : p.niveau === niv);
+  html += `<div class="wf-livre">${recettes.map(p => {
+    const ok = p.niveau <= nivMax && p.entrees.every(([id, n]) => possede(S, id) + 1e-6 >= n * q);
+    const cherche = (p.nom + ' ' + p.desc + ' ' + (p.effet?.texte || '')).toLowerCase();
+    return `<div class="wf-livre-ligne ${ok ? 'faisable' : ''} ${p.niveau > nivMax ? 'verrou' : ''}" data-nom="${esc(cherche)}" ${filtre && !cherche.includes(filtre) ? 'hidden' : ''}>
+      <div class="wf-livre-sortie">${iconeObjet(S, p.id)}<div><b>${esc(p.nom)}</b> <small>niv. ${p.niveau} · → ${fmt(p.sortie * q)}${possede(S, p.id) > 0 ? ` · ${fmt(possede(S, p.id), 1)} en stock` : ''}</small>
+        ${p.effet ? `<div class="wf-effet">${ico('star')} ${esc(p.effet.texte)}</div>` : ''}</div></div>
+      <span class="wf-fab-recette">${p.entrees.map(([id, n]) => puceMatiere(S, id, n * q)).join('')}</span>
+      <span class="wf-livre-boutons">
+        <button class="wf-btn petit" data-act="fab_direct" data-objet="${p.id}" ${p.niveau <= nivMax ? '' : 'disabled'} title="${ok ? `Fabriquer ${q} fois avec ce que vous avez` : 'Il manque des matières : elles seront raffinées et fabriquées automatiquement avec votre minerai'}">${ico(ok ? 'hammer' : 'sitemap')} Fabriquer</button>
+        <button class="wf-btn-ic" data-act="table_remplir" data-objet="${p.id}" title="Poser sur la table">${ico('table-cells')}</button>
+      </span>
+    </div>`;
+  }).join('')}</div>
+  <p class="wf-note">${ico('circle-info')} <b>Fabriquer</b> utilise ce que vous avez. S'il manque des éléments ou des produits intermédiaires, ils sont raffinés et fabriqués automatiquement avec votre minerai, étape par étape.</p>`;
+  return html;
+}
+
+function ongletProduits(S) {
+  const m = S.moi;
+  const produits = S.defs.produits.filter(p => possede(S, p.id) > 0);
+  const elements = S.defs.elements.filter(e => possede(S, e.id) > 0);
+  const bonus = bonusActifs(S);
+  let html = titre('Bonus de vos produits', 'star', '<small>tant que vous les gardez</small>');
+  html += Object.keys(bonus).length ? `<div class="wf-admin-grille">${Object.entries(bonus).map(([k, v]) => {
+    const [nom, ic, f] = NOMS_EFFETS[k] || [k, 'star', x => x];
+    return `<div class="wf-admin-stat">${ico(ic)} <b>${f(v)}</b><small>${nom}</small></div>`;
+  }).join('')}</div>` : vide('Aucun bonus : beaucoup de produits donnent des bonus permanents (armes, robots, centrales, médicaments…). Voir le livre de recettes.', 'star');
+  html += titre('Produits', 'boxes-stacked', `<small>${produits.length}</small>`);
+  html += produits.length ? `<div class="wf-fab-cartes">${produits.map(p => {
+    const n = possede(S, p.id);
+    const arme = ['bombe_trou_noir', 'bombe_antimatiere'].includes(p.id);
+    return `<div class="wf-fab-carte">
+      <div class="wf-fab-carte-tete"><span class="wf-bat-ic" style="color:${COULEURS_NIVEAU[p.niveau]}">${ico(p.icone)}</span><div><b>${esc(p.nom)}</b><small>× ${fmt(n, 1)} · se vend ${fmt(prixCours(S, p.id))} ${ico('coins')} pièce</small></div></div>
+      ${p.effet ? `<div class="wf-effet">${ico('star')} ${esc(p.effet.texte)}</div>` : ''}
+      <div class="wf-fab-carte-pied">
+        ${arme ? `<button class="wf-btn petit danger" data-act="ordre_special" data-objet="${p.id}">${ico('crosshairs')} Lancer</button>` : '<span></span>'}
+        <span class="wf-boutons"><button class="wf-btn petit secondaire" data-act="vendre_objet" data-objet="${p.id}" data-qte="1">Vendre 1</button>
+        ${n >= 2 ? `<button class="wf-btn petit secondaire" data-act="vendre_objet" data-objet="${p.id}" data-qte="${Math.floor(n)}">Tout</button>` : ''}</span>
+      </div></div>`;
+  }).join('')}</div>` : vide('Rien pour l\'instant : passez commande dans l\'onglet Fabrique.', 'gears');
+  html += titre('Éléments', 'atom', `<small>${elements.length} / 118</small>`);
+  html += elements.length ? `<div class="wf-fab-elements">${elements.map(e => `<span class="wf-fab-puce ok" title="${esc(e.nom)}">
+      <b class="wf-symbole" style="--c:${FAMILLES[e.categorie][1]}">${esc(e.id)}</b> ${fmt(possede(S, e.id), 1)}${e.demi_vie ? ' ' + ico('hourglass-half') : ''}</span>`).join('')}</div>`
+    : vide('Aucun élément : raffinez vos minerais dans l\'onglet Raffinerie.', 'flask-vial');
+  return html;
+}
+
+function panneauFabrication(S) {
+  const m = S.moi;
+  if (!m) return vide('Fondez votre nation pour fabriquer.', 'flag');
+  const onglet = S.fabOnglet || 'raffinerie';
+  const onglets = [['raffinerie', 'Raffinerie', 'flask-vial'], ['fabrique', 'Complexe industriel', 'industry'], ['produits', 'Mes produits', 'boxes-stacked']];
+  const html = `<div class="wf-segment wf-fab-onglets">${onglets.map(([id, nom, ic]) => `<button class="${id === onglet ? 'actif' : ''}" data-act="fab_onglet" data-onglet="${id}">${ico(ic)}<span>${nom}</span></button>`).join('')}</div>`
+    + fileFabrication(S)
+    + (onglet === 'raffinerie' ? ongletRaffinerie(S) : onglet === 'fabrique' ? ongletFabrique(S) : ongletProduits(S));
+  return html;
 }
 
 export const PANNEAUX = {
   pays: { titre: 'Mon pays', icone: 'flag', rendre: panneauPays },
   construction: { titre: 'Construction', icone: 'helmet-safety', rendre: panneauConstruction },
+  fabrication: { titre: 'Fabrication', icone: 'gears', rendre: panneauFabrication },
   armee: { titre: 'Armées', icone: 'person-military-rifle', rendre: panneauArmee },
   recherche: { titre: 'Recherche', icone: 'flask', rendre: panneauRecherche },
   diplomatie: { titre: 'Diplomatie', icone: 'handshake', rendre: panneauDiplomatie },

@@ -10,8 +10,11 @@
 // client recoit sa propre vue (vue.rs).
 // ══════════════════════════════════════════════════════════════════
 
+mod admin;
 mod bots;
 mod defs;
+mod fabrication;
+mod front;
 mod jeu;
 mod monde;
 mod reseau;
@@ -24,7 +27,7 @@ use axum::{
     },
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
@@ -39,6 +42,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tower_http::services::ServeDir;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 // ══════════════════════════════════════════════════════════════════
 // Configuration
@@ -66,8 +70,6 @@ struct Config {
     annuaire_url: String,
     /// Nœud propose par defaut sur la page de connexion.
     noeud_par_defaut: String,
-    /// Comptes reseau administrateurs du jeu (« user_id@node_id »).
-    admins: Vec<String>,
     /// Chemin du db.json de VEX (memes identifiants MySQL que VEX).
     vex_db_fichier: String,
     vex_db: Option<DbConf>,
@@ -76,10 +78,16 @@ struct Config {
     verifier_navigateur: bool,
     /// Si WorldFront est derriere un reverse proxy : lire X-Forwarded-For.
     proxy_de_confiance: bool,
-    /// Privilege VEX maximal pour les outils d'administration du jeu (1 = super admin).
+    /// Privilege maximal pour les outils d'administration du jeu. Depuis la
+    /// cle d'administration, seul son detenteur a le privilege 1.
     admin_privilege_max: i64,
+    /// Cle publique Ed25519 (32 octets en base64) de la cle d'administration.
+    /// Seul le detenteur de la cle privee correspondante voit et utilise
+    /// l'administration (page /admin). Vide : administration desactivee.
+    admin_cle_publique: String,
     carte_largeur: usize,
     carte_hauteur: usize,
+    /// Graine de la carte. 0 (defaut) : tiree au hasard a chaque nouveau monde.
     graine: u64,
     /// Multiplicateur de vitesse du jeu (1 = normal).
     vitesse: f64,
@@ -110,7 +118,6 @@ impl Default for Config {
             url_publique: String::new(),
             annuaire_url: "https://vex.hopto.org/neut/annuaire".into(),
             noeud_par_defaut: "vex.hopto.org".into(),
-            admins: Vec::new(),
             vex_db_fichier: String::new(),
             vex_db: None,
             session_duree_s: 3600,
@@ -118,9 +125,10 @@ impl Default for Config {
             verifier_navigateur: true,
             proxy_de_confiance: false,
             admin_privilege_max: 3,
-            carte_largeur: 84,
-            carte_hauteur: 52,
-            graine: 20260925,
+            admin_cle_publique: String::new(),
+            carte_largeur: 128,
+            carte_hauteur: 80,
+            graine: 0,
             vitesse: 1.0,
             protection_heures: 2.0,
             sauvegarde: "data/monde.json".into(),
@@ -158,6 +166,7 @@ struct App {
     db: Option<mysql::Pool>,
     reseau: reseau::Reseau,
     regles: jeu::Regles,
+    admin: admin::Admin,
 }
 
 type Partage = Arc<App>;
@@ -248,8 +257,19 @@ fn charger_monde(cfg: &Config, racine: &Path) -> monde::Monde {
             }
         }
     }
-    println!("[monde] generation d'une carte {}x{} (graine {}).", cfg.carte_largeur, cfg.carte_hauteur, cfg.graine);
-    monde::Monde::generer(cfg.carte_largeur.clamp(30, 200), cfg.carte_hauteur.clamp(20, 140), cfg.graine)
+    let graine = graine_carte(cfg);
+    println!("[monde] generation d'une carte {}x{} (graine {}).", cfg.carte_largeur, cfg.carte_hauteur, graine);
+    monde::Monde::generer(cfg.carte_largeur.clamp(30, 200), cfg.carte_hauteur.clamp(20, 140), graine)
+}
+
+/// Graine de config.json, ou une graine au hasard si elle vaut 0.
+fn graine_carte(cfg: &Config) -> u64 {
+    if cfg.graine != 0 {
+        cfg.graine
+    } else {
+        use rand::Rng;
+        rand::thread_rng().gen_range(1..u32::MAX as u64)
+    }
 }
 
 async fn sauvegarder(app: &Partage) {
@@ -308,7 +328,11 @@ async fn main() {
         db,
         reseau: reseau::Reseau::charger(racine.join("data").join("sessions.json")),
         regles,
+        admin: admin::Admin::default(),
     });
+    if cfg.admin_cle_publique.trim().is_empty() {
+        println!("[admin] aucune admin_cle_publique : administration desactivee.");
+    }
 
     // Boucle de simulation
     {
@@ -360,8 +384,16 @@ async fn main() {
         .route("/auth/retour", get(auth_retour))
         .route("/deconnexion", get(deconnexion))
         .route("/api/statut", get(api_statut))
+        .route("/admin", get(page_admin))
+        .route("/admin/defi", get(admin_defi))
+        .route("/admin/prouver", post(admin_prouver))
+        .route("/admin/sortir", get(admin_sortir))
         .route("/ws", get(ws))
         .nest_service("/static", ServeDir::new(racine.join("static")))
+        // Sans ca, le navigateur garde d'anciennes versions des .css/.js apres
+        // une mise a jour : il revalide maintenant chaque fichier (304 si
+        // inchange, donc presque gratuit). Les pages gardent leur no-store.
+        .layer(SetResponseHeaderLayer::if_not_present(header::CACHE_CONTROL, header::HeaderValue::from_static("no-cache")))
         .with_state(app.clone());
 
     let adr = format!("{}:{}", cfg.adresse, cfg.port);
@@ -401,7 +433,9 @@ async fn signal_arret() {
 
 /// `worldfront --apercu` : dessine la carte en texte (reglage de la graine).
 fn apercu_carte(cfg: &Config) {
-    let m = monde::Monde::generer(cfg.carte_largeur, cfg.carte_hauteur, cfg.graine);
+    let graine = graine_carte(cfg);
+    println!("graine {}", graine);
+    let m = monde::Monde::generer(cfg.carte_largeur, cfg.carte_hauteur, graine);
     let mut compte = [0usize; 8];
     let mut depots = [0usize; 6];
     for y in 0..m.hauteur {
@@ -436,10 +470,11 @@ fn apercu_carte(cfg: &Config) {
 fn boucle(app: &Partage, dt: f64, avec_publics: bool) {
     let mut m = app.monde.lock().unwrap();
     let bl = jeu::tick(&mut m, dt);
-    if app.cfg.bots > 0 {
+    let nb_bots = m.bots_admin.unwrap_or(app.cfg.bots);
+    if nb_bots > 0 {
         bots::jouer(&mut m, &app.regles, &bl, dt);
     }
-    bots::assurer(&mut m, app.cfg.bots, &app.regles, dt);
+    bots::assurer(&mut m, nb_bots, &app.regles, dt);
     let vis = vue::visions(&m, &bl);
     let publics = vue::publics(&m, &bl);
     {
@@ -583,7 +618,16 @@ fn decoder_url(s: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
+/// Identite du visiteur. Le privilege d'administration ne vient QUE de la
+/// cle d'administration (cookie wf_admin obtenu sur /admin), jamais du mode
+/// d'authentification ni du privilege VEX.
 async fn authentifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Option<Identite> {
+    let mut id = identifier(app, headers, addr).await?;
+    id.privilege = if app.admin.valide(&cookie(headers, "wf_admin"), id.user_id) { 1 } else { 10 };
+    Some(id)
+}
+
+async fn identifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Option<Identite> {
     if app.cfg.auth == "dev" {
         let nom = decoder_url(&cookie(headers, "wf_dev"));
         let nom: String = nom.chars().filter(|c| !c.is_control()).take(24).collect();
@@ -595,11 +639,10 @@ async fn authentifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> O
     }
     if app.cfg.auth == "reseau" {
         let s = app.reseau.session(&cookie(headers, "wf_session"))?;
-        let admin = app.cfg.admins.iter().any(|a| a == &s.compte);
         return Some(Identite {
             user_id: reseau::id_compte(&s.compte),
             nom: s.nom,
-            privilege: if admin { 1 } else { 10 },
+            privilege: 10,
             sombre: s.sombre,
             noeud: Some(s.noeud),
         });
@@ -617,6 +660,10 @@ async fn authentifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> O
         .ok()
         .flatten()
 }
+
+/// Change a chaque demarrage : ajoute aux liens des .css/.js (?v=) pour que
+/// le navigateur recharge tout apres une mise a jour du serveur.
+static VERSION_FICHIERS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 fn echapper(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
@@ -653,9 +700,11 @@ fn gabarit(app: &App, fichier: &str, id: Option<&Identite>) -> Response {
         .replace("__VEX__", &echapper(vex.trim_end_matches('/')))
         .replace("__NOEUD_DEFAUT__", &echapper(&app.cfg.noeud_par_defaut))
         .replace("__CONNEXION__", &echapper(&url_connexion(app)))
+        .replace("__ENTREE__", &echapper(&url_entree(app)))
         .replace("__NOM__", &echapper(id.map(|i| i.nom.as_str()).unwrap_or("")))
         .replace("__CONNECTE__", if id.is_some() { "1" } else { "0" })
         .replace("__MODE__", &echapper(&app.cfg.auth))
+        .replace("__V__", VERSION_FICHIERS.get_or_init(|| chrono::Utc::now().timestamp().to_string()))
         .replace(
             "__ADMIN__",
             if id.map(|i| i.privilege <= app.cfg.admin_privilege_max).unwrap_or(false) { "1" } else { "0" },
@@ -678,7 +727,17 @@ async fn page_accueil(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo
 async fn page_jeu(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Response {
     match authentifier(&app, &headers, addr).await {
         Some(id) => gabarit(&app, "jeu.html", Some(&id)),
-        None => Redirect::to(&url_connexion(&app)).into_response(),
+        None => Redirect::to(&url_entree(&app)).into_response(),
+    }
+}
+
+/// Connexion en un clic : en mode reseau, droit vers le nœud VEX par defaut
+/// (la page /connexion reste la pour choisir un autre nœud).
+fn url_entree(app: &App) -> String {
+    if app.cfg.auth == "reseau" && !app.cfg.noeud_par_defaut.is_empty() {
+        format!("{}?noeud={}", chemin(app, "/auth/debut"), reseau::encoder(&app.cfg.noeud_par_defaut))
+    } else {
+        url_connexion(app)
     }
 }
 
@@ -794,6 +853,63 @@ async fn deconnexion(State(app): State<Partage>, headers: HeaderMap) -> Response
     r
 }
 
+// ── Administration : reservee au detenteur de la cle privee ───────
+async fn page_admin(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Response {
+    match authentifier(&app, &headers, addr).await {
+        Some(id) => gabarit(&app, "admin.html", Some(&id)),
+        None => Redirect::to(&url_connexion(&app)).into_response(),
+    }
+}
+
+async fn admin_defi(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Response {
+    let Some(id) = authentifier(&app, &headers, addr).await else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"erreur": "Connectez-vous d'abord."}))).into_response();
+    };
+    if app.cfg.admin_cle_publique.trim().is_empty() {
+        return (StatusCode::FORBIDDEN, Json(json!({"erreur": "Administration désactivée sur ce serveur."}))).into_response();
+    }
+    Json(json!({ "message": app.admin.defi(id.user_id) })).into_response()
+}
+
+#[derive(Deserialize)]
+struct Preuve {
+    message: String,
+    sig: String,
+}
+
+async fn admin_prouver(
+    State(app): State<Partage>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    Json(p): Json<Preuve>,
+) -> Response {
+    let Some(id) = authentifier(&app, &headers, addr).await else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"erreur": "Connectez-vous d'abord."}))).into_response();
+    };
+    match app.admin.prouver(&app.cfg.admin_cle_publique, id.user_id, &p.message, &p.sig) {
+        Ok(jeton) => {
+            println!("[admin] administration deverrouillee par {} ({})", id.nom, id.user_id);
+            let mut r = Json(json!({ "ok": true })).into_response();
+            r.headers_mut().append(
+                header::SET_COOKIE,
+                format!("wf_admin={}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}", jeton, admin::DUREE).parse().unwrap(),
+            );
+            r
+        }
+        Err(e) => {
+            println!("[admin] preuve refusee pour {} ({}) : {}", id.nom, id.user_id, e);
+            (StatusCode::FORBIDDEN, Json(json!({ "erreur": e }))).into_response()
+        }
+    }
+}
+
+async fn admin_sortir(State(app): State<Partage>, headers: HeaderMap) -> Response {
+    app.admin.fermer(&cookie(&headers, "wf_admin"));
+    let mut r = Redirect::to(&chemin(&app, "/jeu")).into_response();
+    r.headers_mut().append(header::SET_COOKIE, "wf_admin=; Path=/; Max-Age=0".parse().unwrap());
+    r
+}
+
 async fn api_statut(State(app): State<Partage>) -> Json<Value> {
     let (pays, blocs, guerres) = {
         let m = app.monde.lock().unwrap();
@@ -873,7 +989,7 @@ fn traiter(app: &Partage, cid: u64, id: &Identite, admin: bool, cmd: &Value, tx:
         return;
     }
     let mut m = app.monde.lock().unwrap();
-    let joueur = jeu::Joueur { user_id: id.user_id, nom: &id.nom, admin, triche: app.cfg.auth == "dev" };
+    let joueur = jeu::Joueur { user_id: id.user_id, nom: &id.nom, admin, triche: admin };
     let res = jeu::commande(&mut m, &joueur, cmd, &app.regles);
     let (ok, msg) = match res {
         Ok(s) => (true, s),

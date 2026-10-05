@@ -32,19 +32,6 @@ pub struct Chantier {
     pub niv: u8,
     pub reste: f64,
     pub total: f64,
-    /// Annexion : commandant qui mène la conquête.
-    #[serde(default)]
-    pub cmdt: Option<u32>,
-}
-
-/// Commandant : indispensable pour conquérir une province neutre.
-/// Plus il est rapide (1 à 5 étoiles), plus il mange de nourriture.
-#[derive(Serialize, Deserialize, Clone)]
-pub struct Commandant {
-    pub id: u32,
-    pub nom: String,
-    pub vitesse: u8,
-    pub case: usize,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -103,8 +90,15 @@ pub struct Pays {
     /// Stock d'uranium enrichi (centre d'enrichissement -> centrales).
     #[serde(default)]
     pub ur_enrichi: f64,
+    /// Troupes disponibles (facon OpenFront) : on en envoie une part pour
+    /// s'etendre sur les terres neutres ou attaquer un ennemi.
     #[serde(default)]
-    pub commandants: Vec<Commandant>,
+    pub troupes: f64,
+    /// Minerais, elements et produits fabriques (fabrication.rs).
+    #[serde(default)]
+    pub stock: crate::fabrication::Stock,
+    #[serde(default)]
+    pub fabrications: Vec<crate::fabrication::Fabrication>,
 }
 
 impl Pays {
@@ -154,6 +148,13 @@ pub struct MissileVol {
     pub cible: usize,
     pub progres: f64,
     pub duree: f64,
+    /// Arme nucleaire : kg de matiere fissile, explosifs, « uranium » ou « plutonium ».
+    #[serde(default)]
+    pub matiere: f64,
+    #[serde(default)]
+    pub explosifs: f64,
+    #[serde(default)]
+    pub fissile: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -215,6 +216,27 @@ pub struct MessageChat {
     pub t: i64,
 }
 
+/// Offensive facon OpenFront : des troupes avancent case par case dans le
+/// territoire vise (neutre ou ennemi), en commencant par les cases les plus
+/// proches de celle qui a ete cliquee.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Attaque {
+    pub id: u32,
+    pub de: u32,
+    /// None = terres neutres.
+    pub cible: Option<u32>,
+    pub troupes: f64,
+    /// Case cliquee : le front avance vers elle.
+    pub vise: usize,
+    /// Cases prises par cette offensive.
+    pub prises: u32,
+    /// Fraction de case deja gagnee.
+    pub progres: f64,
+    /// Debarquement : case cotiere visee et secondes de traversee restantes.
+    #[serde(default)]
+    pub bateau: Option<(usize, f64)>,
+}
+
 /// Nuage radioactif pousse par le vent apres un accident nucleaire.
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Nuage {
@@ -259,6 +281,18 @@ pub struct Monde {
     pub temps: f64,
     #[serde(default)]
     pub nuages: Vec<Nuage>,
+    #[serde(default)]
+    pub attaques: BTreeMap<u32, Attaque>,
+    /// Version des regles de la sauvegarde (migrations dans jeu::migrer).
+    #[serde(default)]
+    pub version: u32,
+    /// Nombre de bots choisi dans l'administration (sinon : config.json).
+    #[serde(default)]
+    pub bots_admin: Option<usize>,
+    /// Cours des elements et produits au marche (1 = prix de reference) :
+    /// baisse quand on vend, monte quand on achete, revient lentement a 1.
+    #[serde(default)]
+    pub cours: BTreeMap<String, f64>,
     #[serde(skip)]
     pub effets: Vec<Effet>,
 }
@@ -423,6 +457,18 @@ impl Monde {
         let alt = Bruit { graine };
         let hum = Bruit { graine: graine.wrapping_add(7_919) };
         let res = Bruit { graine: graine.wrapping_add(104_729) };
+        let tord = Bruit { graine: graine.wrapping_add(15_485_863) };
+
+        // Chaque graine tire aussi la « forme » du monde : taille des
+        // continents, niveau de la mer, deformation des cotes, climat.
+        // Deux cartes ne se ressemblent donc plus seulement par le detail.
+        let p = |k: i64| tord.hash(k, 977);
+        let echelle = 7.0 + 9.0 * p(1); // 7 = archipels, 16 = grands continents
+        let mer = -0.05 + 0.10 * p(2); // niveau de la mer
+        let torsion = 2.0 + 7.0 * p(3); // cotes plus ou moins decoupees
+        let bords = 0.25 + 0.25 * p(4); // poids de l'ocean sur les bords
+        let echelle_hum = 5.0 + 7.0 * p(5);
+        let secheresse = -0.06 + 0.12 * p(6);
 
         let mut cases = vec![Case::default(); largeur * hauteur];
         for y in 0..hauteur {
@@ -433,13 +479,16 @@ impl Monde {
                 let nx = px / largeur as f64;
                 let ny = py / (hauteur as f64 * 0.866);
 
-                // Continents : bruit + attenuation vers les bords.
-                let mut h = alt.fbm(px / 11.0, py / 11.0, 5);
+                // Continents : bruit deforme (cotes irregulieres) + attenuation
+                // vers les bords.
+                let dx = torsion * (tord.fbm(px / 9.0, py / 9.0, 3) - 0.5);
+                let dy = torsion * (tord.fbm(px / 9.0 + 41.0, py / 9.0 + 17.0, 3) - 0.5);
+                let mut h = alt.fbm((px + dx) / echelle, (py + dy) / echelle, 5);
                 let bord_x = (nx * (1.0 - nx) * 4.0).min(1.0);
                 let bord_y = (ny * (1.0 - ny) * 4.0).min(1.0);
-                h = h * (0.62 + 0.38 * bord_x.powf(0.5) * bord_y.powf(0.4)) - 0.05 * (1.0 - bord_y) + 0.03;
+                h = h * (1.0 - bords + bords * bord_x.powf(0.5) * bord_y.powf(0.4)) - 0.05 * (1.0 - bord_y) + 0.03 - mer;
                 let latitude = (ny - 0.5).abs() * 2.0; // 0 equateur, 1 pole
-                let humid = hum.fbm(px / 8.0, py / 8.0, 4);
+                let humid = hum.fbm(px / echelle_hum, py / echelle_hum, 4) - secheresse;
 
                 let terrain = if h < 0.40 {
                     T_OCEAN
@@ -482,6 +531,10 @@ impl Monde {
             rev: 1,
             temps: 0.0,
             nuages: Vec::new(),
+            attaques: BTreeMap::new(),
+            version: 4,
+            bots_admin: None,
+            cours: BTreeMap::new(),
             effets: Vec::new(),
         };
 
@@ -507,18 +560,38 @@ impl Monde {
             let region = |k: f64| res.fbm(x as f64 / 6.0 + k, y as f64 / 6.0 + k * 1.7, 3);
             let de = res.hash(x * 31 + 7, y * 17 + 3);
             let depot = match t {
-                T_DESERT if region(10.0) > 0.52 && de < 0.45 => D_PETROLE,
-                T_PLAINE | T_TOUNDRA if region(10.0) > 0.60 && de < 0.18 => D_PETROLE,
+                T_DESERT if region(10.0) > 0.52 && de < 0.45 => D_METAL,
+                T_PLAINE | T_TOUNDRA if region(10.0) > 0.60 && de < 0.18 => D_METAL,
                 T_MONTAGNE | T_COLLINE if region(20.0) > 0.66 && de < 0.30 => D_URANIUM,
                 T_COLLINE | T_MONTAGNE if de < 0.40 => D_METAL,
                 T_FORET | T_COLLINE if region(30.0) > 0.60 && de < 0.25 => D_TERRES_RARES,
                 T_TOUNDRA if region(20.0) > 0.60 && de < 0.18 => D_URANIUM,
-                T_PLAINE if de < 0.30 => D_FERTILE,
-                T_FORET if de < 0.10 => D_FERTILE,
                 T_DESERT if de < 0.08 => D_METAL,
                 _ => D_AUCUN,
             };
             monde.cases[i].depot = depot;
+        }
+
+        // Crateres de meteorite : seule source de minerai legendaire. Tres
+        // rares (un pour ~900 cases de terre, 3 au moins) et bien espaces.
+        let mut terres: Vec<(f64, usize)> = (0..monde.cases.len())
+            .filter(|&i| est_terre(monde.cases[i].terrain))
+            .map(|i| {
+                let (x, y) = monde.xy(i);
+                (res.hash(x * 101 + 13, y * 53 + 29), i)
+            })
+            .collect();
+        terres.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let voulus = (terres.len() / 900).max(3);
+        let mut crateres: Vec<usize> = Vec::new();
+        for (_, i) in terres {
+            if crateres.len() >= voulus {
+                break;
+            }
+            if crateres.iter().all(|&c| monde.distance(c, i) >= 10) {
+                monde.cases[i].depot = D_METEORITE;
+                crateres.push(i);
+            }
         }
 
         monde

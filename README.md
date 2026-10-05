@@ -8,12 +8,13 @@ Serveur en **Rust** (Axum + Tokio, WebSocket temps réel), carte 3D en **Three.j
 
 | | |
 |---|---|
-| **Carte** | Monde hexagonal généré (84 × 52 par défaut) : océans, côtes, plaines, forêts, collines, montagnes, déserts, toundra. Relief 3D, brouillard de guerre, trois modes (politique, terrain, ressources). |
+| **Carte** | Monde hexagonal généré au hasard (128 × 80 par défaut) : taille des continents, niveau de la mer, côtes et climat changent à chaque monde. Océans, côtes, plaines, forêts, collines, montagnes, déserts, toundra, cratères de météorite. Relief 3D, brouillard de guerre, trois modes (politique, terrain, ressources). |
 | **Ressources** | Crédits, nourriture, métal, pétrole, uranium, terres rares, plus électricité, population, influence et recherche. Chaque région a ses gisements. |
-| **Territoire** | La capacité territoriale dépend des centres administratifs et des villes construits. On annexe les provinces neutres voisines, ou on conquiert celles de l'ennemi. |
-| **Bâtiments** | 25 bâtiments (ville, fermes, mines, puits, centrales thermique/solaire/nucléaire, industrie, laboratoires, entrepôts, banque, hôpital, caserne, usine de blindés, base aérienne, chantier naval, silo, batterie sol-air, fortifications, radar…), 5 niveaux (8 avec « Grands travaux »). |
+| **Troupes (façon OpenFront)** | Une réserve de troupes qui se remplit toute seule (maximum selon le territoire, les villes, la capitale, les casernes). **Clic droit** sur une case : on y envoie une part réglable des troupes, qui avancent case par case vers elle (terres neutres : le pays s'agrandit ; ennemi en guerre : invasion contre son relief, ses forts et ses troupes ; côte lointaine : débarquement depuis un chantier naval). **Clic gauche** : construire. |
+| **Minerais et fabrication** | 4 minerais (commun, rare, radioactif, légendaire), extraits par les carrières et les mines. La raffinerie en tire le métal, les terres rares, l'uranium, ou n'importe lequel des **118 éléments** du tableau périodique (les légendaires se désintègrent vite). La fabrique assemble **105 produits** sur 8 niveaux, de l'acier au **trou noir**. |
+| **Bâtiments** | 29 bâtiments (ville, fermes, mines, puits, centrales thermique/solaire/nucléaire, industrie, laboratoires, entrepôts, banque, hôpital, caserne, usine de blindés, base aérienne, chantier naval, silo, batterie sol-air, fortifications, radar…), 5 niveaux (8 avec « Grands travaux »). |
 | **Technologies** | 48 technologies en 4 branches (militaire, économie, diplomatie, industrie) qui se croisent. File de recherche. |
-| **Unités** | 17 unités : infanterie, forces spéciales (furtives), blindés, chars, artillerie, DCA mobile, chasseurs, hélicoptères, bombardiers, drones, frégates, destroyers, sous-marins (furtifs), porte-avions, missiles de croisière, balistiques, nucléaires. |
+| **Unités** | 17 unités : infanterie, forces spéciales (furtives), blindés, chars, artillerie, DCA mobile, chasseurs, hélicoptères, bombardiers, drones, frégates, destroyers, sous-marins (furtifs), porte-avions, missiles de croisière, balistiques, nucléaires (puissance selon la matière fissile embarquée et les explosifs ; pertes selon la densité de population), bombes à antimatière et à trou noir. |
 | **Guerre en temps réel** | Déplacements avec recherche de chemin, assauts, bonus de relief et de fortifications, bombardement à distance, raids aériens avec interception (batteries, DCA, chasse ennemie), missiles interceptables, frappe nucléaire (zone irradiée, alerte mondiale), capture de capitale et repli du gouvernement, opérations amphibies. |
 | **Diplomatie** | Guerre, paix, pactes de non-agression, aide en ressources, espionnage (sabotage, vol technologique, déstabilisation), protection des nouveaux joueurs. |
 | **Blocs** | Alliances façon OTAN : défense collective automatique, vision et radars partagés, trésor commun, canal de discussion privé, candidatures et invitations. |
@@ -21,7 +22,7 @@ Serveur en **Rust** (Axum + Tokio, WebSocket temps réel), carte 3D en **Three.j
 | **Classements** | Général, militaire, économie, territoire, technologie, population, diplomatie, victoires, blocs. |
 | **Social** | Journal (événements du pays et actualité mondiale), messagerie monde et bloc, notifications. |
 
-Aucune IA dans le jeu : pas de pays contrôlés par l'ordinateur ni d'assistant, uniquement des joueurs.
+Des nations jouées par l'ordinateur peuvent compléter la partie (`"bots"` dans `config.json`, 0 pour aucune).
 
 ## Lancer en local (sans VEX)
 
@@ -29,7 +30,15 @@ Aucune IA dans le jeu : pas de pays contrôlés par l'ordinateur ni d'assistant,
 cargo run --release
 ```
 
-Puis ouvrir http://127.0.0.1:8095. Le `config.json` fourni est en **mode dev** : n'importe quel pseudo ouvre une session. Dans la console du navigateur, `devTout()` donne toutes les technologies et des ressources pour tester la fin de partie. Cette commande est refusée par le serveur hors mode dev.
+Puis ouvrir http://127.0.0.1:8095. En **mode dev** (`"auth": "dev"`), n'importe quel pseudo ouvre une session ; après avoir déverrouillé l'administration (voir plus bas), `devTout()` dans la console du navigateur donne toutes les technologies, des ressources et un peu de chaque élément.
+
+## Administration : clé privée
+
+L'administration (annonce mondiale, suppression de nations, `devTout`) n'apparaît et ne fonctionne que pour le détenteur de la **clé d'administration** :
+
+1. Créer une paire de clés Ed25519 : `openssl genpkey -algorithm ed25519 -out "worldfront admin.pem"`.
+2. Mettre la clé publique (32 octets en base64 : `openssl pkey -in "worldfront admin.pem" -pubout -outform DER | tail -c 32 | base64`) dans `admin_cle_publique` du `config.json`.
+3. Ouvrir `/admin` et choisir le fichier `.pem` : le navigateur signe un défi du serveur, la clé ne quitte jamais l'ordinateur. Le déverrouillage dure 12 h et ne vaut que pour le compte qui l'a obtenu.
 
 `cargo run -- --apercu` affiche la carte en texte, pratique pour choisir une `graine`.
 
@@ -37,7 +46,7 @@ Puis ouvrir http://127.0.0.1:8095. Le `config.json` fourni est en **mode dev** :
 
 Un joueur se connecte avec son compte de **n'importe quel nœud du réseau VEX** :
 
-1. Sur `/connexion`, il indique l'adresse de son nœud (ex. `vex.hopto.org`).
+1. Sur la page d'accueil, **Se connecter avec VEX** l'envoie directement sur le nœud par défaut (`noeud_par_defaut`). Sur `/connexion`, il peut indiquer un autre nœud.
 2. WorldFront récupère la clé publique Ed25519 du nœud (`/p2p/ping`) et vérifie qu'il figure dans l'annuaire du réseau (`annuaire_url`).
 3. Le joueur est envoyé sur `/p2p/sso` de son nœud. Il s'y connecte si besoin, puis clique sur **Autoriser**.
 4. Le nœud signe son identité (`user_id@node_id`, nom, thème) avec sa clé P2P et le renvoie sur `/auth/retour`.
@@ -47,7 +56,7 @@ Le mot de passe ne quitte jamais le nœud. Un nœud ne peut signer que pour ses 
 
 **Côté VEX :** chaque nœud doit avoir la version de VEX qui contient `src/p2p/sso.rs` (route `/p2p/sso`) et le paramètre `?suite=` de `/login`. Un nœud plus ancien renvoie une erreur à l'étape 3.
 
-Dans ce mode, WorldFront peut tourner n'importe où, même sur un autre domaine que VEX. Il faut que `url_publique` soit l'adresse que voient les joueurs (ex. `https://jeu.exemple.org`), car le nœud y renvoie le joueur. Les administrateurs du jeu se déclarent dans `admins` (`"user_id@node_id"`, visible dans le journal du serveur à chaque connexion).
+Dans ce mode, WorldFront peut tourner n'importe où, même sur un autre domaine que VEX. Il faut que `url_publique` soit l'adresse que voient les joueurs (ex. `https://jeu.exemple.org`), car le nœud y renvoie le joueur. L'administration du jeu passe par la clé d'administration (voir plus haut).
 
 ## Option : même serveur que VEX (mode `vex`, un seul nœud)
 
@@ -132,12 +141,11 @@ La session VEX dure une heure (`datecra` dans `loginc`). Une partie déjà ouver
 | `url_publique` | `""` | Adresse publique de WorldFront (mode reseau), sinon déduite de l'en-tête Host |
 | `annuaire_url` | `https://vex.hopto.org/neut/annuaire` | Seuls les nœuds de cet annuaire sont acceptés (vide = tout serveur VEX) |
 | `noeud_par_defaut` | `vex.hopto.org` | Pré-rempli sur la page de connexion |
-| `admins` | `[]` | Comptes `user_id@node_id` administrateurs du jeu (mode reseau) |
+| `admin_cle_publique` | `""` | Clé publique de la clé d'administration (voir plus haut) |
 | `vex_db_fichier` / `vex_db` | — | Accès MySQL de VEX (chemin du `db.json`, ou identifiants en ligne) |
 | `session_duree_s` | `3600` | Même durée que VEX |
 | `verifier_ip`, `verifier_navigateur` | `true` | Mêmes contrôles que `verifier_session` de VEX |
-| `admin_privilege_max` | `3` | Privilège VEX donnant accès au panneau Administration du jeu |
-| `carte_largeur`, `carte_hauteur`, `graine` | `84`, `52`, `20260925` | Génération du monde (au premier lancement seulement) |
+| `carte_largeur`, `carte_hauteur`, `graine` | `128`, `80`, `0` | Génération du monde (au premier lancement seulement). `graine` à 0 : carte tirée au hasard |
 | `vitesse` | `1.0` | Accélère tout le jeu (tests) |
 | `protection_heures` | `2` | Durée pendant laquelle un nouveau pays ne peut pas être attaqué |
 | `sauvegarde`, `intervalle_sauvegarde_s` | `data/monde.json`, `30` | Fichier du monde et fréquence d'enregistrement |
@@ -154,6 +162,10 @@ src/
   monde.rs   état du monde, géométrie hexagonale, génération de la carte
   jeu.rs     règles : économie, construction, recherche, déplacements, combats,
              raids, missiles, diplomatie, blocs, marché, espionnage
+  front.rs   troupes et offensives façon OpenFront (clic droit)
+  fabrication.rs  minerais, 118 éléments, raffinerie, 105 recettes de fabrique
+  admin.rs   clé d'administration (défi signé Ed25519)
+  bots.rs    nations jouées par l'ordinateur
   vue.rs     ce que chaque joueur voit (brouillard de guerre, données masquées)
 static/
   accueil.html, jeu.html, dev.html

@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>WorldFront</title>
-  <link rel="icon" href="static/img/favicon.ico">
-  <link rel="stylesheet" href="static/css/theme.css">
-  <link rel="stylesheet" href="static/css/worldfront.css">
+  <link rel="icon" type="image/svg+xml" href="static/img/worldfront.svg">
+  <link rel="stylesheet" href="static/css/theme.css?v=__V__">
+  <link rel="stylesheet" href="static/css/worldfront.css?v=__V__">
   <meta name="theme-color" content="#4fa553">
 </head>
 <body class="wf-jeu" data-vex="__VEX__" data-connexion="__CONNEXION__" data-mode="__MODE__">
@@ -26,6 +26,7 @@
   </div>
   <div class="profile-menu-7844" id="profile-menu" role="menu">
     <a href="./"><img src="static/img/solid/circle-info.svg" class="pm-icon-svg-7844" alt="">À propos de WorldFront</a>
+    <a href="admin"><img src="static/img/solid/key.svg" class="pm-icon-svg-7844" alt="">Administration (clé)</a>
     <a href="__VEX__/login/logout"><img src="static/img/solid/right-from-bracket.svg" class="pm-icon-svg-7844" alt="">Déconnexion</a>
   </div>
 
@@ -51,6 +52,24 @@
           <button class="wf-outil" id="wf-vue-globale" title="Vue d'ensemble"><i class="ico" style="--ic:url('__P__/static/img/solid/earth-europe.svg')"></i></button>
         </div>
 
+        <div class="wf-troupes" id="wf-troupes" hidden>
+          <div class="wf-troupes-tete">
+            <i class="ico" style="--ic:url('__P__/static/img/solid/person-military-rifle.svg')"></i>
+            <b id="wf-troupes-n">0</b><span>/ <span id="wf-troupes-max">0</span></span>
+            <span class="wf-troupes-off" id="wf-troupes-off"></span>
+            <button class="wf-btn-ic wf-troupes-replier" data-act="reduire_troupes" title="Réduire / agrandir"><i class="ico" style="--ic:url('__P__/static/img/solid/chevron-down.svg')"></i></button>
+          </div>
+          <div class="wf-barre"><div id="wf-troupes-barre"></div></div>
+          <div class="wf-troupes-ratio">
+            <span>Envoyer <b id="wf-ratio-val">30 %</b> = <b id="wf-ratio-envoi">0</b> troupes</span>
+            <input type="range" id="wf-ratio" min="5" max="100" step="5" value="30" aria-label="Part des troupes envoyée">
+            <div class="wf-troupes-presets">
+              <button data-ratio="10">10 %</button><button data-ratio="25">25 %</button><button data-ratio="50">50 %</button><button data-ratio="75">75 %</button><button data-ratio="100">100 %</button>
+            </div>
+          </div>
+          <small>Clic droit sur une case : s'étendre ou attaquer · clic gauche : construire</small>
+        </div>
+        <div class="wf-propositions" id="wf-propositions" hidden></div>
         <div class="wf-consigne" id="wf-consigne" hidden></div>
         <div class="wf-missiles" id="wf-missiles" hidden></div>
         <div class="wf-survol" id="wf-survol" hidden></div>
@@ -80,7 +99,9 @@
     </div>
   </div>
 
-  <script src="static/js/nav.js"></script>
-  <script type="module" src="static/js/jeu.js"></script>
+  <script src="static/js/nav.js?v=__V__"></script>
+  <!-- Versionne aussi les modules importes par jeu.js (cache du navigateur). -->
+  <script type="importmap">{ "imports": { "__P__/static/js/carte.js": "__P__/static/js/carte.js?v=__V__", "__P__/static/js/util.js": "__P__/static/js/util.js?v=__V__", "__P__/static/js/panneaux.js": "__P__/static/js/panneaux.js?v=__V__", "__P__/static/js/modeles.js": "__P__/static/js/modeles.js?v=__V__", "__P__/static/vendor/three.module.min.js": "__P__/static/vendor/three.module.min.js?v=__V__" } }</script>
+  <script type="module" src="static/js/jeu.js?v=__V__"></script>
 </body>
 </html>
