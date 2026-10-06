@@ -16,18 +16,10 @@ body {
 button, input, select, textarea { font: inherit; color: inherit; }
 code { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
 
-/* Barre VEX en theme clair : fond blanc (comme VEX), mais texte et
-   icones sombres pour rester lisibles. */
-[data-theme="light"] .user-name-top-7844 { color: var(--text) !important; }
-[data-theme="light"] .user-icon-top-7844 { filter: none; background: var(--alt); border-color: var(--panel-border); }
-[data-theme="light"] .apps-btn-nav-7844 { background: var(--alt); border-color: var(--panel-border); }
-[data-theme="light"] .topbar-btn-svg-7844 { filter: var(--icon-filter); }
-[data-theme="light"] .user-info-top-7844:hover { background: var(--sidebar-hover); }
-.top-nav-bar-haut7844 { border-bottom: 1px solid var(--panel-border); }
 .wf-nav-titre { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 17px; letter-spacing: .3px; color: var(--accent); margin-left: 4px; }
 [data-theme="dark"] .wf-nav-titre { color: #fff; }
 .wf-nav-titre .ico { width: 18px; height: 18px; }
-.wf-nav-horloge { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.wf-nav-horloge { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 13px; color: #fff; font-variant-numeric: tabular-nums; }
 [data-theme="dark"] .wf-nav-horloge { color: rgba(255,255,255,.85); }
 .wf-connexion { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--aglow); }
 .wf-connexion.ko { background: var(--danger); box-shadow: 0 0 0 3px rgba(220,38,38,.25); animation: wf-clignote 1s infinite; }

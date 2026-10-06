@@ -26,11 +26,12 @@
   --orange: #f59e0b;
   --blue: #3b82f6;
 
-  /* FIX (demande utilisateur : "je veux un fond blanc") : la barre de
-     nav du haut (et son fil d'ariane) utilisait un degrade vert --
-     remplace par un blanc uni en theme clair. Le degrade reste en theme
-     sombre (un fond blanc y casserait le contraste). */
-  --nav-gradient: #ffffff;
+  /* FIX (retour utilisateur : "la barre de nav n'a plus le degrade,
+     elle est toute blanche") : degrade vert restaure en theme clair. Le
+     fond blanc uni rendait illisibles le nom d'utilisateur, les icones
+     et le fil d'ariane, tous blancs (voir .user-name-top-7844,
+     .topbar-btn-svg-7844, .nav-bc-link-7844 plus bas). */
+  --nav-gradient: linear-gradient(135deg,var(--vex-green-1) 0%,var(--vex-green-2) 100%);
   --shadow: 0 1px 3px rgba(0,0,0,.06), 0 4px 14px rgba(0,0,0,.04);
   --radius: 12px;
 
@@ -40,36 +41,100 @@
 
   /* Filtre CSS pour teinter en vert accent une icône SVG monochrome
      (noire) chargée via <img> — utilisé par la nav (build_nav_html). */
-  --icon-filter: invert(28%) sepia(45%) saturate(1200%) hue-rotate(85deg) brightness(90%);
+  /* Couleur unique des icones = VERT de VEX (demande utilisateur, 26/09).
+     --icon-filter = icones <img>, --icon-color = icones SVG en ligne. */
+  --icon-filter: invert(35%) sepia(14%) saturate(1771%) hue-rotate(73deg) brightness(128%) contrast(89%);
+  --icon-color: #3e8e41;
+  --icon-gray: invert(44%) sepia(9%) saturate(322%) hue-rotate(182deg) brightness(92%) contrast(89%);
 }
 
+/* Theme sombre : noir neutre (l'ancien #1a1f2e/#1e2435 tirait sur le
+   bleu) et vert VEX #43a047 au lieu du #4ade80, trop lumineux. */
 [data-theme="dark"] {
-  --bg: #131414;
-  --surface: #1a1f2e;
-  --surface2: #1e2435;
-  --panel: #1e1e1e;
-  --panel-border: #3a3b3c;
-  --border: #2d3347;
-  --text: #e8edf5;
-  --text-dim: #9aa0a6;
-  --text-m: #8892a4;
-  --input: #1e2435;
+  color-scheme: dark;
+  --bg: #0a0a0a;
+  --surface: #151515;
+  --surface2: #1c1c1c;
+  --panel: #151515;
+  --panel-border: #2a2a2a;
+  --border: #2a2a2a;
+  --text: #e6e6e6;
+  --text-dim: #a3a3a3;
+  --text-m: #8c8c8c;
+  --input: #1c1c1c;
 
-  --accent: #4ade80;
-  --alt: rgba(74,222,128,.10);
-  --aglow: rgba(74,222,128,.20);
-  --danger: #ff6b6b;
-  --orange: #fbbf24;
-  --blue: #60a5fa;
+  --accent: #43a047;
+  --alt: rgba(67,160,71,.14);
+  --aglow: rgba(67,160,71,.25);
+  --danger: #e5534b;
+  --orange: #d99a2b;
+  --blue: #4a8fdc;
 
   --nav-gradient: linear-gradient(135deg,#2e7d32 0%,#1b5e20 100%);
   --shadow: 0 1px 3px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3);
 
-  --sidebar-bg: rgba(30,31,32,0.95);
-  --sidebar-hover: rgba(102,187,106,0.10);
-  --sidebar-active: #66bb6a;
+  --sidebar-bg: rgba(21,21,21,0.97);
+  --sidebar-hover: rgba(67,160,71,0.12);
+  --sidebar-active: #388e3c;
 
-  --icon-filter: invert(70%) sepia(30%) saturate(600%) hue-rotate(70deg) brightness(105%);
+  --icon-filter: invert(39%) sepia(14%) saturate(1746%) hue-rotate(73deg) brightness(131%) contrast(92%);
+  --icon-color: #43a047;
+  --icon-gray: brightness(0) invert(55%);
+}
+
+/* Theme "Automatique" : jetons sombres si l'appareil est en mode sombre.
+   (vex-ui.js remplace ensuite "auto" par "light"/"dark" pour que les
+   regles [data-theme="dark"] propres a chaque page s'appliquent aussi.) */
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] {
+    color-scheme: dark;
+  --bg: #0a0a0a;
+    --surface: #151515;
+    --surface2: #1c1c1c;
+    --panel: #151515;
+    --panel-border: #2a2a2a;
+    --border: #2a2a2a;
+    --text: #e6e6e6;
+    --text-dim: #a3a3a3;
+    --text-m: #8c8c8c;
+    --input: #1c1c1c;
+  
+    --accent: #43a047;
+    --alt: rgba(67,160,71,.14);
+    --aglow: rgba(67,160,71,.25);
+    --danger: #e5534b;
+    --orange: #d99a2b;
+    --blue: #4a8fdc;
+  
+    --nav-gradient: linear-gradient(135deg,#2e7d32 0%,#1b5e20 100%);
+    --shadow: 0 1px 3px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3);
+  
+    --sidebar-bg: rgba(21,21,21,0.97);
+    --sidebar-hover: rgba(67,160,71,0.12);
+    --sidebar-active: #388e3c;
+  
+    --icon-filter: invert(39%) sepia(14%) saturate(1746%) hue-rotate(73deg) brightness(131%) contrast(92%);
+    --icon-color: #43a047;
+    --icon-gray: brightness(0) invert(55%);
+  }
+}
+
+/* Icone monochrome a la couleur du texte (remplace les emojis de
+   l'interface) : <span class="vi" style="--i:url(/static/img/solid/lock.svg)"></span> */
+.vi{display:inline-block;width:1em;height:1em;vertical-align:-.125em;flex-shrink:0;background:currentColor;-webkit-mask:var(--i) center/contain no-repeat;mask:var(--i) center/contain no-repeat}
+
+/* Cases a cocher / boutons radio / curseurs au vert VEX. */
+:root { accent-color: var(--accent); }
+
+/* Regle des icones (toutes les pages) : gris du texte secondaire.
+   Exceptions : blanc sur fond vert (boutons, element actif), rouge = danger.
+   :where() = specificite nulle, toute regle de classe reste prioritaire. */
+:where(img[src*="/img/solid/"]) { filter:var(--icon-filter); }
+
+/* Accessibilite : contour visible a la navigation clavier uniquement. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
 
 /* Reset de base commun */
@@ -185,7 +250,7 @@ html[data-theme] body {
 .nav-sidebar-item-7844.admin-item { color:var(--danger)!important; }
 .nav-sidebar-item-7844.admin-item:hover { background:var(--alt); }
 .nav-sidebar-item-7844.admin-item.active { background:var(--danger);color:#fff!important; }
-.sidebar-svg-7844 { width:20px;height:20px;flex-shrink:0;display:block; filter:none; }
+.sidebar-svg-7844 { width:20px;height:20px;flex-shrink:0;display:block; filter:var(--icon-filter); }
 .nav-sidebar-item-7844.active .sidebar-svg-7844 { filter:brightness(0) invert(1); }
 .nav-sidebar-item-7844.admin-item .sidebar-svg-7844 { filter:invert(27%) sepia(51%) saturate(2878%) hue-rotate(346deg) brightness(104%) contrast(97%); }
 .nav-sidebar-divider-7844 { height:1px;background:var(--border);margin:10px 8px; }
