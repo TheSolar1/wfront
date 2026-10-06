@@ -1109,9 +1109,7 @@ function panneauAdmin(S) {
   const vivants = tous.filter(p => !p.elimine);
   const bots = vivants.filter(p => p.joueur === 'Ordinateur').length;
   const guerres = Object.keys(S.relations || {}).length;
-  return `<div class="wf-avert">${ico('key')} Administration déverrouillée avec votre clé.
-      <a href="admin/sortir">Verrouiller</a> · <button class="wf-lien" data-act="admin_oublier">Oublier la clé sur ce navigateur</button></div>
-  <div class="wf-admin-grille">
+  return `<div class="wf-admin-grille">
     <div class="wf-admin-stat"><b>${vivants.length}</b><small>nations</small></div>
     <div class="wf-admin-stat"><b>${vivants.length - bots}</b><small>joueurs</small></div>
     <div class="wf-admin-stat"><b>${bots}</b><small>bots</small></div>

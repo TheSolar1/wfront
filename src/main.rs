@@ -17,6 +17,7 @@ mod fabrication;
 mod front;
 mod jeu;
 mod monde;
+mod passkey;
 mod reseau;
 mod vue;
 
@@ -81,6 +82,12 @@ struct Config {
     /// Privilege maximal pour les outils d'administration du jeu. Depuis la
     /// cle d'administration, seul son detenteur a le privilege 1.
     admin_privilege_max: i64,
+    /// Comptes VEX administrateurs du jeu : « user_id@node_id » en mode
+    /// reseau, ou l'e-mail du compte en mode vex (visible sur /admin). Ils ont
+    /// l'administration des qu'ils sont connectes, sans cle ni code.
+    admins: Vec<String>,
+    /// Autoriser a jouer sans compte VEX (pseudo, session « invite »).
+    invites: bool,
     /// Cle publique Ed25519 (32 octets en base64) de la cle d'administration.
     /// Seul le detenteur de la cle privee correspondante voit et utilise
     /// l'administration (page /admin). Vide : administration desactivee.
@@ -126,6 +133,8 @@ impl Default for Config {
             proxy_de_confiance: false,
             admin_privilege_max: 3,
             admin_cle_publique: String::new(),
+            admins: Vec::new(),
+            invites: true,
             carte_largeur: 128,
             carte_hauteur: 80,
             graine: 0,
@@ -149,6 +158,8 @@ struct Identite {
     sombre: bool,
     /// Nœud VEX de l'utilisateur (mode reseau) : cible des liens VEX.
     noeud: Option<String>,
+    /// Compte reseau « user_id@node_id » (ou « invite:... »).
+    compte: Option<String>,
 }
 
 struct Client {
@@ -328,10 +339,10 @@ async fn main() {
         db,
         reseau: reseau::Reseau::charger(racine.join("data").join("sessions.json")),
         regles,
-        admin: admin::Admin::default(),
+        admin: admin::Admin::charger(racine.join("data")),
     });
     if cfg.admin_cle_publique.trim().is_empty() {
-        println!("[admin] aucune admin_cle_publique : administration desactivee.");
+        println!("[admin] pas de admin_cle_publique (fichier .pem) : utilisez le code de recuperation ou une cle d'acces.");
     }
 
     // Boucle de simulation
@@ -382,12 +393,18 @@ async fn main() {
         .route("/connexion", get(page_connexion))
         .route("/auth/debut", get(auth_debut))
         .route("/auth/retour", get(auth_retour))
+        .route("/invite/entrer", get(invite_entrer))
         .route("/deconnexion", get(deconnexion))
         .route("/api/statut", get(api_statut))
         .route("/admin", get(page_admin))
         .route("/admin/defi", get(admin_defi))
         .route("/admin/prouver", post(admin_prouver))
         .route("/admin/sortir", get(admin_sortir))
+        .route("/admin/code", post(admin_code))
+        .route("/admin/passkey/options", get(passkey_options))
+        .route("/admin/passkey/enregistrer", post(passkey_enregistrer))
+        .route("/admin/passkey/prouver", post(passkey_prouver))
+        .route("/admin/passkey/supprimer", post(passkey_supprimer))
         .route("/ws", get(ws))
         .nest_service("/static", ServeDir::new(racine.join("static")))
         // Sans ca, le navigateur garde d'anciennes versions des .css/.js apres
@@ -583,6 +600,9 @@ fn verifier_vex(pool: &mysql::Pool, cfg: &Config, jeton: &str, ip: &str, ua: &st
         privilege: privilege.unwrap_or(10),
         sombre: teme.flatten().unwrap_or(0) == 1,
         noeud: None,
+        // Meme serveur que VEX : le compte est reconnu par son e-mail
+        // (pour la liste « admins » de config.json).
+        compte: Some(email),
     })
 }
 
@@ -623,7 +643,10 @@ fn decoder_url(s: &str) -> String {
 /// d'authentification ni du privilege VEX.
 async fn authentifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Option<Identite> {
     let mut id = identifier(app, headers, addr).await?;
-    id.privilege = if app.admin.valide(&cookie(headers, "wf_admin"), id.user_id) { 1 } else { 10 };
+    let compte_admin = id.compte.as_ref().map(|c| app.cfg.admins.iter().any(|a| a.trim().eq_ignore_ascii_case(c))).unwrap_or(false);
+    // Un invite (sans compte VEX) n'a jamais l'administration.
+    let invite = id.compte.as_deref().map(|c| c.starts_with("invite:")).unwrap_or(false);
+    id.privilege = if !invite && (compte_admin || app.admin.valide(&cookie(headers, "wf_admin"), id.user_id)) { 1 } else { 10 };
     Some(id)
 }
 
@@ -635,7 +658,7 @@ async fn identifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Opt
             return None;
         }
         let sombre = cookie(headers, "wf_theme") == "dark";
-        return Some(Identite { user_id: hash_nom(&nom), nom, privilege: 1, sombre, noeud: None });
+        return Some(Identite { user_id: hash_nom(&nom), nom, privilege: 1, sombre, noeud: None, compte: None });
     }
     if app.cfg.auth == "reseau" {
         let s = app.reseau.session(&cookie(headers, "wf_session"))?;
@@ -644,7 +667,8 @@ async fn identifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Opt
             nom: s.nom,
             privilege: 10,
             sombre: s.sombre,
-            noeud: Some(s.noeud),
+            noeud: if s.noeud.is_empty() { None } else { Some(s.noeud) },
+            compte: Some(s.compte),
         });
     }
     let pool = app.db.clone()?;
@@ -680,7 +704,9 @@ fn url_connexion(app: &App) -> String {
     } else if app.cfg.auth == "reseau" {
         chemin(app, "/connexion")
     } else {
-        format!("{}/login", app.cfg.vex_url.trim_end_matches('/'))
+        // Meme serveur que VEX : sa page de connexion, puis retour au jeu
+        // (`next` n'accepte qu'un chemin local, voir login.html de VEX).
+        format!("{}/login?next={}", app.cfg.vex_url.trim_end_matches('/'), reseau::encoder(&chemin(app, "/jeu")))
     }
 }
 
@@ -701,6 +727,10 @@ fn gabarit(app: &App, fichier: &str, id: Option<&Identite>) -> Response {
         .replace("__NOEUD_DEFAUT__", &echapper(&app.cfg.noeud_par_defaut))
         .replace("__CONNEXION__", &echapper(&url_connexion(app)))
         .replace("__ENTREE__", &echapper(&url_entree(app)))
+        .replace("__INVITE__", if id.and_then(|i| i.compte.as_deref()).map(|c| c.starts_with("invite:")).unwrap_or(false) { "1" } else { "0" })
+        .replace("__VEX_DIRECT__", &echapper(&format!("{}/auth/debut?noeud={}", app.cfg.prefixe.trim_end_matches('/'), reseau::encoder(&app.cfg.noeud_par_defaut))))
+        .replace("__INVITES__", if app.cfg.invites { "1" } else { "0" })
+        .replace("__COMPTE__", &echapper(id.and_then(|i| i.compte.as_deref()).unwrap_or("")))
         .replace("__NOM__", &echapper(id.map(|i| i.nom.as_str()).unwrap_or("")))
         .replace("__CONNECTE__", if id.is_some() { "1" } else { "0" })
         .replace("__MODE__", &echapper(&app.cfg.auth))
@@ -734,7 +764,9 @@ async fn page_jeu(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<Soc
 /// Connexion en un clic : en mode reseau, droit vers le nœud VEX par defaut
 /// (la page /connexion reste la pour choisir un autre nœud).
 fn url_entree(app: &App) -> String {
-    if app.cfg.auth == "reseau" && !app.cfg.noeud_par_defaut.is_empty() {
+    if app.cfg.auth == "reseau" && app.cfg.invites {
+        chemin(app, "/connexion")
+    } else if app.cfg.auth == "reseau" && !app.cfg.noeud_par_defaut.is_empty() {
         format!("{}?noeud={}", chemin(app, "/auth/debut"), reseau::encoder(&app.cfg.noeud_par_defaut))
     } else {
         url_connexion(app)
@@ -829,9 +861,25 @@ async fn auth_retour(State(app): State<Partage>, headers: HeaderMap, Query(q): Q
         return Redirect::to(&url_connexion(&app)).into_response();
     }
     let retour = url_retour(&app, &headers);
+    // Session invitee en cours : sa nation passera sur le compte VEX.
+    let ancienne = app.reseau.session(&cookie(&headers, "wf_session")).filter(|s| s.compte.starts_with("invite:"));
     match app.reseau.retour(&q, &retour) {
         Ok((jeton, s)) => {
             println!("[auth] connexion de {} ({}) via {}", s.nom, s.compte, s.noeud);
+            if let Some(inv) = ancienne {
+                let (de, vers) = (reseau::id_compte(&inv.compte), reseau::id_compte(&s.compte));
+                let mut m = app.monde.lock().unwrap();
+                if jeu::pays_du_joueur(&m, vers).is_none() {
+                    if let Some(pid) = jeu::pays_du_joueur(&m, de) {
+                        let p = m.pays.get_mut(&pid).unwrap();
+                        p.user_id = vers;
+                        p.joueur = s.nom.clone();
+                        println!("[auth] la nation de l'invite {} passe sur le compte {}", inv.nom, s.compte);
+                    }
+                }
+                drop(m);
+                app.reseau.fermer(&cookie(&headers, "wf_session"));
+            }
             let secure = if retour.starts_with("https://") { "; Secure" } else { "" };
             let mut r = Redirect::to(&chemin(&app, "/jeu")).into_response();
             r.headers_mut().append(
@@ -844,6 +892,36 @@ async fn auth_retour(State(app): State<Partage>, headers: HeaderMap, Query(q): Q
         }
         Err(e) => Redirect::to(&format!("{}?erreur={}", chemin(&app, "/connexion"), reseau::encoder(&e))).into_response(),
     }
+}
+
+#[derive(Deserialize)]
+struct InviteParams {
+    #[serde(default)]
+    nom: String,
+    #[serde(default)]
+    theme: String,
+}
+
+/// Jouer sans compte VEX : un pseudo suffit (session « invite »).
+async fn invite_entrer(State(app): State<Partage>, headers: HeaderMap, Query(q): Query<InviteParams>) -> Response {
+    if app.cfg.auth != "reseau" || !app.cfg.invites {
+        return Redirect::to(&url_connexion(&app)).into_response();
+    }
+    let nom: String = q.nom.chars().filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '-' | '.')).take(24).collect();
+    let nom = nom.trim().to_string();
+    if nom.chars().count() < 2 {
+        return Redirect::to(&format!("{}?erreur={}", chemin(&app, "/connexion"), reseau::encoder("Choisissez un pseudo d'au moins 2 caractères."))).into_response();
+    }
+    let noeud = reseau::normaliser_noeud(&app.cfg.noeud_par_defaut).unwrap_or_default();
+    let jeton = app.reseau.session_invite(&format!("{} (invité)", nom), q.theme == "dark", &noeud);
+    println!("[auth] invite : {}", nom);
+    let secure = if url_retour(&app, &headers).starts_with("https://") { "; Secure" } else { "" };
+    let mut r = Redirect::to(&chemin(&app, "/jeu")).into_response();
+    r.headers_mut().append(
+        header::SET_COOKIE,
+        format!("wf_session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{}", jeton, reseau::DUREE_SESSION, secure).parse().unwrap(),
+    );
+    r
 }
 
 async fn deconnexion(State(app): State<Partage>, headers: HeaderMap) -> Response {
@@ -901,6 +979,193 @@ async fn admin_prouver(
             (StatusCode::FORBIDDEN, Json(json!({ "erreur": e }))).into_response()
         }
     }
+}
+
+// ── Cles d'acces (passkeys) : la cle privee reste dans l'appareil ──
+/// Origine attendue par le navigateur et identifiant du site (rpId) : d'apres
+/// url_publique, sinon l'en-tete Host. Une adresse IP (127.0.0.1) n'est pas
+/// un rpId valable : il faut ouvrir le jeu via « localhost » ou un domaine.
+fn origine_site(app: &App, headers: &HeaderMap) -> (String, String) {
+    let origine = if !app.cfg.url_publique.is_empty() {
+        let u = app.cfg.url_publique.trim_end_matches('/');
+        let (schema, reste) = u.split_once("://").unwrap_or(("http", u));
+        format!("{}://{}", schema, reste.split('/').next().unwrap_or(""))
+    } else {
+        let hote = headers.get(header::HOST).and_then(|v| v.to_str().ok()).unwrap_or("localhost");
+        format!("http://{}", hote)
+    };
+    let hote = origine.split("://").nth(1).unwrap_or("").to_string();
+    let rp = if hote.starts_with('[') { hote } else { hote.split(':').next().unwrap_or("").to_string() };
+    (origine, rp)
+}
+
+fn erreur(code: StatusCode, msg: &str) -> Response {
+    (code, Json(json!({ "erreur": msg }))).into_response()
+}
+
+#[derive(Deserialize)]
+struct OptionsParams {
+    #[serde(default)]
+    mode: String,
+}
+
+async fn passkey_options(
+    State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Query(q): Query<OptionsParams>,
+) -> Response {
+    let Some(id) = authentifier(&app, &headers, addr).await else { return erreur(StatusCode::UNAUTHORIZED, "Connectez-vous d'abord.") };
+    let (origine, rp) = origine_site(&app, &headers);
+    if rp.parse::<std::net::IpAddr>().is_ok() || rp.starts_with('[') {
+        return erreur(StatusCode::BAD_REQUEST, "Les clés d'accès ne marchent pas avec une adresse IP : ouvrez le jeu par http://localhost:8095 (ou un nom de domaine).");
+    }
+    let defi = app.admin.defi_webauthn(id.user_id);
+    let cles: Vec<Value> = app.admin.cles.lock().unwrap().iter().map(|c| json!({ "id": c.id, "nom": c.nom, "cree": c.cree, "alg": c.alg })).collect();
+    if q.mode == "enregistrer" && id.privilege > app.cfg.admin_privilege_max {
+        return erreur(StatusCode::FORBIDDEN, "Déverrouillez d'abord l'administration pour ajouter une clé d'accès.");
+    }
+    Json(json!({ "defi": defi, "rp": rp, "origine": origine, "user": id.user_id.to_string(), "nom": id.nom, "cles": cles })).into_response()
+}
+
+#[derive(Deserialize)]
+struct PasskeyEnregistrement {
+    id: String,
+    client: String,
+    spki: String,
+    alg: i64,
+    #[serde(default)]
+    nom: String,
+}
+
+async fn passkey_enregistrer(
+    State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Json(p): Json<PasskeyEnregistrement>,
+) -> Response {
+    let Some(id) = authentifier(&app, &headers, addr).await else { return erreur(StatusCode::UNAUTHORIZED, "Connectez-vous d'abord.") };
+    if id.privilege > app.cfg.admin_privilege_max {
+        return erreur(StatusCode::FORBIDDEN, "Déverrouillez d'abord l'administration.");
+    }
+    let (origine, _) = origine_site(&app, &headers);
+    let res = (|| -> Result<(), String> {
+        let client = passkey::b64url(&p.client)?;
+        let defi = passkey::verifier_client(&client, "webauthn.create", &origine)?;
+        app.admin.consommer_defi(&defi, id.user_id)?;
+        if ![-7, -8, -257].contains(&p.alg) {
+            return Err("Algorithme de clé non pris en charge.".into());
+        }
+        passkey::b64url(&p.spki)?;
+        let nom: String = p.nom.chars().filter(|c| !c.is_control()).take(40).collect();
+        let mut cles = app.admin.cles.lock().unwrap();
+        cles.retain(|c| c.id != p.id);
+        cles.push(passkey::CleAcces {
+            id: p.id.clone(),
+            alg: p.alg,
+            spki: p.spki.clone(),
+            nom: if nom.trim().is_empty() { "Clé d'accès".into() } else { nom },
+            cree: chrono::Utc::now().timestamp(),
+        });
+        app.admin.sauver_cles(&cles);
+        Ok(())
+    })();
+    match res {
+        Ok(()) => {
+            println!("[admin] cle d'acces ajoutee par {} ({})", id.nom, id.user_id);
+            Json(json!({ "ok": true })).into_response()
+        }
+        Err(e) => erreur(StatusCode::BAD_REQUEST, &e),
+    }
+}
+
+#[derive(Deserialize)]
+struct PasskeyPreuve {
+    id: String,
+    client: String,
+    auth: String,
+    sig: String,
+}
+
+async fn passkey_prouver(
+    State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Json(p): Json<PasskeyPreuve>,
+) -> Response {
+    let Some(id) = authentifier(&app, &headers, addr).await else { return erreur(StatusCode::UNAUTHORIZED, "Connectez-vous d'abord.") };
+    let (origine, rp) = origine_site(&app, &headers);
+    let res = (|| -> Result<String, String> {
+        let client = passkey::b64url(&p.client)?;
+        let defi = passkey::verifier_client(&client, "webauthn.get", &origine)?;
+        app.admin.consommer_defi(&defi, id.user_id)?;
+        let cle = app
+            .admin
+            .cles
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|c| c.id == p.id)
+            .cloned()
+            .ok_or("Cette clé d'accès n'est pas enregistrée sur ce serveur.")?;
+        passkey::verifier_assertion(&cle, &rp, &passkey::b64url(&p.auth)?, &client, &passkey::b64url(&p.sig)?)?;
+        Ok(app.admin.ouvrir(id.user_id))
+    })();
+    match res {
+        Ok(jeton) => {
+            println!("[admin] administration deverrouillee par cle d'acces : {} ({})", id.nom, id.user_id);
+            let mut r = Json(json!({ "ok": true })).into_response();
+            r.headers_mut().append(
+                header::SET_COOKIE,
+                format!("wf_admin={}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}", jeton, admin::DUREE).parse().unwrap(),
+            );
+            r
+        }
+        Err(e) => {
+            println!("[admin] cle d'acces refusee pour {} ({}) : {}", id.nom, id.user_id, e);
+            erreur(StatusCode::FORBIDDEN, &e)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct CodeRecuperation {
+    code: String,
+}
+
+/// Code de recuperation (data/admin_code.txt) : ouvre l'administration sans
+/// fichier de cle, par exemple pour enregistrer une premiere cle d'acces.
+async fn admin_code(
+    State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Json(p): Json<CodeRecuperation>,
+) -> Response {
+    let Some(id) = authentifier(&app, &headers, addr).await else { return erreur(StatusCode::UNAUTHORIZED, "Connectez-vous d'abord.") };
+    if id.compte.as_deref().map(|c| c.starts_with("invite:")).unwrap_or(false) {
+        return erreur(StatusCode::FORBIDDEN, "Connectez-vous avec un compte VEX : un invité ne peut pas administrer le jeu.");
+    }
+    match app.admin.utiliser_code(&p.code, id.user_id) {
+        Ok(jeton) => {
+            println!("[admin] administration deverrouillee par code de recuperation : {} ({})", id.nom, id.user_id);
+            let mut r = Json(json!({ "ok": true })).into_response();
+            r.headers_mut().append(
+                header::SET_COOKIE,
+                format!("wf_admin={}; Path=/; HttpOnly; SameSite=Strict; Max-Age={}", jeton, admin::DUREE).parse().unwrap(),
+            );
+            r
+        }
+        Err(e) => {
+            println!("[admin] code de recuperation refuse pour {} ({})", id.nom, id.user_id);
+            erreur(StatusCode::FORBIDDEN, &e)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct PasskeySuppression {
+    id: String,
+}
+
+async fn passkey_supprimer(
+    State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Json(p): Json<PasskeySuppression>,
+) -> Response {
+    let Some(id) = authentifier(&app, &headers, addr).await else { return erreur(StatusCode::UNAUTHORIZED, "Connectez-vous d'abord.") };
+    if id.privilege > app.cfg.admin_privilege_max {
+        return erreur(StatusCode::FORBIDDEN, "Déverrouillez d'abord l'administration.");
+    }
+    let mut cles = app.admin.cles.lock().unwrap();
+    cles.retain(|c| c.id != p.id);
+    app.admin.sauver_cles(&cles);
+    Json(json!({ "ok": true })).into_response()
 }
 
 async fn admin_sortir(State(app): State<Partage>, headers: HeaderMap) -> Response {

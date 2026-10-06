@@ -987,8 +987,9 @@ mod tests {
     #[test]
     fn bombe_h_sans_limite() {
         assert!(jeu::puissance_nucleaire("ogive_h", 1.0, 0.0) > jeu::puissance_nucleaire("plutonium", 500.0, 0.0));
-        // 70 bombes H sur une carte 84 x 52 : rayon >= 84.
-        let k = jeu::puissance_nucleaire("ogive_h", 70.0, 0.0) / 20.0;
-        assert!(1.0 + k.sqrt() >= 84.0);
+        // 5 kg de plutonium : 20 cases de rayon.
+        assert_eq!(jeu::rayon_nucleaire(jeu::puissance_nucleaire("plutonium", 5.0, 0.0)), 20);
+        // Une bombe H couvre une carte 128 x 80.
+        assert!(jeu::rayon_nucleaire(jeu::puissance_nucleaire("ogive_h", 1.0, 0.0)) >= 128);
     }
 }

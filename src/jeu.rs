@@ -308,6 +308,13 @@ pub fn puissance_nucleaire(fissile: &str, quantite: f64, explosifs: f64) -> f64 
     }
 }
 
+/// Rayon (cases) d'une frappe : 5 kg de plutonium = 20 cases ; le rayon
+/// grandit comme la racine carree de la puissance.
+pub fn rayon_nucleaire(rend: f64) -> i64 {
+    let facteur = 19.0 / (5.0f64 * 1.5).sqrt();
+    (1.0 + facteur * rend.max(0.0).sqrt()).floor() as i64
+}
+
 fn charge_texte(fissile: &str, q: f64) -> String {
     match fissile {
         "ogive" => format!("{} ogive(s) nucléaire(s)", q),
@@ -2145,7 +2152,7 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
             let rend = puissance_nucleaire(&mv.fissile, kg, mv.explosifs);
             let k = rend / 20.0;
             // Pas de plafond : une charge assez grosse couvre toute la carte.
-            let rayon = ((1.0 + k.sqrt()).floor() as i64).clamp(1, m.largeur.max(m.hauteur) as i64);
+            let rayon = rayon_nucleaire(rend).clamp(1, m.largeur.max(m.hauteur) as i64);
             let coeur = ((rayon + 1) / 2).max(1);
             let zone: Vec<(usize, f64)> = m
                 .rayon(cible, rayon)

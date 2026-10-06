@@ -350,7 +350,7 @@ pub const UNITES: &[UniteDef] = &[
         cout: r(1400.0, 0.0, 400.0, 120.0, 5.0, 40.0), entretien: [1.0, 0.0, 0.0], temps: 90.0,
         batiment: "silo", tech: "mil_balistique", furtif: false, puissance: 10.0 },
     UniteDef { id: "missile_nucleaire", nom: "Missile nucléaire", icone: "radiation", domaine: DOM_MISSILE,
-        desc: "Porte une charge nucléaire : uranium enrichi ou plutonium (avec des explosifs de mise à feu), ou des ogives nucléaires et des bombes H fabriquées. Plus la charge est grosse, plus le rayon est grand, sans limite : de quoi raser toute la carte. Le cœur de l'explosion devient une terre neutre et irradiée.",
+        desc: "Porte une charge nucléaire : uranium enrichi ou plutonium (avec des explosifs de mise à feu), ou des ogives nucléaires et des bombes H fabriquées. 5 kg de plutonium rasent un rayon de 20 cases ; plus la charge est grosse, plus le rayon est grand, sans limite : de quoi raser toute la carte. Le cœur de l'explosion devient une terre neutre et irradiée.",
         att_sol: 15000.0, att_air: 0.0, att_mer: 15000.0, defense: 0.0, pv: 1.0, vitesse: 45.0, portee: 999.0,
         cout: r(5000.0, 0.0, 1200.0, 300.0, 0.0, 120.0), entretien: [4.0, 0.0, 0.0], temps: 240.0,
         batiment: "silo", tech: "mil_nucleaire", furtif: false, puissance: 60.0 },

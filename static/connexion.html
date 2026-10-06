@@ -26,6 +26,27 @@
     <p class="wf-note"><i class="ico" style="--ic:url('__P__/static/img/solid/circle-info.svg')"></i> C'est l'adresse où vous ouvrez VEX d'habitude (ex. <code>vex.hopto.org</code>). Le nœud doit figurer dans l'annuaire du réseau.</p>
     <a class="wf-lien" href="./">Découvrir WorldFront</a>
   </form>
+  <form class="card wf-dev-carte" action="invite/entrer" method="get" id="invite" data-actif="__INVITES__">
+    <div class="card-header">
+      <div class="card-icon"><i class="ico" style="--ic:url('__P__/static/img/solid/user.svg')"></i></div>
+      <div class="card-header-text"><div class="card-title">Jouer sans compte</div><div class="card-subtitle">Un pseudo suffit</div></div>
+    </div>
+    <div class="wf-form">
+      <label>Pseudo <input name="nom" required minlength="2" maxlength="24" placeholder="Votre pseudo" autocomplete="nickname"></label>
+      <button class="wf-btn secondaire" type="submit">Jouer en invité</button>
+    </div>
+    <p class="wf-note"><i class="ico" style="--ic:url('__P__/static/img/solid/circle-info.svg')"></i> Votre partie est liée à ce navigateur (30 jours). Avec un compte VEX, vous la retrouvez partout.</p>
+  </form>
+  <script>
+    if (document.getElementById('invite').dataset.actif !== '1') document.getElementById('invite').remove();
+    // Arrivee par « Jouer sans compte » : seulement le formulaire invite.
+    else if (location.hash === '#invite') {
+      document.getElementById('f').style.display = 'none';
+      var l = document.createElement('a'); l.className = 'wf-lien'; l.href = 'connexion'; l.textContent = 'Plutôt se connecter avec VEX';
+      document.getElementById('invite').appendChild(l);
+      document.querySelector('#invite input').focus();
+    }
+  </script>
   <script>
     (function () {
       var q = new URLSearchParams(location.search);

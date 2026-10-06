@@ -108,8 +108,7 @@ function recevoirInit(m) {
   }
   $('#wf-chargement').classList.add('fini');
   construireMenu();
-  if (S.joueur.admin) sessionStorage.removeItem('wf-admin-essai');
-  else deverrouillageAuto();
+  invite();
 }
 
 function recevoirEtat(e) {
@@ -721,7 +720,8 @@ function lancerNucleaire(a, genre, i) {
     const ogive = f.startsWith('ogive');
     $('#n-unite').textContent = ogive ? 'Nombre' : 'Quantité (kg, au moins 5)';
     $('#n-expl-ligne').hidden = ogive;
-    const rayon = Math.min(Math.max(S.g.l, S.g.h), Math.floor(1 + Math.sqrt(q * PUISSANCE_NUCL[f] / 20)));
+    // jeu.rs rayon_nucleaire : 5 kg de plutonium = 20 cases.
+    const rayon = Math.min(Math.max(S.g.l, S.g.h), Math.floor(1 + 19 / Math.sqrt(7.5) * Math.sqrt(q * PUISSANCE_NUCL[f])));
     $('#n-rayon').innerHTML = `${ico('bullseye')} Rayon estimé : <b>${rayon} cases</b>${rayon >= Math.max(S.g.l, S.g.h) ? ' — <b class="neg">toute la carte</b>' : ''}`;
   };
   ['n-fissile', 'n-kg'].forEach(id => document.getElementById(id).addEventListener('input', maj));
@@ -863,7 +863,6 @@ const ACTIONS = {
   admin_paix: () => confirmer('Paix mondiale ?', 'Toutes les guerres s\'arrêtent immédiatement.', 'Imposer la paix', () => agir('admin_paix_mondiale')),
   admin_carte: () => confirmer('Générer une nouvelle carte ?', 'Le monde actuel est effacé : toutes les nations disparaissent et chacun doit refonder la sienne. Irréversible.', 'Nouvelle carte', () => agir('admin_nouvelle_carte'), true),
   admin_moi: () => agir('dev_tout'),
-  admin_oublier: async () => { await cleAdmin(null); toast('Clé oubliée sur ce navigateur.', 'ok'); },
   admin_donner_form: d => {
     const p = S.pays.get(+d.pays);
     const idx = [0, 2, 5, 4, 3];
@@ -1073,40 +1072,12 @@ $('#wf-troupes')?.addEventListener('click', e => {
   if (b) choisirRatio(+b.dataset.ratio);
 });
 
-// ── Clé d'administration retenue par ce navigateur ─────────────────
-// Choisie une seule fois sur /admin, elle est gardée dans IndexedDB sous
-// forme NON exportable : le navigateur peut signer avec, mais personne (pas
-// même ce script) ne peut la relire. Le jeu déverrouille alors tout seul.
-function cleAdmin(valeur) {
-  return new Promise(ok => {
-    try {
-      const r = indexedDB.open('worldfront', 1);
-      r.onupgradeneeded = () => r.result.createObjectStore('cles');
-      r.onerror = () => ok(null);
-      r.onsuccess = () => {
-        const tx = r.result.transaction('cles', valeur === undefined ? 'readonly' : 'readwrite');
-        const st = tx.objectStore('cles');
-        const q = valeur === undefined ? st.get('admin') : valeur === null ? st.delete('admin') : st.put(valeur, 'admin');
-        q.onsuccess = () => ok(valeur === undefined ? q.result || null : true);
-        q.onerror = () => ok(null);
-      };
-    } catch (e) { ok(null); }
-  });
-}
-
-async function deverrouillageAuto() {
-  if (S.joueur?.admin || sessionStorage.getItem('wf-admin-essai')) return;
-  const cle = await cleAdmin();
-  if (!cle) return;
-  sessionStorage.setItem('wf-admin-essai', '1');
-  try {
-    const d = await (await fetch('admin/defi', { cache: 'no-store' })).json();
-    if (!d.message) return;
-    const sig = new Uint8Array(await crypto.subtle.sign({ name: 'Ed25519' }, cle, new TextEncoder().encode(d.message)));
-    const r = await fetch('admin/prouver', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: d.message, sig: btoa(String.fromCharCode(...sig)) }) });
-    if (r.ok) location.reload();
-  } catch (e) { /* cle refusee : on reste joueur normal */ }
+// Joueur invite : un bouton pour se connecter avec VEX en gardant sa partie
+// (la nation passe sur le compte VEX, avec l'administration s'il est admin).
+function invite() {
+  if (corps.dataset.invite !== '1' || document.getElementById('wf-invite')) return;
+  const m = document.querySelector('#profile-menu');
+  if (m) m.insertAdjacentHTML('afterbegin', `<a id="wf-invite" href="${esc(corps.dataset.vexDirect)}" title="Votre nation passe sur votre compte VEX : vous la retrouvez partout."><img src="static/img/vex.svg" class="pm-icon-svg-7844" alt="">Se connecter avec VEX</a>`);
 }
 
 function memoriserHud() {

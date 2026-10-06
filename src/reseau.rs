@@ -257,6 +257,28 @@ impl Reseau {
     }
 }
 
+impl Reseau {
+    /// Ouvre une session « invite » : pas de compte VEX, un identifiant tire
+    /// au hasard (personne ne peut reprendre la nation d'un autre en tapant
+    /// le meme pseudo). Rend le jeton du cookie.
+    pub fn session_invite(&self, nom: &str, sombre: bool, noeud: &str) -> String {
+        let t = maintenant();
+        let session = SessionWf {
+            compte: format!("invite:{}", aleatoire(24)),
+            nom: nom.to_string(),
+            noeud: noeud.to_string(),
+            sombre,
+            expire: t + DUREE_SESSION,
+        };
+        let cle = aleatoire(48);
+        let mut sessions = self.sessions.lock().unwrap();
+        sessions.retain(|_, x| x.expire > t);
+        sessions.insert(cle.clone(), session);
+        self.enregistrer(&sessions);
+        cle
+    }
+}
+
 pub fn encoder(s: &str) -> String {
     s.bytes()
         .map(|b| match b {
