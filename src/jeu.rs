@@ -2409,14 +2409,27 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
         p.amelio = AMELIORATIONS.iter().map(|a| (a.id.to_string(), a.max)).collect();
         p.recherche = None;
         p.file_recherche.clear();
-        p.res = [60_000.0, 0.0, 8_000.0, 8_000.0, 2_000.0, 2_000.0];
-        p.influence = 800.0;
-        p.troupes = p.troupes.max(5_000.0);
-        for e in fab::ELEMENTS.iter() {
-            fab::ajouter(&mut p.stock, e.id, 200.0);
+        // Le maximum : de quoi tout construire, fabriquer et lancer.
+        for r in p.res.iter_mut() {
+            *r = r.max(10_000_000.0);
         }
-
-        return Ok("[dev] Toutes les technologies et des ressources.".into());
+        p.influence = p.influence.max(100_000.0);
+        p.recherche_stock = p.recherche_stock.max(10_000_000.0);
+        p.troupes = p.troupes.max(100_000.0);
+        p.ur_enrichi = p.ur_enrichi.max(100_000.0);
+        for e in fab::ELEMENTS.iter() {
+            let manque = 100_000.0 - fab::qte(&p.stock, e.id);
+            if manque > 0.0 {
+                fab::ajouter(&mut p.stock, e.id, manque);
+            }
+        }
+        for o in fab::tous_produits() {
+            let manque = 1_000.0 - fab::qte(&p.stock, o.id);
+            if manque > 0.0 {
+                fab::ajouter(&mut p.stock, o.id, manque);
+            }
+        }
+        return Ok("[dev] Le maximum : toutes les technologies, ressources, éléments et produits.".into());
     }
     if m.pays[&pid].elimine && action != "chat" {
         return Err("Votre nation a été anéantie : refondez-la pour rejouer.".into());

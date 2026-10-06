@@ -1125,7 +1125,7 @@ function panneauAdmin(S) {
   ${titre('Moi', 'user-shield')}
   <div class="wf-admin-actions">
     <button class="wf-btn petit secondaire" data-act="admin_moi" ${S.moi ? '' : 'disabled'}>${ico('wand-magic-sparkles')} Tout me donner (mode dev)</button>
-    <small>Toutes les technologies, des ressources, 200 de chaque élément.</small>
+    <small>Le maximum : toutes les technologies et améliorations, 10 millions de chaque ressource, 100 000 de chaque élément, 1 000 de chaque produit.</small>
   </div>
   ${titre('Annonce mondiale', 'bullhorn')}
   <div class="wf-form"><textarea id="admin-annonce" data-garder maxlength="300" placeholder="Message diffusé à tous les joueurs"></textarea>

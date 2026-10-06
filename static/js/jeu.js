@@ -697,22 +697,31 @@ function lancerNucleaire(a, genre, i) {
   const st = m.stock || {};
   const dispo = { uranium: m.ur_enrichi || 0, plutonium: st.Pu || 0, ogive: st.ogive_nucleaire || 0, ogive_h: st.ogive_h || 0 };
   const defaut = dispo.ogive_h >= 1 ? 'ogive_h' : dispo.ogive >= 1 ? 'ogive' : dispo.plutonium > dispo.uranium ? 'plutonium' : 'uranium';
-  modaleOk = () => agir('missile', { armee: a.id, genre, cible: i, matiere: +val('n-kg') || 1, fissile: val('n-fissile'), explosifs: +val('n-expl') || 0 });
+  modaleOk = () => agir('missile', { armee: a.id, genre, cible: i, matiere: +val('n-kg') || 0, fissile: val('n-fissile'), explosifs: +val('n-expl') || 0 });
   modale(`<div class="wf-modale-tete">${ico('radiation')}<h2>Lancer une frappe nucléaire ?</h2></div>
     <p>Cible : <b>${esc(cible?.nom || 'cette zone')}</b>. Toute la planète verra le lancement. Le cœur de l'explosion devient une terre neutre et irradiée ; autour, les bâtiments sont détruits et les pertes dépendent de la densité de population. Plus la charge est grosse, plus le rayon est grand, <b>sans limite</b> : une charge énorme rase toute la carte, votre pays compris.</p>
     <div class="wf-form">
       <label>Charge
         <select id="n-fissile">
-          <option value="uranium" ${defaut === 'uranium' ? 'selected' : ''}>Uranium enrichi : ${fmt(dispo.uranium)} kg</option>
-          <option value="plutonium" ${defaut === 'plutonium' ? 'selected' : ''}>Plutonium (×1,5) : ${fmt(dispo.plutonium)} kg</option>
-          <option value="ogive" ${defaut === 'ogive' ? 'selected' : ''}>Ogives nucléaires : ${fmt(dispo.ogive)} en stock</option>
-          <option value="ogive_h" ${defaut === 'ogive_h' ? 'selected' : ''}>Bombes H : ${fmt(dispo.ogive_h)} en stock</option>
+          <option value="uranium" ${defaut === 'uranium' ? 'selected' : ''}>Uranium enrichi : ${fmt(Math.floor(dispo.uranium))} kg</option>
+          <option value="plutonium" ${defaut === 'plutonium' ? 'selected' : ''}>Plutonium (×1,5) : ${fmt(Math.floor(dispo.plutonium))} kg</option>
+          <option value="ogive" ${defaut === 'ogive' ? 'selected' : ''}>Ogives nucléaires : ${fmt(Math.floor(dispo.ogive))} en stock</option>
+          <option value="ogive_h" ${defaut === 'ogive_h' ? 'selected' : ''}>Bombes H : ${fmt(Math.floor(dispo.ogive_h))} en stock</option>
         </select></label>
-      <label><span id="n-unite">Quantité</span><input type="number" id="n-kg" min="1" value="${defaut.startsWith('ogive') ? 1 : 20}"></label>
+      <label><span id="n-unite">Quantité</span><input type="number" id="n-kg" min="1" step="1" value="1"></label>
       <label id="n-expl-ligne">Explosifs de mise à feu <small>(matière brute seulement : minimum 5 + kg/4, jusqu'au double pour +30 % · ${fmt(st.explosifs || 0)} en stock)</small><input type="number" id="n-expl" min="0" value="0" placeholder="minimum"></label>
       <div class="wf-insp-ligne" id="n-rayon"></div>
+      <div class="wf-insp-ligne neg" id="n-manque" hidden></div>
     </div>
     <div class="wf-boutons fin"><button class="wf-btn secondaire" data-act="fermer_modale">Annuler</button><button class="wf-btn danger" data-act="modale_ok">${ico('radiation')} Lancer</button></div>`);
+  // Quantite proposee selon la charge choisie : 1 ogive, ou 20 kg de matiere
+  // brute (au moins 5 kg, jamais plus que le stock), comme le verifie le serveur.
+  const quantiteParDefaut = () => {
+    const f = val('n-fissile');
+    const champ = $('#n-kg');
+    if (f.startsWith('ogive')) { champ.min = 1; champ.value = 1; }
+    else { champ.min = 5; champ.value = Math.max(5, Math.min(20, Math.floor(dispo[f]))); }
+  };
   // Rayon estime en direct (meme formule que le serveur).
   const maj = () => {
     const f = val('n-fissile');
@@ -720,11 +729,20 @@ function lancerNucleaire(a, genre, i) {
     const ogive = f.startsWith('ogive');
     $('#n-unite').textContent = ogive ? 'Nombre' : 'Quantité (kg, au moins 5)';
     $('#n-expl-ligne').hidden = ogive;
+    const manque = !ogive && q < 5 ? 'Il faut au moins 5 kg de matière fissile.'
+      : q > Math.floor(dispo[f]) + 1e-9 ? `Stock insuffisant : vous en avez ${fmt(Math.floor(dispo[f]))}${ogive ? '' : ' kg'}.`
+      : '';
+    $('#n-manque').textContent = manque;
+    $('#n-manque').hidden = !manque;
+    const lancer = document.querySelector('#wf-modale [data-act="modale_ok"]');
+    if (lancer) lancer.disabled = !!manque;
     // jeu.rs rayon_nucleaire : 5 kg de plutonium = 20 cases.
     const rayon = Math.min(Math.max(S.g.l, S.g.h), Math.floor(1 + 19 / Math.sqrt(7.5) * Math.sqrt(q * PUISSANCE_NUCL[f])));
     $('#n-rayon').innerHTML = `${ico('bullseye')} Rayon estimé : <b>${rayon} cases</b>${rayon >= Math.max(S.g.l, S.g.h) ? ' — <b class="neg">toute la carte</b>' : ''}`;
   };
-  ['n-fissile', 'n-kg'].forEach(id => document.getElementById(id).addEventListener('input', maj));
+  $('#n-fissile').addEventListener('change', () => { quantiteParDefaut(); maj(); });
+  $('#n-kg').addEventListener('input', maj);
+  quantiteParDefaut();
   maj();
 }
 
@@ -825,7 +843,15 @@ const ACTIONS = {
   fonder: () => ouvrirFondation(),
   observer: () => { sessionStorage.setItem('wf-fondation-vue', '1'); fermerModale(); },
   fermer_modale: () => fermerModale(),
-  modale_ok: () => { const f = modaleOk; fermerModale(); f && f(); },
+  // Lire les champs AVANT de fermer : fermerModale() vide la fenetre, et
+  // modaleOk lirait alors des champs disparus (tout a 0). On ne ferme pas
+  // si modaleOk a ouvert une autre fenetre (confirmation).
+  modale_ok: () => {
+    const f = modaleOk;
+    const avant = $('#wf-modale').firstElementChild;
+    if (f) f();
+    if ($('#wf-modale').firstElementChild === avant) fermerModale();
+  },
   choisir: (d, el) => {
     el.parentElement.querySelectorAll('.actif').forEach(x => x.classList.remove('actif'));
     el.classList.add('actif');

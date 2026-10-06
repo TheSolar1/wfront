@@ -798,8 +798,10 @@ mod tests {
         let admin = Joueur { user_id: BASE_ID, nom: "Admin", admin: true, triche: true };
         jeu::commande(&mut m, &admin, &json!({ "action": "dev_tout" }), &regles).unwrap();
         assert!(m.pays[&a].techs.len() > 10);
+        // « Tout me donner » : le maximum (1 000 de chaque produit).
+        assert_eq!(crate::fabrication::qte(&m.pays[&a].stock, "robot"), 1000.0);
         jeu::commande(&mut m, &admin, &json!({ "action": "admin_donner", "pays": a, "objet": "robot", "qte": 7, "troupes": 100 }), &regles).unwrap();
-        assert_eq!(crate::fabrication::qte(&m.pays[&a].stock, "robot"), 7.0);
+        assert_eq!(crate::fabrication::qte(&m.pays[&a].stock, "robot"), 1007.0);
         // Un don au-dessus de la capacite de stockage n'est plus perdu.
         jeu::commande(&mut m, &admin, &json!({ "action": "admin_donner", "pays": a, "res": [0, 0, 50000, 0, 0, 0] }), &regles).unwrap();
         let avant = m.pays[&a].res[ME];
