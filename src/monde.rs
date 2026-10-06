@@ -250,6 +250,16 @@ pub struct Nuage {
     pub pas: f64,
 }
 
+/// Trou noir laisse par une bombe : il ne disparait jamais et grossit petit
+/// a petit en avalant tout ce qu'il atteint.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TrouNoir {
+    pub id: u32,
+    pub case: usize,
+    /// Rayon en cases (fractionnaire : il grossit en continu).
+    pub rayon: f64,
+}
+
 /// Effet visuel ponctuel (explosions...) diffuse une seule fois.
 #[derive(Serialize, Clone)]
 pub struct Effet {
@@ -283,6 +293,8 @@ pub struct Monde {
     pub temps: f64,
     #[serde(default)]
     pub nuages: Vec<Nuage>,
+    #[serde(default)]
+    pub trous_noirs: Vec<TrouNoir>,
     #[serde(default)]
     pub attaques: BTreeMap<u32, Attaque>,
     /// Version des regles de la sauvegarde (migrations dans jeu::migrer).
@@ -533,6 +545,7 @@ impl Monde {
             rev: 1,
             temps: 0.0,
             nuages: Vec::new(),
+            trous_noirs: Vec::new(),
             attaques: BTreeMap::new(),
             version: 4,
             bots_admin: None,

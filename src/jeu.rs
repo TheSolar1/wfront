@@ -352,6 +352,55 @@ fn accident_nucleaire(m: &mut Monde, pid: u32, i: usize, rng: &mut impl Rng) {
     m.evenement(None, "nucleaire", format!("Accident nucléaire en {} : une centrale a explosé, un nuage radioactif dérive.", nom), Some(i));
 }
 
+/// Vitesse de croissance d'un trou noir : 1 case de rayon toutes les 10 min
+/// de jeu. Il ne s'arrete qu'apres avoir couvert toute la carte.
+pub const CROISSANCE_TROU_NOIR: f64 = 1.0 / 600.0;
+
+/// Les trous noirs grossissent ; a chaque case de rayon gagnee, ils avalent
+/// tout (terres, meme celles du tireur, batiments, armees) et laissent une
+/// zone morte.
+fn trous_noirs(m: &mut Monde, dt: f64) {
+    let max = m.largeur.max(m.hauteur) as f64;
+    for k in 0..m.trous_noirs.len() {
+        let t = &mut m.trous_noirs[k];
+        let avant = (t.rayon + 1e-9).floor() as i64;
+        t.rayon = (t.rayon + dt * CROISSANCE_TROU_NOIR).min(max);
+        let apres = (t.rayon + 1e-9).floor() as i64;
+        if apres <= avant {
+            continue;
+        }
+        let (centre, r) = (t.case, apres);
+        avaler(m, centre, r);
+        m.evenement(None, "nucleaire", format!("Le trou noir grossit : il avale tout dans un rayon de {} cases.", r), Some(centre));
+    }
+}
+
+/// Zone morte autour d'un trou noir : plus personne, plus rien.
+fn avaler(m: &mut Monde, centre: usize, r: i64) {
+    for v in m.rayon(centre, r) {
+        m.armees.retain(|_, a| a.case != v);
+        let c = &mut m.cases[v];
+        let ancien = c.proprio.take();
+        let deja = ancien.is_none() && c.bat.is_none() && c.irradiee > m.temps + 1.0e8;
+        c.bat = None;
+        c.niv = 0;
+        c.irradiee = m.temps + 1.0e9;
+        if let Some(o) = ancien {
+            if let Some(p) = m.pays.get_mut(&o) {
+                p.chantiers.retain(|x| x.case != v);
+                p.productions.retain(|x| x.case != v);
+            }
+        }
+        if !deja {
+            m.toucher(v);
+        }
+    }
+    let sans_capitale: Vec<u32> = m.pays.values().filter(|p| !p.elimine && m.cases[p.capitale].proprio != Some(p.id)).map(|p| p.id).collect();
+    for o in sans_capitale {
+        relocaliser_capitale(m, o);
+    }
+}
+
 /// Les nuages avancent avec le vent (qui tourne un peu) et irradient
 /// les cases qu'ils survolent.
 fn nuages(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
@@ -1447,6 +1496,11 @@ fn frappe_speciale(m: &mut Monde, pid: u32, genre: &str, cible: usize) {
         }
         m.toucher(v);
     }
+    // Le trou noir reste sur la carte et grossira (voir trous_noirs()).
+    if trou_noir {
+        let id = m.nouvel_id();
+        m.trous_noirs.push(TrouNoir { id, case: cible, rayon: 3.0 });
+    }
     // Antimatiere : l'annihilation creuse un cratere au centre, que l'eau envahit.
     if !trou_noir {
         for v in m.rayon(cible, RAYON_CRATERE) {
@@ -1677,6 +1731,7 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
     // ── Missiles ──
     missiles(m, dt, &mut rng);
     nuages(m, dt, &mut rng);
+    trous_noirs(m, dt);
     inventions(m, &bl, dt, &mut rng);
     // ── Troupes et offensives (facon OpenFront) ──
     front::reserves(m, &bl, dt);
@@ -3776,5 +3831,23 @@ mod tests_armes {
         assert!(m.rayon(cible, 3).iter().all(|&v| m.cases[v].proprio != Some(pid)), "le tireur perd aussi sa terre");
         assert!(m.rayon(cible, RAYON_CRATERE).iter().all(|&v| m.cases[v].terrain == T_MER), "cratere inonde");
         assert!(m.effets.iter().any(|e| e.genre == "antimatiere" && e.rayon == 3));
+    }
+
+    /// Trou noir : il reste et grossit petit a petit en avalant les terres.
+    #[test]
+    fn trou_noir_reste_et_grossit() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(60, 40, 7);
+        crate::bots::assurer(&mut m, 1, &regles, 0.0);
+        let pid = *m.pays.keys().next().unwrap();
+        let cible = m.pays[&pid].capitale;
+        frappe_speciale(&mut m, pid, "bombe_trou_noir", cible);
+        assert_eq!(m.trous_noirs.len(), 1);
+        // 10 minutes de jeu : une case de rayon en plus.
+        for _ in 0..600 {
+            trous_noirs(&mut m, 1.0);
+        }
+        assert!(m.trous_noirs[0].rayon >= 4.0 - 1e-6);
+        assert!(m.rayon(cible, 4).iter().all(|&v| m.cases[v].proprio.is_none() && m.cases[v].irradiee > m.temps + 1.0e8));
     }
 }

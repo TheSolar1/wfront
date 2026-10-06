@@ -418,6 +418,7 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
         "chat": chat,
         "effets": m.effets,
         "nuages": m.nuages.iter().map(|n| json!({ "id": n.id, "case": n.case })).collect::<Vec<_>>(),
+        "trous_noirs": m.trous_noirs.iter().map(|t| json!({ "id": t.id, "case": t.case, "rayon": t.rayon })).collect::<Vec<_>>(),
         "prix": m.prix,
         // Change avec « Nouvelle carte » (admin) : les clients rechargent.
         "graine": m.graine,

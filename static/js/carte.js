@@ -689,6 +689,7 @@ export class Carte {
     this.majAir();
     for (const f of e.effets || []) this.effet(f.genre, f.case, f.rayon || 0);
     if (e.nuages) this.majNuages(e.nuages);
+    if (e.trous_noirs) this.majTrousNoirs(e.trous_noirs);
     if (this.batsSales) {
       for (let i = 0; i < this.g.n; i++) if (this.bat[i]) this.majBatiment(i);
       this.batsSales = false;
@@ -796,6 +797,66 @@ export class Carte {
 
   /** Nuages radioactifs : amas de sphères verdâtres qui glissent d'une
    *  case à l'autre. */
+  /** Trous noirs permanents : sphere noire, deux disques d'accretion qui
+   *  tournent et de la matiere aspiree, a la taille de leur rayon. */
+  majTrousNoirs(liste) {
+    this.trousVus ??= new Map();
+    const vus = new Set();
+    const mat = (couleur, op) => new THREE.MeshBasicMaterial({ color: couleur, transparent: true, opacity: op, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, fog: false });
+    for (const t of liste) {
+      vus.add(t.id);
+      let o = this.trousVus.get(t.id);
+      if (!o) {
+        const g = new THREE.Group();
+        const coeur = new THREE.Mesh(new THREE.SphereGeometry(0.3, 32, 20), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+        coeur.renderOrder = 8;
+        const d1 = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.9, 96), mat(0xff6e40, 0.6));
+        const d2 = new THREE.Mesh(new THREE.RingGeometry(0.33, 0.65, 96), mat(0xb388ff, 0.6));
+        d1.renderOrder = d2.renderOrder = 6;
+        const n = 220, geo = new THREE.BufferGeometry(), pos = new Float32Array(n * 3);
+        geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffd180, size: 0.05, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+        pts.renderOrder = 6;
+        const part = Array.from({ length: n }, () => ({ a: Math.random() * Math.PI * 2, r: 0.8 + Math.random() * 1.2, h: (Math.random() - 0.5) * 0.4, v: 0.5 + Math.random(), p: Math.random() }));
+        g.add(coeur, d1, d2, pts);
+        const [x, z] = this.pos(t.case);
+        g.position.set(x, this.haut(t.case), z);
+        this.groupes.effets.add(g);
+        o = { g, coeur, d1, d2, pts, part, pos, y0: this.haut(t.case) };
+        this.trousVus.set(t.id, o);
+      }
+      // Taille du monde : une case ~ 1,6 unite ; grossit en douceur.
+      o.cible = Math.max(3, t.rayon) * 1.6;
+      o.echelle ??= o.cible;
+    }
+    for (const [id, o] of this.trousVus) {
+      if (!vus.has(id)) {
+        this.groupes.effets.remove(o.g);
+        o.g.traverse(c => { c.geometry?.dispose(); c.material?.dispose(); });
+        this.trousVus.delete(id);
+      }
+    }
+  }
+
+  animerTrousNoirs(t) {
+    if (!this.trousVus) return;
+    for (const o of this.trousVus.values()) {
+      o.echelle += (o.cible - o.echelle) * 0.02;
+      const R = o.echelle;
+      o.g.scale.setScalar(R);
+      o.g.position.y = o.y0;
+      o.coeur.position.y = o.d1.position.y = o.d2.position.y = o.pts.position.y = 0.45;
+      o.d1.rotation.set(-Math.PI / 2 + 0.35, 0, t * 0.0012);
+      o.d2.rotation.set(-Math.PI / 2 - 0.25, 0, -t * 0.0018);
+      o.part.forEach((q, j) => {
+        const f = 1 - ((t * 0.00012 * q.v + q.p) % 1);
+        const a = q.a + t * 0.0006 * q.v * (1 + 3 * (1 - f));
+        o.pos[3 * j] = Math.cos(a) * q.r * f; o.pos[3 * j + 1] = q.h * f; o.pos[3 * j + 2] = Math.sin(a) * q.r * f;
+      });
+      o.pts.geometry.attributes.position.needsUpdate = true;
+    }
+  }
+
   majNuages(liste) {
     this.nuagesVus ??= new Map();
     const vus = new Set();
@@ -1101,46 +1162,26 @@ export class Carte {
       anim(cond, 4000, k => { cond.scale.setScalar(R * (0.3 + 0.6 * k)); cond.material.opacity = 0.6 * (1 - k); }, 1500);
       debris(Math.min(300, 80 + R * 8), 0xffcc80, 2 + R * 0.6, 2600, 0.2, 4);
     } else if (genre === 'trou_noir') {
-      // Disque d'accretion qui tourne, matiere aspiree, puis effondrement.
+      // Formation : eclair violet, onde, matiere aspiree vers le centre.
+      // Le trou noir permanent (majTrousNoirs) reste ensuite sur la carte.
       const R = Math.max(3, (rayon || 3) * 1.6);
-      const h = R * 0.45;
-      // Coeur opaque : il cache la lueur des disques qui passent derriere.
-      const coeur = place(new T.Mesh(new T.SphereGeometry(1, 28, 18), new T.MeshBasicMaterial({ color: 0x000000 })), h);
-      coeur.renderOrder = 8;
-      anim(coeur, 7000, k => {
-        const e = k < 0.15 ? k / 0.15 : k < 0.85 ? 1 : (1 - k) / 0.15;
-        coeur.scale.setScalar(R * 0.3 * e + 0.01);
-      });
-      const disque = (couleur, inc, vitesse, taille) => {
-        const d = new T.Mesh(new T.RingGeometry(0.35, 1, 96), mat(couleur, 0.85));
-        d.position.set(x, y + h, z);
-        anim(d, 7000, (k, t) => {
-          const e = k < 0.15 ? k / 0.15 : k < 0.85 ? 1 : (1 - k) / 0.15;
-          d.rotation.set(-Math.PI / 2 + inc, 0, t * vitesse);
-          d.scale.setScalar(R * taille * e + 0.01);
-          d.material.opacity = 0.65 * e;
-        });
-      };
-      disque(0xff6e40, 0.35, 4, 0.9);
-      disque(0xb388ff, -0.25, -6, 0.65);
-      // Particules qui spiralent vers le centre
-      const n = 260, g = new T.BufferGeometry(), p = new Float32Array(n * 3);
-      const part = Array.from({ length: n }, () => ({ a: Math.random() * Math.PI * 2, r: R * (0.9 + Math.random() * 1.3), h: (Math.random() - 0.5) * R * 0.5, v: 0.5 + Math.random() }));
+      this.rappels.flash?.();
+      gonfle(boule(0xe040fb), 900, R * 0.6, 1, R * 0.2, 0, 0.3);
+      gonfle(anneau(0xb388ff, 0.9, 0.9), 2200, R * 1.8, 0.9, 0.15, 100, 0.6);
+      const n = 300, g = new T.BufferGeometry(), p = new Float32Array(n * 3);
+      const part = Array.from({ length: n }, () => ({ a: Math.random() * Math.PI * 2, r: R * (1 + Math.random() * 1.5), h: Math.random() * R * 0.6, v: 0.6 + Math.random() }));
       g.setAttribute('position', new T.BufferAttribute(p, 3));
-      const pts = new T.Points(g, new T.PointsMaterial({ color: 0xffd180, size: 0.16, transparent: true, depthWrite: false, blending: T.AdditiveBlending }));
-      pts.position.set(x, y + h, z);
-      anim(pts, 6200, (k, t) => {
+      const pts = new T.Points(g, new T.PointsMaterial({ color: 0xffd180, size: 0.18, transparent: true, depthWrite: false, blending: T.AdditiveBlending, fog: false }));
+      pts.position.set(x, y, z);
+      anim(pts, 4000, (k, t) => {
+        const f = Math.pow(1 - k, 1.5);
         part.forEach((q, j) => {
-          const f = Math.max(0, 1 - ((t * q.v * 0.35) % 1));
-          const a = q.a + t * (2 + 3 * (1 - f)) * q.v;
-          p[3 * j] = Math.cos(a) * q.r * f; p[3 * j + 1] = q.h * f; p[3 * j + 2] = Math.sin(a) * q.r * f;
+          const a2 = q.a + t * 3 * q.v;
+          p[3 * j] = Math.cos(a2) * q.r * f; p[3 * j + 1] = q.h * f + R * 0.2; p[3 * j + 2] = Math.sin(a2) * q.r * f;
         });
         g.attributes.position.needsUpdate = true;
-        pts.material.opacity = k < 0.9 ? 1 : (1 - k) / 0.1;
-      }, 400);
-      // Effondrement final : eclair violet et onde
-      gonfle(boule(0xe040fb), 900, R * 0.7, 1, h, 6000, 0.3);
-      gonfle(anneau(0xb388ff, 0.9, 0.9), 1800, R * 1.6, 0.9, 0.15, 6000, 0.6);
+        pts.material.opacity = k < 0.85 ? 1 : (1 - k) / 0.15;
+      }, 200);
     } else if (genre === 'antimatiere') {
       // Implosion, eclair d'annihilation, puis le cratere se creuse (reformer).
       const R = Math.max(3, (rayon || 3) * 1.6);
@@ -1375,6 +1416,7 @@ export class Carte {
       this.cam.d = this.anim.d0 + (this.anim.d1 - this.anim.d0) * e;
       if (k >= 1) this.anim = null;
     }
+    this.animerTrousNoirs(t);
     if (this.deformation) {
       const k = (performance.now() - this.deformation.t0) / this.deformation.duree;
       if (k > 0) this.finirDeformation(Math.min(1, k));
