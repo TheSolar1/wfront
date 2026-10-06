@@ -1484,3 +1484,117 @@ export const PANNEAUX = {
   aide: { titre: 'Guide du dirigeant', icone: 'circle-question', rendre: panneauAide, statique: true },
   admin: { titre: 'Administration', icone: 'shield-halved', rendre: panneauAdmin },
 };
+
+// ══════════════════════════════════════════════════════════════════
+// Menu radial (facon OpenFront) : les actions possibles sur une case,
+// en cercle autour du curseur. Chaque entree : { ico, label, info,
+// act + data (meme ACTIONS que les boutons), ou sous: [entrees] }.
+// ══════════════════════════════════════════════════════════════════
+function coutTexte(S, c) {
+  return c.map((v, k) => v ? `${fmt(v)} ${S.defs.ressources[k].nom.toLowerCase()}` : '').filter(Boolean).join(' · ');
+}
+
+export function actionsRadiales(S, i) {
+  const m = S.moi;
+  const items = [];
+  const t = S.defs.terrains[S.carte.terrain[i]];
+  const pid = S.carte.proprio[i];
+  const p = pid >= 0 ? S.pays.get(pid) : null;
+  const vivant = m && !m.elimine;
+  const rel = p && m && p.id !== m.id ? (S.relations[p.id]?.etat || 'paix') : null;
+
+  if (vivant && pid === m.id && t.terre) {
+    const b = S.carte.bat[i];
+    const chantier = m.chantiers.find(c => c.case === i);
+    if (chantier) {
+      items.push({ ico: 'xmark', label: 'Annuler le chantier', info: '50 % remboursés', act: 'annuler_chantier', data: { id: chantier.id }, danger: true });
+    } else if (S.carte.irr[i]) {
+      // Rien a construire en zone irradiee.
+    } else if (!b) {
+      const possibles = S.defs.batiments.filter(d => d.constructible && !raisonBatiment(S, d, i));
+      possibles.sort((x, y) => (y.depot ? 1 : 0) - (x.depot ? 1 : 0));
+      const cats = [...new Set(possibles.map(d => d.categorie))];
+      const ICONES_CAT = { Production: 'wheat-awn', Industrie: 'industry', Énergie: 'bolt', Économie: 'coins', Militaire: 'person-military-rifle', Défense: 'shield-halved', Administration: 'landmark' };
+      const sous = cats.map(cat => ({
+        ico: ICONES_CAT[cat] || 'helmet-safety', label: cat,
+        sous: possibles.filter(d => d.categorie === cat).map(d => {
+          const c = coutBatiment(d, 1, m.mods, m.spe);
+          return { ico: d.icone, label: d.nom, info: coutTexte(S, c), act: 'construire', data: { case: i, bat: d.id }, off: !peutPayer(S, c) };
+        }),
+      }));
+      if (sous.length) items.push({ ico: 'helmet-safety', label: 'Construire', sous: sous.length === 1 ? sous[0].sous : sous });
+    } else {
+      const d = batDef(S, b);
+      const niv = S.carte.niv[i];
+      if (niv < m.mods.niv_max) {
+        const c = coutBatiment(d, niv + 1, m.mods, m.spe);
+        items.push({ ico: 'arrow-up', label: `Améliorer (niveau ${niv + 1})`, info: coutTexte(S, c), act: 'ameliorer', data: { case: i }, off: !peutPayer(S, c) });
+      }
+      items.push({ ico: 'sliders', label: `Gérer : ${d?.nom || b}`, info: 'Production, recherche, détails', act: 'infos_case', data: { case: i } });
+      if (b !== 'capitale') items.push({ ico: 'trash', label: 'Démolir', act: 'demolir', data: { case: i }, danger: true });
+    }
+  }
+
+  // Troupes : terre neutre ou ennemie en guerre qui touche votre territoire,
+  // ou cote atteignable par bateau (comme le clic droit).
+  if (vivant && t.terre && pid !== m.id) {
+    const touche = S.g.voisins(i).some(v => v >= 0 && S.carte.proprio[v] === m.id);
+    const ennemi = pid >= 0 && rel === 'guerre';
+    const port = S.cotes?.[i] === '1' && S.carte.proprio.some((o, k) => o === m.id && (
+      (S.carte.bat[k] === 'port' && S.g.distance(k, i) <= S.defs.troupes.portee_bateau)
+      || (S.cotes[k] === '1' && S.g.distance(k, i) <= S.defs.troupes.portee_cote)));
+    if ((pid < 0 || ennemi) && (touche || port)) {
+      const mode = !touche ? 'bateau' : pid < 0 ? 'neutre' : 'attaque';
+      const envoi = Math.floor(m.troupes * S.ratio);
+      items.push({
+        ico: mode === 'neutre' ? 'map-location-dot' : mode === 'bateau' ? 'ship' : 'person-military-pointing',
+        label: mode === 'neutre' ? "S'étendre" : mode === 'bateau' ? 'Débarquer' : 'Attaquer',
+        info: `${fmt(envoi)} troupes (${Math.round(S.ratio * 100)} %)`, act: 'etendre', data: { case: i },
+        danger: mode === 'attaque', off: envoi < 10,
+      });
+    }
+  }
+
+  // Autre nation : diplomatie et frappes.
+  if (vivant && p && p.id !== m.id && !p.elimine) {
+    const allies = m.bloc != null && m.bloc === p.bloc;
+    const envoyee = g => S.propositions.some(x => x.de === m.id && x.a === p.id && x.genre === g);
+    const diplo = [];
+    if (rel === 'guerre') diplo.push({ ico: 'dove', label: 'Proposer la paix', act: 'proposer', data: { pays: p.id, genre: 'paix' }, off: envoyee('paix') });
+    else if (!allies) diplo.push({ ico: 'burst', label: 'Déclarer la guerre', act: 'guerre', data: { pays: p.id }, danger: true });
+    if (rel === 'paix' && !allies) diplo.push({ ico: 'file-signature', label: 'Pacte de non-agression', act: 'proposer', data: { pays: p.id, genre: 'pna' }, off: envoyee('pna') });
+    if (rel !== 'guerre' && !allies) diplo.push({ ico: 'people-group', label: 'Proposer une alliance', act: 'proposer', data: { pays: p.id, genre: 'alliance' }, off: envoyee('alliance') });
+    diplo.push({ ico: 'box-open', label: 'Envoyer une aide', act: 'aide_form', data: { pays: p.id } });
+    diplo.push({ ico: 'user-secret', label: 'Espionner', sous: [
+      { ico: 'bomb', label: 'Sabotage', act: 'espion', data: { pays: p.id, op: 'sabotage' } },
+      { ico: 'flask', label: 'Vol de technologie', act: 'espion', data: { pays: p.id, op: 'vol' } },
+      { ico: 'masks-theater', label: 'Déstabilisation', act: 'espion', data: { pays: p.id, op: 'destabilisation' } },
+    ] });
+    items.push({ ico: 'handshake', label: `Diplomatie : ${p.nom}`, sous: diplo });
+
+    if (rel === 'guerre') {
+      const frappes = [];
+      const vus = new Set();
+      for (const a of S.armees.filter(x => x.proprio === m.id && x.dom === 'missile')) {
+        for (const [id, n] of Object.entries(a.unites || {})) {
+          const u = uniDef(S, id);
+          if (!u || !n || vus.has(id) || (u.portee < 900 && S.g.distance(a.case, i) > u.portee)) continue;
+          vus.add(id);
+          frappes.push({ ico: u.icone, label: `Tirer : ${u.nom}`, info: `${n} en silo`, act: 'tirer_ici', data: { armee: a.id, genre: id, case: i }, danger: id === 'missile_nucleaire' });
+        }
+      }
+      for (const o of ['bombe_antimatiere', 'bombe_trou_noir']) {
+        const n = possede(S, o);
+        if (n >= 1) frappes.push({ ico: o === 'bombe_trou_noir' ? 'circle' : 'explosion', label: nomObjet(S, o), info: `${fmt(n)} en stock · depuis votre silo`, act: 'arme_ici', data: { objet: o, case: i }, danger: true });
+      }
+      if (frappes.length) items.push(frappes.length === 1 ? frappes[0] : { ico: 'crosshairs', label: 'Frappes', sous: frappes, danger: true });
+    }
+  }
+
+  // Vos armees sur la case
+  const miennes = m ? S.armees.filter(a => a.case === i && a.proprio === m.id) : [];
+  if (miennes.length) items.push({ ico: 'flag', label: miennes.length > 1 ? `Armées (${miennes.length})` : `Armée : ${miennes[0].nom}`, act: 'sel_armee', data: { armee: miennes[0].id } });
+
+  items.push({ ico: 'circle-info', label: 'Infos', info: 'Fiche détaillée de la case', act: 'infos_case', data: { case: i } });
+  return items;
+}

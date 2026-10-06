@@ -6,7 +6,7 @@
 
 import { Carte } from './carte.js';
 import { ico, esc, fmt, fmtPop, duree, signe, Grille, coutBatiment, contraste } from './util.js';
-import { PANNEAUX, drapeau, cout, nomCase, statutArmee, listeChat, ICONES_EVT, menuCase, menuTroupes, menuDiplomatie, nomObjet, recetteDeTable } from './panneaux.js';
+import { PANNEAUX, drapeau, cout, nomCase, statutArmee, listeChat, ICONES_EVT, menuCase, menuTroupes, menuDiplomatie, nomObjet, recetteDeTable, actionsRadiales } from './panneaux.js';
 
 const $ = s => document.querySelector(s);
 const corps = document.body;
@@ -315,6 +315,8 @@ function clicCarte(i, e) {
   if (S.ordre) { executerOrdre(i); return; }
   // HUD minimal : un clic sur la carte referme le panneau ouvert.
   if (S.panneau) { ouvrirPanneau('carte'); return; }
+  // Un clic ailleurs referme le menu radial ouvert.
+  if (radial) { fermerRadial(); return; }
   const miennes = mesArmeesSur(i);
   if (miennes.length && S.selCase === i) {
     // Clics successifs : on passe d'une armee a l'autre sur la meme case.
@@ -325,13 +327,95 @@ function clicCarte(i, e) {
   } else if (!e?.shiftKey) {
     choisirArmee(null);
   }
-  choisirCase(i);
+  // Facon OpenFront : les actions de la case en cercle autour du curseur.
+  choisirCase(null);
+  ouvrirRadial(i, e);
 }
+
+// ── Menu radial (facon OpenFront) ─────────────────────────────────
+// Clic gauche sur une case : ses actions en cercle autour du curseur.
+// Une entree avec sous-menu remplace le cercle ; le bouton central revient
+// en arriere ou ferme. Les entrees finales sont des boutons data-act :
+// le meme gestionnaire que le reste de l'interface les execute.
+let radial = null; // { i, pile: [entrees], x, y }
+
+function ouvrirRadial(i, e) {
+  const items = actionsRadiales(S, i);
+  // Seulement « Infos » : inutile d'ouvrir un cercle.
+  if (items.length === 1) { choisirCase(i); return; }
+  const r = $('#wf-carte').getBoundingClientRect();
+  const x = Math.max(130, Math.min(r.width - 130, e.clientX - r.left));
+  const y = Math.max(130, Math.min(r.height - 150, e.clientY - r.top));
+  radial = { i, pile: [items], x, y };
+  S.carte.selectionnerCase(i);
+  dessinerRadial();
+}
+
+function fermerRadial() {
+  if (!radial) return;
+  radial = null;
+  $('#wf-radial').hidden = true;
+  if (S.selCase == null) S.carte.selectionnerCase(null);
+}
+
+function dessinerRadial() {
+  const el = $('#wf-radial');
+  const items = radial.pile[radial.pile.length - 1];
+  const n = items.length;
+  const R = n <= 5 ? 74 : n <= 8 ? 92 : 112;
+  const p = S.carte.proprio[radial.i] >= 0 ? S.pays.get(S.carte.proprio[radial.i]) : null;
+  const titre = `${esc(nomCase(S, radial.i))}${p ? ` · ${esc(p.nom)}` : ''}`;
+  el.style.left = radial.x + 'px';
+  el.style.top = radial.y + 'px';
+  el.innerHTML = items.map((it, k) => {
+    const a = -Math.PI / 2 + (2 * Math.PI * k) / n;
+    const pos = `--dx:${(Math.cos(a) * R).toFixed(1)}px;--dy:${(Math.sin(a) * R).toFixed(1)}px;--k:${k}`;
+    const data = it.sous ? `data-rad="${k}"` : `data-act="${it.act}" ${Object.entries(it.data || {}).map(([c, v]) => `data-${c}="${esc(String(v))}"`).join(' ')}`;
+    return `<button class="wf-rad-btn ${it.danger ? 'danger' : ''} ${it.off ? 'off' : ''} ${it.sous ? 'groupe' : ''}" style="${pos}" ${data}
+      data-label="${esc(it.label)}" data-info="${esc(it.info || '')}" ${it.off ? 'disabled' : ''} aria-label="${esc(it.label)}">${ico(it.ico)}</button>`;
+  }).join('') + `<button class="wf-rad-centre" data-rad="retour" aria-label="${radial.pile.length > 1 ? 'Retour' : 'Fermer'}">${ico(radial.pile.length > 1 ? 'arrow-left' : 'xmark')}</button>
+    <div class="wf-rad-label" style="--r:${R}px"><b>${titre}</b><span></span></div>`;
+  el.hidden = false;
+  // Rejoue l'animation d'ouverture
+  el.classList.remove('ouvert'); void el.offsetWidth; el.classList.add('ouvert');
+}
+
+function initRadial() {
+  const el = $('#wf-radial');
+  const label = () => el.querySelector('.wf-rad-label');
+  el.addEventListener('mouseover', e => {
+    const b = e.target.closest('.wf-rad-btn');
+    const l = label();
+    if (!l) return;
+    if (!b) { l.querySelector('span').textContent = ''; return; }
+    l.querySelector('span').innerHTML = `${esc(b.dataset.label)}${b.dataset.info ? `<small>${esc(b.dataset.info)}</small>` : ''}`;
+  });
+  el.addEventListener('click', e => {
+    const b = e.target.closest('button');
+    if (!b || !radial) return;
+    if (b.dataset.rad === 'retour') {
+      if (radial.pile.length > 1) { radial.pile.pop(); dessinerRadial(); } else fermerRadial();
+      return;
+    }
+    if (b.dataset.rad != null) {
+      const it = radial.pile[radial.pile.length - 1][+b.dataset.rad];
+      radial.pile.push(it.sous);
+      dessinerRadial();
+      return;
+    }
+    // Action finale : executee par le gestionnaire global (data-act), puis on ferme.
+    if (b.dataset.act) setTimeout(fermerRadial, 0);
+  });
+  // Molette ou glisser sur la carte : le menu ne suit pas la camera, on le ferme.
+  $('#wf-carte').addEventListener('wheel', fermerRadial, { passive: true });
+}
+
 
 // Clic droit : avec une armee selectionnee, l'ordre habituel ; sinon on
 // envoie une part des troupes sur la case (facon OpenFront).
 function clicDroitCarte(i) {
   if (i < 0) return;
+  fermerRadial();
   if (S.ordre) { annulerOrdre(); return; }
   const a = S.armees.find(x => x.id === S.selArmee);
   if (a && S.moi && a.proprio === S.moi.id) {
@@ -870,6 +954,20 @@ const ACTIONS = {
   demolir: d => confirmer('Démolir ce bâtiment ?', 'Le bâtiment sera détruit sans remboursement.', 'Démolir', () => agir('demolir', { case: +d.case }), true),
   annuler_chantier: d => agir('annuler_chantier', { id: +d.id }),
   etendre: d => envoyerTroupes(+d.case),
+  infos_case: d => choisirCase(+d.case),
+  // Tir direct depuis le menu radial de la case visee (sans choisir la cible apres).
+  tirer_ici: d => {
+    const a = S.armees.find(x => x.id === +d.armee);
+    if (!a) return;
+    if (d.genre === 'missile_nucleaire') lancerNucleaire(a, d.genre, +d.case);
+    else agir('missile', { armee: a.id, genre: d.genre, cible: +d.case });
+  },
+  arme_ici: d => {
+    const cible = S.pays.get(S.carte.proprio[+d.case]);
+    confirmer(`${ico('circle')} Lancer la ${esc(nomObjet(S, d.objet).toLowerCase())} ?`,
+      `Vous allez frapper <b>${esc(cible?.nom || 'cette zone')}</b> depuis votre silo. Rien ne peut l'intercepter. Cette décision est irréversible.`,
+      'Lancer', () => agir('arme_speciale', { objet: d.objet, cible: +d.case }), true);
+  },
   rappeler: d => agir('rappeler', { id: +d.id }),
   fab_onglet: d => { S.fabOnglet = d.onglet; majPanneau(true); },
   fab_element: d => { S.qteRaf = Math.max(1, Math.min(1000, +val('qte-raf') || S.qteRaf || 10)); S.fabElement = d.objet; majPanneau(true); },
@@ -1127,7 +1225,8 @@ document.addEventListener('keydown', e => {
     return;
   }
   if (e.key === 'Escape') {
-    if (!$('#wf-modale').hidden && $('#wf-modale').dataset.fermable === '1') fermerModale();
+    if (radial) fermerRadial();
+    else if (!$('#wf-modale').hidden && $('#wf-modale').dataset.fermable === '1') fermerModale();
     else if (S.ordre) annulerOrdre();
     else if (S.selArmee != null) choisirArmee(null);
     else if (S.selCase != null) choisirCase(null);
@@ -1171,4 +1270,5 @@ if (corps.dataset.mode === 'dev') {
   window.devTout = () => S.joueur?.admin ? agir('dev_tout') : console.warn("devTout : clé d'administration requise (page /admin).");
 }
 
+initRadial();
 connecter();
