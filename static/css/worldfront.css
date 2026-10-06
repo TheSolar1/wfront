@@ -780,3 +780,9 @@ body.wf-dev { min-height: 100vh; display: flex; align-items: center; justify-con
 /* HUD minimal : barre de ressources plus fine */
 .wf-resbar { min-height: 40px; }
 .wf-res { padding: 3px 8px; }
+
+/* Barre VEX dans WorldFront : logo WorldFront en couleur (celui de VEX est gris) ;
+   la grille d'applis et le compte VEX sont caches aux invites et en mode dev. */
+.nav-logo-flat-7844.wf-nav-logo { filter: none !important; width: 34px; height: 34px; display: block; }
+body[data-invite="1"] .wf-apps-vex, body[data-invite="1"] .wf-lien-vex,
+body[data-mode="dev"] .wf-apps-vex, body[data-mode="dev"] .wf-lien-vex { display: none !important; }
