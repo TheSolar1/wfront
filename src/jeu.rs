@@ -1039,7 +1039,11 @@ fn apparition(m: &Monde) -> Option<usize> {
         let mut candidats = Vec::new();
         for i in 0..m.cases.len() {
             let c = &m.cases[i];
-            if c.proprio.is_some() || !matches!(c.terrain, T_PLAINE | T_FORET | T_COLLINE | T_DESERT | T_TOUNDRA) {
+            if c.proprio.is_some() || c.irradiee > m.temps || !matches!(c.terrain, T_PLAINE | T_FORET | T_COLLINE | T_DESERT | T_TOUNDRA) {
+                continue;
+            }
+            // Jamais au bord d'un trou noir.
+            if m.rayon(i, dist_terr).iter().any(|&v| m.zone_morte(v)) {
                 continue;
             }
             let vois = m.voisins(i);
@@ -2444,8 +2448,16 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
         "admin_nouvelle_carte" if j.admin => {
             let graine = rand::thread_rng().gen_range(1..u32::MAX as u64);
             let (l, h, bots) = (m.largeur, m.hauteur, m.bots_admin);
+            // Les trous noirs sont eternels : ils survivent au nouveau monde,
+            // au meme endroit et a la meme taille.
+            let trous = std::mem::take(&mut m.trous_noirs);
             *m = Monde::generer(l, h, graine);
             m.bots_admin = bots;
+            let n = m.cases.len();
+            for t in trous.into_iter().filter(|t| t.case < n) {
+                avaler(m, t.case, (t.rayon + 1e-9).floor() as i64);
+                m.trous_noirs.push(t);
+            }
             m.evenement(None, "annonce", "Nouveau monde : l'administration a généré une nouvelle carte. Fondez votre nation !".into(), None);
             return Ok(format!("Nouvelle carte générée (graine {}).", graine));
         }
@@ -3849,5 +3861,10 @@ mod tests_armes {
         }
         assert!(m.trous_noirs[0].rayon >= 4.0 - 1e-6);
         assert!(m.rayon(cible, 4).iter().all(|&v| m.cases[v].proprio.is_none() && m.cases[v].irradiee > m.temps + 1.0e8));
+        // Eternel : il survit meme a « Nouvelle carte ».
+        let admin = Joueur { user_id: 1, nom: "Admin", admin: true, triche: false };
+        commande(&mut m, &admin, &json!({ "action": "admin_nouvelle_carte" }), &regles).unwrap();
+        assert_eq!(m.trous_noirs.len(), 1);
+        assert!(m.rayon(cible, 4).iter().all(|&v| m.cases[v].proprio.is_none()));
     }
 }

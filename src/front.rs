@@ -107,6 +107,10 @@ pub fn etendre(m: &mut Monde, pid: u32, i: usize, ratio: f64, maint: i64) -> Res
     if !est_terre(c.terrain) {
         return Err("Visez une case de terre.".into());
     }
+    if m.zone_morte(i) {
+        return Err("Zone morte du trou noir : plus rien n'y vit.".into());
+    }
+    let c = &m.cases[i];
     let cible = c.proprio;
     if cible == Some(pid) {
         return Err("Cette province est déjà à vous.".into());
@@ -270,7 +274,7 @@ fn prochaine(m: &Monde, a: &Attaque) -> Option<usize> {
     (0..m.cases.len())
         .filter(|&i| {
             let c = &m.cases[i];
-            c.proprio == a.cible && est_terre(c.terrain) && touche(m, a.de, i)
+            c.proprio == a.cible && est_terre(c.terrain) && !m.zone_morte(i) && touche(m, a.de, i)
         })
         .min_by_key(|&i| (m.distance(i, a.vise), i))
 }
