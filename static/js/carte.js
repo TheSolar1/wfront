@@ -17,9 +17,11 @@ const LX = Math.sqrt(3) * R;       // pas horizontal
 const LZ = 1.5 * R;                // pas vertical
 // Altitude de base et rugosite par terrain (ocean, mer, plaine, foret,
 // collines, montagnes, desert, toundra) + couleur de biome.
-const ALT = [-1.25, -0.38, 0.2, 0.3, 0.85, 1.9, 0.24, 0.33];
-const RUG = [0.05, 0.04, 0.06, 0.12, 0.42, 1.2, 0.09, 0.12];
-const BIOMES = ['#1f4f73', '#3f86a8', '#8db35a', '#4f7f3a', '#9c9a5e', '#8a8378', '#dcc684', '#b3bdb0'];
+// Index 8 : neant (carte detruite par un trou noir), un gouffre noir.
+const ALT = [-1.25, -0.38, 0.2, 0.3, 0.85, 1.9, 0.24, 0.33, -2.6];
+const RUG = [0.05, 0.04, 0.06, 0.12, 0.42, 1.2, 0.09, 0.12, 0];
+const BIOMES = ['#1f4f73', '#3f86a8', '#8db35a', '#4f7f3a', '#9c9a5e', '#8a8378', '#dcc684', '#b3bdb0', '#07030c'];
+const T_NEANT = 8;
 const DIRS_COINS = [[0, 1], [5, 0], [4, 5], [3, 4], [2, 3], [1, 2]]; // voisin k -> coins de l'arete
 
 // ── Icones SVG -> images blanches pour les textures ──────────────
@@ -231,7 +233,10 @@ export class Carte {
     const t = ci >= 0 ? this.terrain[ci] : 0;
     const pente = 1 - nor[3 * k + 1];
     c.copy(P.pal[t]);
-    if (h < 0) {
+    if (t === T_NEANT) {
+      // Gouffre : noir violace, un peu plus clair sur les bords.
+      c.setRGB(0.03, 0.01, 0.05).lerp(P.roche, Math.max(0, Math.min(0.25, (h + 0.6) * 0.2)));
+    } else if (h < 0) {
       c.copy(P.hautFond).lerp(P.fond, Math.min(1, -h / 1.2));
     } else {
       if (h < 0.16) c.lerp(P.sable, (0.16 - h) / 0.16 * 0.85);
@@ -818,15 +823,22 @@ export class Carte {
         const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffd180, size: 0.05, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
         pts.renderOrder = 6;
         const part = Array.from({ length: n }, () => ({ a: Math.random() * Math.PI * 2, r: 0.8 + Math.random() * 1.2, h: (Math.random() - 0.5) * 0.4, v: 0.5 + Math.random(), p: Math.random() }));
-        g.add(coeur, d1, d2, pts);
+        // Horizon : disque noir au ras du sol et liseré violet, la carte avalee.
+        const horizon = new THREE.Mesh(new THREE.CircleGeometry(1, 72).rotateX(-Math.PI / 2),
+          new THREE.MeshBasicMaterial({ color: 0x030106, transparent: true, opacity: 0.93, depthWrite: false, fog: false }));
+        horizon.renderOrder = 2;
+        const lisere = new THREE.Mesh(new THREE.RingGeometry(0.96, 1.06, 96).rotateX(-Math.PI / 2), mat(0x9c27b0, 0.55));
+        lisere.renderOrder = 3;
+        g.add(coeur, d1, d2, pts, horizon, lisere);
         const [x, z] = this.pos(t.case);
         g.position.set(x, this.haut(t.case), z);
         this.groupes.effets.add(g);
-        o = { g, coeur, d1, d2, pts, part, pos, y0: this.haut(t.case) };
+        o = { g, coeur, d1, d2, pts, part, pos, horizon, lisere, y0: this.haut(t.case) };
         this.trousVus.set(t.id, o);
       }
       // Taille du monde : une case ~ 1,6 unite ; grossit en douceur.
       o.cible = Math.max(3, t.rayon) * 1.6;
+      o.rayon = t.rayon;
       o.echelle ??= o.cible;
     }
     for (const [id, o] of this.trousVus) {
@@ -846,6 +858,12 @@ export class Carte {
       o.g.scale.setScalar(R);
       o.g.position.y = o.y0;
       o.coeur.position.y = o.d1.position.y = o.d2.position.y = o.pts.position.y = 0.45;
+      // Horizon au ras de l'eau (y = 0,04), rayon reel de la zone avalee.
+      o.horizon.position.y = o.lisere.position.y = (0.04 - o.y0) / R;
+      const rh = (Math.max(0.5, o.rayon) + 0.5) * 1.6 / R;
+      o.horizon.scale.setScalar(rh);
+      o.lisere.scale.setScalar(rh);
+      o.lisere.material.opacity = 0.4 + 0.2 * Math.sin(t * 0.004);
       o.d1.rotation.set(-Math.PI / 2 + 0.35, 0, t * 0.0012);
       o.d2.rotation.set(-Math.PI / 2 - 0.25, 0, -t * 0.0018);
       o.part.forEach((q, j) => {

@@ -50,6 +50,8 @@ pub const T_COLLINE: u8 = 4;
 pub const T_MONTAGNE: u8 = 5;
 pub const T_DESERT: u8 = 6;
 pub const T_TOUNDRA: u8 = 7;
+/// Neant : la carte avalee par un trou noir. Infranchissable, meme en bateau.
+pub const T_NEANT: u8 = 8;
 
 #[derive(Serialize)]
 pub struct TerrainDef {
@@ -65,7 +67,7 @@ pub struct TerrainDef {
     pub hauteur: f64,
 }
 
-pub const TERRAINS: [TerrainDef; 8] = [
+pub const TERRAINS: [TerrainDef; 9] = [
     TerrainDef { id: T_OCEAN, nom: "Océan", couleur: "#1e4f7a", terre: false, cout_mvt: 1.0, defense: 0.0, hauteur: 0.05 },
     TerrainDef { id: T_MER, nom: "Mer côtière", couleur: "#2f7bb0", terre: false, cout_mvt: 1.0, defense: 0.0, hauteur: 0.1 },
     TerrainDef { id: T_PLAINE, nom: "Plaine", couleur: "#8fbf5a", terre: true, cout_mvt: 1.0, defense: 0.0, hauteur: 0.35 },
@@ -74,6 +76,7 @@ pub const TERRAINS: [TerrainDef; 8] = [
     TerrainDef { id: T_MONTAGNE, nom: "Montagnes", couleur: "#8a8176", terre: true, cout_mvt: 2.5, defense: 0.7, hauteur: 1.1 },
     TerrainDef { id: T_DESERT, nom: "Désert", couleur: "#d9c27e", terre: true, cout_mvt: 1.3, defense: 0.0, hauteur: 0.38 },
     TerrainDef { id: T_TOUNDRA, nom: "Toundra", couleur: "#b9c6c9", terre: true, cout_mvt: 1.4, defense: 0.1, hauteur: 0.42 },
+    TerrainDef { id: T_NEANT, nom: "Néant", couleur: "#07030c", terre: false, cout_mvt: 1.0, defense: 0.0, hauteur: -2.0 },
 ];
 
 pub fn est_terre(t: u8) -> bool {

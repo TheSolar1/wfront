@@ -456,7 +456,7 @@ fn apercu_carte(cfg: &Config) {
     let graine = graine_carte(cfg);
     println!("graine {}", graine);
     let m = monde::Monde::generer(cfg.carte_largeur, cfg.carte_hauteur, graine);
-    let mut compte = [0usize; 8];
+    let mut compte = [0usize; 9];
     let mut depots = [0usize; 6];
     for y in 0..m.hauteur {
         let mut ligne = String::new();

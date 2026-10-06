@@ -275,7 +275,7 @@ pub const PRODUITS: &[ProduitDef] = &[
     // ── Niveau 8 : le trou noir ──
     p("singularite", "Singularité artificielle", 8, &[("distorseur", 2.0), ("matiere_exotique", 4.0), ("antimatiere", 4.0)], 1.0, 600.0, "circle-dot", "Un point de densité infinie."),
     p("trou_noir", "Trou noir", 8, &[("singularite", 1.0), ("noyau_superlourd", 4.0), ("reacteur_fusion", 2.0)], 1.0, 900.0, "circle", "Micro trou noir maintenu en orbite stable."),
-    p("bombe_trou_noir", "Bombe à trou noir", 8, &[("trou_noir", 1.0), ("confinement", 2.0), ("ia_superieure", 1.0)], 1.0, 900.0, "circle", "L'arme finale : le trou noir avale tout dans un rayon de 3 cases (même votre territoire), ne disparaît jamais et grossit d'une case toutes les 10 minutes en laissant une zone morte."),
+    p("bombe_trou_noir", "Bombe à trou noir", 8, &[("trou_noir", 1.0), ("confinement", 2.0), ("ia_superieure", 1.0)], 1.0, 900.0, "circle", "L'arme finale : le trou noir avale tout dans un rayon de 3 cases (même votre territoire), ne disparaît jamais et grossit d'une case toutes les 5 minutes : son disque détruit la carte elle-même, ne laissant que le néant."),
     p("moteur_distorsion", "Moteur à distorsion", 8, &[("trou_noir", 1.0), ("moteur_antimatiere", 2.0)], 1.0, 800.0, "shuttle-space", "Voyager plus vite que la lumière."),
     p("point_zero", "Générateur du point zéro", 8, &[("singularite", 1.0), ("bouclier_energie", 2.0)], 1.0, 800.0, "infinity", "Énergie tirée du vide."),
 ];

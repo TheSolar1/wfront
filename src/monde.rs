@@ -370,7 +370,7 @@ impl Monde {
 
     pub fn est_cote(&self, i: usize) -> bool {
         est_terre(self.cases[i].terrain)
-            && self.voisins(i).iter().any(|&v| !est_terre(self.cases[v].terrain))
+            && self.voisins(i).iter().any(|&v| !est_terre(self.cases[v].terrain) && self.cases[v].terrain != T_NEANT)
     }
 
     pub fn toucher(&mut self, i: usize) {

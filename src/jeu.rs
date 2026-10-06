@@ -352,9 +352,9 @@ fn accident_nucleaire(m: &mut Monde, pid: u32, i: usize, rng: &mut impl Rng) {
     m.evenement(None, "nucleaire", format!("Accident nucléaire en {} : une centrale a explosé, un nuage radioactif dérive.", nom), Some(i));
 }
 
-/// Vitesse de croissance d'un trou noir : 1 case de rayon toutes les 10 min
+/// Vitesse de croissance d'un trou noir : 1 case de rayon toutes les 5 min
 /// de jeu. Il ne s'arrete qu'apres avoir couvert toute la carte.
-pub const CROISSANCE_TROU_NOIR: f64 = 1.0 / 600.0;
+pub const CROISSANCE_TROU_NOIR: f64 = 1.0 / 300.0;
 
 /// Les trous noirs grossissent ; a chaque case de rayon gagnee, ils avalent
 /// tout (terres, meme celles du tireur, batiments, armees) et laissent une
@@ -375,15 +375,18 @@ fn trous_noirs(m: &mut Monde, dt: f64) {
     }
 }
 
-/// Zone morte autour d'un trou noir : plus personne, plus rien.
+/// Zone morte autour d'un trou noir : le disque d'accretion detruit la
+/// carte elle-meme (neant), plus personne, plus rien.
 fn avaler(m: &mut Monde, centre: usize, r: i64) {
     for v in m.rayon(centre, r) {
         m.armees.retain(|_, a| a.case != v);
         let c = &mut m.cases[v];
         let ancien = c.proprio.take();
-        let deja = ancien.is_none() && c.bat.is_none() && c.irradiee > m.temps + 1.0e8;
+        let deja = c.terrain == T_NEANT && ancien.is_none() && c.bat.is_none() && c.irradiee > m.temps + 1.0e8;
         c.bat = None;
         c.niv = 0;
+        c.terrain = T_NEANT;
+        c.depot = D_AUCUN;
         c.irradiee = m.temps + 1.0e9;
         if let Some(o) = ancien {
             if let Some(p) = m.pays.get_mut(&o) {
@@ -736,7 +739,9 @@ fn cout_case(m: &Monde, pid: u32, dom: &str, amphibie: bool, i: usize) -> Option
             }
         }
         DOM_MER => {
-            if !terre {
+            if c.terrain == T_NEANT {
+                None
+            } else if !terre {
                 Some(1.0)
             } else if c.bat.as_deref() == Some("port")
                 && c.proprio.map(|o| o == pid || m.meme_bloc(pid, o) || m.en_guerre(pid, o)).unwrap_or(false)
@@ -1502,6 +1507,7 @@ fn frappe_speciale(m: &mut Monde, pid: u32, genre: &str, cible: usize) {
     }
     // Le trou noir reste sur la carte et grossira (voir trous_noirs()).
     if trou_noir {
+        avaler(m, cible, 3);
         let id = m.nouvel_id();
         m.trous_noirs.push(TrouNoir { id, case: cible, rayon: 3.0 });
     }
@@ -3855,16 +3861,17 @@ mod tests_armes {
         let cible = m.pays[&pid].capitale;
         frappe_speciale(&mut m, pid, "bombe_trou_noir", cible);
         assert_eq!(m.trous_noirs.len(), 1);
-        // 10 minutes de jeu : une case de rayon en plus.
-        for _ in 0..600 {
+        assert!(m.rayon(cible, 3).iter().all(|&v| m.cases[v].terrain == T_NEANT), "la carte est detruite");
+        // 5 minutes de jeu : une case de rayon en plus.
+        for _ in 0..300 {
             trous_noirs(&mut m, 1.0);
         }
         assert!(m.trous_noirs[0].rayon >= 4.0 - 1e-6);
-        assert!(m.rayon(cible, 4).iter().all(|&v| m.cases[v].proprio.is_none() && m.cases[v].irradiee > m.temps + 1.0e8));
+        assert!(m.rayon(cible, 4).iter().all(|&v| m.cases[v].proprio.is_none() && m.cases[v].terrain == T_NEANT));
         // Eternel : il survit meme a « Nouvelle carte ».
         let admin = Joueur { user_id: 1, nom: "Admin", admin: true, triche: false };
         commande(&mut m, &admin, &json!({ "action": "admin_nouvelle_carte" }), &regles).unwrap();
         assert_eq!(m.trous_noirs.len(), 1);
-        assert!(m.rayon(cible, 4).iter().all(|&v| m.cases[v].proprio.is_none()));
+        assert!(m.rayon(cible, 4).iter().all(|&v| m.cases[v].proprio.is_none() && m.cases[v].terrain == T_NEANT));
     }
 }
