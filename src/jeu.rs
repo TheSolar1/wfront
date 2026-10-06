@@ -347,7 +347,7 @@ fn accident_nucleaire(m: &mut Monde, pid: u32, i: usize, rng: &mut impl Rng) {
     }
     let id = m.nouvel_id();
     m.nuages.push(Nuage { id, case: i, dir: rng.gen_range(0..6), reste: 360.0, pas: 15.0 });
-    m.effets.push(Effet { genre: "nucleaire".into(), case: i });
+    m.effets.push(Effet { genre: "nucleaire".into(), case: i, rayon: 0 });
     let nom = m.nom_pays(pid);
     m.evenement(None, "nucleaire", format!("Accident nucléaire en {} : une centrale a explosé, un nuage radioactif dérive.", nom), Some(i));
 }
@@ -1417,6 +1417,9 @@ fn pertes_frappe(m: &mut Monde, zone: &[(usize, f64)]) -> f64 {
     morts
 }
 
+/// Rayon (cases) du cratere creuse par l'antimatiere : il devient de la mer.
+pub const RAYON_CRATERE: i64 = 1;
+
 /// Impact d'une bombe a trou noir ou a antimatiere.
 fn frappe_speciale(m: &mut Monde, pid: u32, genre: &str, cible: usize) {
     let trou_noir = genre == "bombe_trou_noir";
@@ -1426,26 +1429,38 @@ fn frappe_speciale(m: &mut Monde, pid: u32, genre: &str, cible: usize) {
     for &(v, _) in &zone {
         m.armees.retain(|_, a| a.case != v);
         let c = &mut m.cases[v];
-        if c.bat.as_deref() == Some("capitale") && !trou_noir {
-            c.niv = 1;
-        } else {
-            c.bat = None;
-            c.niv = 0;
-        }
+        c.bat = None;
+        c.niv = 0;
+        // Les deux armes prennent toute la zone, meme au tireur.
+        let ancien = c.proprio.take();
         if trou_noir {
             // Zone morte : plus personne, plus rien ne s'y construit.
-            c.proprio = None;
             c.irradiee = m.temps + 1.0e9;
+        } else {
+            c.irradiee = m.temps + 1200.0;
+        }
+        if let Some(o) = ancien {
+            if let Some(p) = m.pays.get_mut(&o) {
+                p.chantiers.retain(|x| x.case != v);
+                p.productions.retain(|x| x.case != v);
+            }
         }
         m.toucher(v);
     }
-    if trou_noir {
-        let touches: Vec<u32> = m.pays.values().filter(|p| !p.elimine && zone.iter().any(|&(v, _)| v == p.capitale)).map(|p| p.id).collect();
-        for o in touches {
-            relocaliser_capitale(m, o);
+    // Antimatiere : l'annihilation creuse un cratere au centre, que l'eau envahit.
+    if !trou_noir {
+        for v in m.rayon(cible, RAYON_CRATERE) {
+            m.cases[v].terrain = T_MER;
+            m.cases[v].depot = D_AUCUN;
+            m.toucher(v);
         }
     }
-    m.effets.push(Effet { genre: "nucleaire".into(), case: cible });
+    // Les capitales avalees se replient ailleurs.
+    let sans_capitale: Vec<u32> = m.pays.values().filter(|p| !p.elimine && m.cases[p.capitale].proprio != Some(p.id)).map(|p| p.id).collect();
+    for o in sans_capitale {
+        relocaliser_capitale(m, o);
+    }
+    m.effets.push(Effet { genre: if trou_noir { "trou_noir" } else { "antimatiere" }.into(), case: cible, rayon: 3 });
     let nom_att = m.nom_pays(pid);
     let cible_nom = defenseur.map(|d| m.nom_pays(d)).unwrap_or_else(|| "une zone neutre".into());
     let quoi = if trou_noir { "UN TROU NOIR A AVALÉ" } else { "ANNIHILATION : l'antimatière a frappé" };
@@ -1883,7 +1898,7 @@ fn combats(m: &mut Monde, dt: f64) {
             let (na, nd) = (m.nom_pays(proprio_att), m.nom_pays(proprio_def));
             m.evenement(Some(proprio_att), "victoire", format!("Victoire : les forces de {} ont été écrasées.", nd), Some(case));
             m.evenement(Some(proprio_def), "alerte", format!("Défaite : vos troupes ont été anéanties par {}.", na), Some(case));
-            m.effets.push(Effet { genre: "bataille".into(), case });
+            m.effets.push(Effet { genre: "bataille".into(), case, rayon: 0 });
         } else if !att_vivant {
             if let Some(p) = m.pays.get_mut(&proprio_def) { p.stats.combats_gagnes += 1; }
             if let Some(p) = m.pays.get_mut(&proprio_att) { p.stats.combats_perdus += 1; }
@@ -1891,7 +1906,7 @@ fn combats(m: &mut Monde, dt: f64) {
             m.evenement(Some(proprio_def), "victoire", format!("L'assaut de {} a été repoussé.", na), Some(case));
             m.evenement(Some(proprio_att), "alerte", format!("Votre assaut contre {} a échoué.", nd), Some(case));
         } else if rand::thread_rng().gen::<f64>() < 0.25 {
-            m.effets.push(Effet { genre: "combat".into(), case });
+            m.effets.push(Effet { genre: "combat".into(), case, rayon: 0 });
         }
     }
     m.armees.retain(|_, a| !a.unites.is_empty());
@@ -1940,7 +1955,7 @@ fn bombardements(m: &mut Monde, dt: f64) {
             }
         }
         if rand::thread_rng().gen::<f64>() < 0.3 {
-            m.effets.push(Effet { genre: "obus".into(), case: cible });
+            m.effets.push(Effet { genre: "obus".into(), case: cible, rayon: 0 });
         }
     }
 }
@@ -2057,7 +2072,7 @@ fn missions(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
             endommager_batiment(m, cible, feu_sol * 1.2);
         }
         m.armees.retain(|_, a| !a.unites.is_empty());
-        m.effets.push(Effet { genre: "frappe".into(), case: cible });
+        m.effets.push(Effet { genre: "frappe".into(), case: cible, rayon: 0 });
 
         let nom_att = m.nom_pays(pid);
         m.evenement(
@@ -2132,7 +2147,7 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
         let nom_att = m.nom_pays(pid);
         let nom_u = unite(&mv.genre).map(|u| u.nom).unwrap_or("Missile");
         if rng.gen::<f64>() < chance {
-            m.effets.push(Effet { genre: "interception".into(), case: cible });
+            m.effets.push(Effet { genre: "interception".into(), case: cible, rayon: 0 });
             m.evenement(Some(pid), "alerte", format!("{} intercepté par la défense adverse.", nom_u), Some(cible));
             if let Some(d) = defenseur {
                 m.evenement(Some(d), "victoire", format!("{} de {} intercepté !", nom_u, nom_att), Some(cible));
@@ -2203,7 +2218,7 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
                 p.influence = (p.influence - 200.0).max(0.0);
                 p.stats.frappes_nucleaires += 1;
             }
-            m.effets.push(Effet { genre: "nucleaire".into(), case: cible });
+            m.effets.push(Effet { genre: "nucleaire".into(), case: cible, rayon: rayon as u32 });
             let cible_nom = defenseur.map(|d| m.nom_pays(d)).unwrap_or_else(|| "une zone neutre".into());
             m.evenement(
                 None,
@@ -2229,7 +2244,7 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
             if m.cases[cible].proprio.map(|o| o != pid).unwrap_or(false) {
                 reduire_batiment(m, cible, niv);
             }
-            m.effets.push(Effet { genre: "explosion".into(), case: cible });
+            m.effets.push(Effet { genre: if mv.genre == "missile_balistique" { "balistique" } else { "explosion" }.into(), case: cible, rayon: rayon as u32 });
             m.evenement(Some(pid), "militaire", format!("{} : impact confirmé.", nom_u), Some(cible));
             if let Some(d) = defenseur {
                 if d != pid {
@@ -3742,4 +3757,24 @@ pub fn scores(p: &Pays, b: &Bilan) -> Value {
         "victoires": p.stats.combats_gagnes,
         "destructions": p.stats.unites_detruites.round(),
     })
+}
+
+#[cfg(test)]
+mod tests_armes {
+    use super::*;
+
+    /// Antimatiere : toute la zone redevient neutre, meme chez le tireur, et
+    /// le centre devient de la mer (cratere).
+    #[test]
+    fn antimatiere_prend_le_territoire_et_creuse() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(60, 40, 7);
+        crate::bots::assurer(&mut m, 1, &regles, 0.0);
+        let pid = *m.pays.keys().next().unwrap();
+        let cible = m.pays[&pid].capitale;
+        frappe_speciale(&mut m, pid, "bombe_antimatiere", cible);
+        assert!(m.rayon(cible, 3).iter().all(|&v| m.cases[v].proprio != Some(pid)), "le tireur perd aussi sa terre");
+        assert!(m.rayon(cible, RAYON_CRATERE).iter().all(|&v| m.cases[v].terrain == T_MER), "cratere inonde");
+        assert!(m.effets.iter().any(|e| e.genre == "antimatiere" && e.rayon == 3));
+    }
 }

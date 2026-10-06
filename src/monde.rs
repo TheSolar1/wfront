@@ -255,6 +255,8 @@ pub struct Nuage {
 pub struct Effet {
     pub genre: String,
     pub case: usize,
+    /// Rayon de l'arme en cases (taille de l'animation), 0 = par defaut.
+    pub rayon: u32,
 }
 
 #[derive(Serialize, Deserialize)]

@@ -267,7 +267,7 @@ pub const PRODUITS: &[ProduitDef] = &[
     p("confinement", "Confinement magnétique", 7, &[("aimant_supra", 8.0), ("reacteur_fusion", 1.0)], 1.0, 320.0, "circle-notch", "Contient l'incontenable."),
     p("antimatiere", "Antimatière", 7, &[("piege_antimatiere", 2.0), ("reacteur_fusion", 1.0)], 1.0, 400.0, "circle-half-stroke", "Un gramme vaut une bombe atomique."),
     p("moteur_antimatiere", "Moteur à antimatière", 7, &[("antimatiere", 2.0), ("confinement", 1.0)], 1.0, 400.0, "rocket", "Propulsion interstellaire."),
-    p("bombe_antimatiere", "Bombe à antimatière", 7, &[("antimatiere", 3.0), ("confinement", 1.0), ("guidage", 1.0)], 1.0, 420.0, "explosion", "Annihilation totale dans un rayon de 3 cases, sans radiation."),
+    p("bombe_antimatiere", "Bombe à antimatière", 7, &[("antimatiere", 3.0), ("confinement", 1.0), ("guidage", 1.0)], 1.0, 420.0, "explosion", "Annihilation totale dans un rayon de 3 cases : la terre redevient neutre (même la vôtre) et le centre se creuse en un cratère que la mer envahit."),
     p("bouclier_energie", "Bouclier d'énergie", 7, &[("reacteur_fusion", 1.0), ("metamateriau", 4.0), ("ordinateur_quantique", 1.0)], 1.0, 380.0, "shield-heart", "Champ de force."),
     p("ia_superieure", "IA supérieure", 7, &[("ordinateur_quantique", 2.0), ("nanomachines", 4.0)], 1.0, 400.0, "brain", "Pense plus vite que tous les humains réunis."),
     p("noyau_superlourd", "Noyau superlourd", 7, &[("Lv", 1.0), ("Mc", 1.0), ("Nh", 1.0), ("Rg", 1.0), ("Ds", 1.0)], 1.0, 300.0, "atom", "Assemblage d'éléments éphémères : à fabriquer vite."),
@@ -275,7 +275,7 @@ pub const PRODUITS: &[ProduitDef] = &[
     // ── Niveau 8 : le trou noir ──
     p("singularite", "Singularité artificielle", 8, &[("distorseur", 2.0), ("matiere_exotique", 4.0), ("antimatiere", 4.0)], 1.0, 600.0, "circle-dot", "Un point de densité infinie."),
     p("trou_noir", "Trou noir", 8, &[("singularite", 1.0), ("noyau_superlourd", 4.0), ("reacteur_fusion", 2.0)], 1.0, 900.0, "circle", "Micro trou noir maintenu en orbite stable."),
-    p("bombe_trou_noir", "Bombe à trou noir", 8, &[("trou_noir", 1.0), ("confinement", 2.0), ("ia_superieure", 1.0)], 1.0, 900.0, "circle", "L'arme finale : avale tout dans un rayon de 3 cases et laisse une zone morte où plus rien ne vit ni ne se construit."),
+    p("bombe_trou_noir", "Bombe à trou noir", 8, &[("trou_noir", 1.0), ("confinement", 2.0), ("ia_superieure", 1.0)], 1.0, 900.0, "circle", "L'arme finale : avale tout dans un rayon de 3 cases (même votre territoire) et laisse une zone morte où plus rien ne vit ni ne se construit."),
     p("moteur_distorsion", "Moteur à distorsion", 8, &[("trou_noir", 1.0), ("moteur_antimatiere", 2.0)], 1.0, 800.0, "shuttle-space", "Voyager plus vite que la lumière."),
     p("point_zero", "Générateur du point zéro", 8, &[("singularite", 1.0), ("bouclier_energie", 2.0)], 1.0, 800.0, "infinity", "Énergie tirée du vide."),
 ];

@@ -223,6 +223,64 @@ export class Carte {
     return base + rug * (crete * crete * 1.4 - 0.4) + onde * 0.14;
   }
 
+  /** Couleur de base d'un sommet du relief : biome, plages, neige, roche en
+   *  pente, fonds marins (ecrite dans vBase). */
+  couleurSommet(k, pos, nor) {
+    const P = this.palette, c = this._c ??= new THREE.Color();
+    const h = pos[3 * k + 1], ci = this.vCase[k];
+    const t = ci >= 0 ? this.terrain[ci] : 0;
+    const pente = 1 - nor[3 * k + 1];
+    c.copy(P.pal[t]);
+    if (h < 0) {
+      c.copy(P.hautFond).lerp(P.fond, Math.min(1, -h / 1.2));
+    } else {
+      if (h < 0.16) c.lerp(P.sable, (0.16 - h) / 0.16 * 0.85);
+      if (pente > 0.18) c.lerp(P.roche, Math.min(0.8, (pente - 0.18) * 3));
+      if (h > 1.75) c.lerp(P.neige, Math.min(1, (h - 1.75) / 0.45));
+      const v = (fbm(pos[3 * k] * 2.1, pos[3 * k + 2] * 2.1, 2) - 0.5) * 0.14;
+      c.offsetHSL(0, 0, v);
+    }
+    this.vBase[3 * k] = c.r; this.vBase[3 * k + 1] = c.g; this.vBase[3 * k + 2] = c.b;
+  }
+
+  /** Des cases ont change de terrain (cratere d'antimatiere) : le relief
+   *  s'enfonce en direct autour d'elles, les arbres disparaissent. */
+  reformer(cases, delai = 0) {
+    if (this.deformation) this.finirDeformation(1);
+    const zone = new Set(cases);
+    for (const i of cases) for (const v of this.g.voisins(i)) if (v >= 0) zone.add(v);
+    const arr = this.relief.geometry.getAttribute('position').array;
+    const ks = [], de = [], vers = [];
+    for (let k = 0; k < this.vCase.length; k++) {
+      if (!zone.has(this.vCase[k])) continue;
+      ks.push(k); de.push(arr[3 * k + 1]); vers.push(this.altitude(arr[3 * k], arr[3 * k + 2]));
+    }
+    for (const i of zone) { const [x, z] = this.pos(i); this.hCase[i] = Math.max(0.05, this.altitude(x, z)); }
+    if (this.arbresCases) {
+      const vide = new THREE.Matrix4().makeScale(0, 0, 0);
+      this.arbresCases.forEach((c, k) => { if (zone.has(c)) this.arbres.setMatrixAt(k, vide); });
+      this.arbres.instanceMatrix.needsUpdate = true;
+    }
+    this.deformation = { ks, de, vers, zone, t0: performance.now() + delai, duree: 1800 };
+  }
+
+  finirDeformation(k) {
+    const d = this.deformation;
+    const geo = this.relief.geometry, pos = geo.getAttribute('position');
+    const e = 1 - Math.pow(1 - k, 3);
+    d.ks.forEach((kk, j) => { pos.array[3 * kk + 1] = d.de[j] + (d.vers[j] - d.de[j]) * e; });
+    pos.needsUpdate = true;
+    if (k < 1) return;
+    geo.computeVertexNormals();
+    const nor = geo.getAttribute('normal').array;
+    for (const kk of d.ks) this.couleurSommet(kk, pos.array, nor);
+    this.construireGrille();
+    for (const i of d.zone) if (this.bat[i]) this.majBatiment(i);
+    this.couleursSales = true;
+    this.bordSale = true;
+    this.deformation = null;
+  }
+
   initTerrain() {
     const sombre = this.theme === 'dark';
     const n = this.g.n;
@@ -266,26 +324,13 @@ export class Carte {
     // Couleurs de base : biome, plages, neige, roche en pente, fonds marins.
     const nor = geo.getAttribute('normal').array;
     this.vBase = new Float32Array(nv * 3);
-    const c = new THREE.Color(), tmp = new THREE.Color();
-    const pal = BIOMES.map(h => new THREE.Color(h));
-    const sable = new THREE.Color('#d6c794'), roche = new THREE.Color('#7b7166'), neige = new THREE.Color('#f4f6f9');
-    const fond = new THREE.Color(sombre ? '#0b2236' : '#1f4f73'), hautFond = new THREE.Color('#5f9fae');
-    for (let k = 0; k < nv; k++) {
-      const h = pos[3 * k + 1], ci = this.vCase[k];
-      const t = ci >= 0 ? this.terrain[ci] : 0;
-      const pente = 1 - nor[3 * k + 1];
-      c.copy(pal[t]);
-      if (h < 0) {
-        c.copy(hautFond).lerp(fond, Math.min(1, -h / 1.2));
-      } else {
-        if (h < 0.16) c.lerp(sable, (0.16 - h) / 0.16 * 0.85);
-        if (pente > 0.18) c.lerp(roche, Math.min(0.8, (pente - 0.18) * 3));
-        if (h > 1.75) c.lerp(neige, Math.min(1, (h - 1.75) / 0.45));
-        const v = (fbm(pos[3 * k] * 2.1, pos[3 * k + 2] * 2.1, 2) - 0.5) * 0.14;
-        c.offsetHSL(0, 0, v);
-      }
-      this.vBase[3 * k] = c.r; this.vBase[3 * k + 1] = c.g; this.vBase[3 * k + 2] = c.b;
-    }
+    const tmp = new THREE.Color();
+    this.palette = {
+      pal: BIOMES.map(h => new THREE.Color(h)),
+      sable: new THREE.Color('#d6c794'), roche: new THREE.Color('#7b7166'), neige: new THREE.Color('#f4f6f9'),
+      fond: new THREE.Color(sombre ? '#0b2236' : '#1f4f73'), hautFond: new THREE.Color('#5f9fae'),
+    };
+    for (let k = 0; k < nv; k++) this.couleurSommet(k, pos, nor);
     geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(this.vBase), 3));
     this.relief = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 }));
     this.relief.castShadow = this.relief.receiveShadow = true;
@@ -303,7 +348,7 @@ export class Carte {
         const a = hasard() * Math.PI * 2, r = Math.sqrt(hasard()) * 0.72;
         const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
         const h = this.altitude(x, z);
-        if (h > 0.08 && h < 1.6) places.push([x, h, z, 0.75 + hasard() * 0.6, t]);
+        if (h > 0.08 && h < 1.6) places.push([x, h, z, 0.75 + hasard() * 0.6, t, i]);
       }
     }
     const cone = new THREE.ConeGeometry(0.14, 0.46, 6);
@@ -318,8 +363,23 @@ export class Carte {
     });
     this.arbres.castShadow = true;
     this.scene.add(this.arbres);
+    this.arbresCases = places.map(p => p[5]);
+    this.construireGrille();
 
-    // ── Quadrillage discret des cases (terres uniquement) ──
+    // Contour de survol / selection : anneau hexagonal epais, toujours visible.
+    this.anneauGeo = this.geometrieAnneau(0.14);
+    this.survolMesh = new THREE.Mesh(this.anneauGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false }));
+    this.selMesh = new THREE.Mesh(this.anneauGeo, new THREE.MeshBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 1, depthTest: false }));
+    this.survolMesh.visible = this.selMesh.visible = false;
+    this.survolMesh.renderOrder = this.selMesh.renderOrder = 10;
+    this.groupes.selection.add(this.survolMesh, this.selMesh);
+  }
+
+  /** Quadrillage discret des cases (terres uniquement). */
+  construireGrille() {
+    const sombre = this.theme === 'dark';
+    const n = this.g.n;
+    if (this.grille) { this.scene.remove(this.grille); this.grille.geometry.dispose(); this.grille.material.dispose(); }
     const lignes = [];
     for (let i = 0; i < n; i++) {
       if (!this.defs.terrains[this.terrain[i]].terre) continue;
@@ -338,14 +398,6 @@ export class Carte {
     gl.setAttribute('position', new THREE.Float32BufferAttribute(lignes, 3));
     this.grille = new THREE.LineSegments(gl, new THREE.LineBasicMaterial({ color: sombre ? 0xffffff : 0x1c2a1c, transparent: true, opacity: sombre ? 0.08 : 0.1, depthWrite: false }));
     this.scene.add(this.grille);
-
-    // Contour de survol / selection : anneau hexagonal epais, toujours visible.
-    this.anneauGeo = this.geometrieAnneau(0.14);
-    this.survolMesh = new THREE.Mesh(this.anneauGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false }));
-    this.selMesh = new THREE.Mesh(this.anneauGeo, new THREE.MeshBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 1, depthTest: false }));
-    this.survolMesh.visible = this.selMesh.visible = false;
-    this.survolMesh.renderOrder = this.selMesh.renderOrder = 10;
-    this.groupes.selection.add(this.survolMesh, this.selMesh);
   }
 
   coin(j, echelle = 1) {
@@ -600,7 +652,9 @@ export class Carte {
   majEtat(e) {
     this.recu = performance.now();
     if (e.cases && e.cases.length) {
-      for (const [i, p, b, nv, ir] of e.cases) {
+      const terrains = [];
+      for (const [i, p, b, nv, ir, t] of e.cases) {
+        if (t !== undefined && this.terrain[i] !== t) { this.terrain[i] = t; terrains.push(i); }
         if (this.proprio[i] !== p) { this.bordSale = true; this.labelsSales = true; }
         this.proprio[i] = p;
         this.bat[i] = b;
@@ -608,6 +662,8 @@ export class Carte {
         this.irr[i] = ir;
         this.majBatiment(i);
       }
+      // Cratere : le sol s'enfonce juste apres l'eclair de l'antimatiere.
+      if (terrains.length) this.reformer(terrains, 700);
       this.couleursSales = true;
     }
     if (e.vision !== undefined) {
@@ -631,7 +687,7 @@ export class Carte {
     this.missiles = e.missiles || [];
     this.majArmees();
     this.majAir();
-    for (const f of e.effets || []) this.effet(f.genre, f.case);
+    for (const f of e.effets || []) this.effet(f.genre, f.case, f.rayon || 0);
     if (e.nuages) this.majNuages(e.nuages);
     if (this.batsSales) {
       for (let i = 0; i < this.g.n; i++) if (this.bat[i]) this.majBatiment(i);
@@ -926,34 +982,200 @@ export class Carte {
   }
 
   // ── Effets ──────────────────────────────────────────────────────
-  effet(genre, i) {
+  // ── Effets ──────────────────────────────────────────────────────
+  /** Animation ponctuelle sur une case. `rayon` (cases) : taille reelle de
+   *  l'arme (frappe nucleaire, trou noir, antimatiere). Chaque arme a la
+   *  sienne : croisiere, balistique, nucleaire (champignon), trou noir
+   *  (disque qui aspire), antimatiere (implosion puis cratere). */
+  effet(genre, i, rayon = 0) {
     const [x, z] = this.pos(i);
     const y = this.haut(i);
-    const ajout = (geo, couleur, duree, echelleMax, opacite = 0.9, hauteur = 0.4) => {
-      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: couleur, transparent: true, opacity: opacite, blending: THREE.AdditiveBlending, depthWrite: false }));
-      m.position.set(x, y + hauteur, z);
-      m.scale.setScalar(0.01);
-      this.groupes.effets.add(m);
-      this.effets.push({ m, t0: performance.now(), duree, echelleMax, opacite });
+    const T = THREE;
+    // Un objet anime : maj(k) avec k de 0 a 1 sur `duree` ms, apres `delai`.
+    const anim = (obj, duree, maj, delai = 0) => {
+      // Dessine apres la mer transparente (renderOrder 1), sinon elle les voile.
+      obj.renderOrder = Math.max(obj.renderOrder, 5);
+      this.effets.push({ m: obj, t0: performance.now() + delai, duree, maj });
     };
-    const sphere = new THREE.SphereGeometry(1, 20, 14);
-    if (genre === 'nucleaire') {
-      ajout(sphere, 0xffffff, 1400, 5.5, 1, 1);
-      ajout(sphere, 0xff6d00, 3600, 4.2, 0.9, 2.2);
-      ajout(new THREE.RingGeometry(0.8, 1, 48).rotateX(-Math.PI / 2), 0xffe082, 2600, 12, 0.9, 0.2);
-      ajout(new THREE.CylinderGeometry(0.35, 0.6, 4, 16), 0x9e9e9e, 5000, 1.4, 0.55, 2);
+    const mat = (couleur, opacite = 0.9, additif = true) => new T.MeshBasicMaterial({
+      color: couleur, transparent: true, opacity: opacite, depthWrite: false, side: T.DoubleSide, fog: false,
+      blending: additif ? T.AdditiveBlending : T.NormalBlending,
+    });
+    const boule = (couleur, op = 0.9, add = true) => new T.Mesh(new T.SphereGeometry(1, 28, 18), mat(couleur, op, add));
+    const anneau = (couleur, op = 0.9, int = 0.85) => new T.Mesh(new T.RingGeometry(int, 1, 72).rotateX(-Math.PI / 2), mat(couleur, op));
+    const place = (o, h = 0.4) => { o.position.set(x, y + h, z); o.scale.setScalar(0.01); return o; };
+    // Boule ou anneau qui gonfle et s'efface.
+    const gonfle = (o, duree, echelle, op = 0.9, h = 0.4, delai = 0, puiss = 0.45) => {
+      place(o, h);
+      anim(o, duree, k => { o.scale.setScalar(0.05 + echelle * Math.pow(k, puiss)); o.material.opacity = op * (1 - k); }, delai);
+    };
+    // Debris / etincelles projetes puis retombant.
+    const debris = (n, couleur, vitesse, duree, taille = 0.14, gravite = 5, delai = 0) => {
+      const g = new T.BufferGeometry(), p = new Float32Array(n * 3), v = [];
+      for (let k = 0; k < n; k++) {
+        const a = Math.random() * Math.PI * 2, e = 0.25 + Math.random() * 1.1, s = vitesse * (0.35 + Math.random() * 0.9);
+        v.push([Math.cos(a) * Math.cos(e) * s, Math.sin(e) * s * 1.2, Math.sin(a) * Math.cos(e) * s]);
+      }
+      g.setAttribute('position', new T.BufferAttribute(p, 3));
+      const pts = new T.Points(g, new T.PointsMaterial({ color: couleur, size: taille, transparent: true, depthWrite: false, blending: T.AdditiveBlending }));
+      pts.position.set(x, y + 0.3, z);
+      anim(pts, duree, k => {
+        const t = k * duree / 1000;
+        for (let j = 0; j < n; j++) {
+          p[3 * j] = v[j][0] * t; p[3 * j + 1] = Math.max(-0.2, v[j][1] * t - gravite * t * t / 2); p[3 * j + 2] = v[j][2] * t;
+        }
+        g.attributes.position.needsUpdate = true;
+        pts.material.opacity = 1 - k * k;
+      }, delai);
+    };
+    // Fumee grise qui monte et se dissipe.
+    const fumee = (taille, montee, duree, delai = 0, couleur = 0x6d6d6d) => {
+      const o = place(boule(couleur, 0.55, false), 0.5);
+      anim(o, duree, k => {
+        o.position.y = y + 0.5 + montee * Math.pow(k, 0.6);
+        o.scale.set(taille * (0.4 + k), taille * (0.3 + 0.6 * k), taille * (0.4 + k));
+        o.material.opacity = 0.55 * (1 - k);
+      }, delai);
+    };
+    const sphere = () => boule(0xffffff);
+
+    if (genre === 'explosion') {
+      // Missile de croisiere : boule de feu nette, onde au sol, fumee.
+      gonfle(boule(0xffd180), 350, 1.0, 1, 0.5);
+      gonfle(boule(0xff6d00), 1100, 1.7, 0.95, 0.5);
+      gonfle(anneau(0xffcc80), 900, 3, 0.8, 0.1);
+      debris(28, 0xffab40, 3, 1200, 0.12);
+      fumee(1.2, 2, 2600, 300);
+    } else if (genre === 'balistique') {
+      // Missile balistique : arrivee a la verticale, impact plus large.
+      const trait = new T.Mesh(new T.CylinderGeometry(0.06, 0.06, 1, 8), mat(0xfff3e0, 0.9));
+      trait.position.set(x, y + 6, z);
+      anim(trait, 250, k => { trait.scale.set(1, 12 * (1 - k) + 0.1, 1); trait.position.y = y + 6 * (1 - k) + 0.3; });
+      gonfle(boule(0xffffff), 450, 1.6, 1, 0.5, 220);
+      gonfle(boule(0xff3d00), 1500, 2.6, 0.95, 0.6, 220);
+      gonfle(anneau(0xffe0b2), 1300, 5, 0.85, 0.1, 220);
+      gonfle(anneau(0xff9100, 0.6), 1800, 3.5, 0.6, 0.1, 420);
+      debris(70, 0xff9e40, 4.5, 1600, 0.16, 5, 220);
+      fumee(1.8, 3, 3400, 500);
+    } else if (genre === 'nucleaire') {
+      // Champignon atomique a la taille de l'explosion.
+      const R = Math.min(30, Math.max(2.5, (rayon || 4) * 1.5));
       this.rappels.flash?.();
-    } else if (genre === 'explosion') {
-      ajout(sphere, 0xff9100, 1100, 1.6);
-      ajout(new THREE.RingGeometry(0.8, 1, 32).rotateX(-Math.PI / 2), 0xffcc80, 900, 3, 0.8, 0.1);
+      gonfle(boule(0xffffff, 1), 900, R * 0.55, 1, 0.6, 0, 0.3);
+      gonfle(anneau(0xfff8e1, 1, 0.9), 2600, R * 1.15, 0.9, 0.15, 100, 0.6);
+      gonfle(anneau(0xffab40, 0.7, 0.7), 3600, R * 0.85, 0.7, 0.12, 300, 0.7);
+      // Lueur au sol
+      const sol = place(new T.Mesh(new T.CircleGeometry(1, 48).rotateX(-Math.PI / 2), mat(0xff6d00, 0.8)), 0.12);
+      anim(sol, 6000, k => { sol.scale.setScalar(R * 0.55 * Math.min(1, k * 4)); sol.material.opacity = 0.8 * (1 - k); });
+      // Colonne qui monte
+      const H = R * 1.1;
+      const pied = new T.Mesh(new T.CylinderGeometry(0.22, 0.42, 1, 18, 1, true).translate(0, 0.5, 0), mat(0x8d6e63, 0.75, false));
+      pied.position.set(x, y + 0.2, z);
+      anim(pied, 7500, k => {
+        const m = Math.min(1, k * 2.2);
+        pied.scale.set(R * 0.28, H * m, R * 0.28);
+        pied.material.opacity = 0.75 * (k < 0.7 ? 1 : (1 - k) / 0.3);
+      }, 300);
+      // Boule de feu qui monte et devient le chapeau
+      const feu = place(boule(0xff9100, 1), 0.6);
+      anim(feu, 7500, k => {
+        const m = Math.min(1, k * 2.2);
+        feu.position.y = y + 0.6 + H * m;
+        const e = R * (0.22 + 0.2 * m);
+        feu.scale.set(e, e * (1 - 0.45 * m), e);
+        feu.material.color.setRGB(1, 0.6 - 0.3 * k, 0.1 * (1 - k));
+        feu.material.opacity = k < 0.6 ? 1 : (1 - k) / 0.4;
+      }, 200);
+      // Chapeau de fumee
+      const chapeau = place(boule(0x8d6e63, 0.95, false), 0.6);
+      chapeau.material.side = T.FrontSide;
+      anim(chapeau, 8000, k => {
+        const m = Math.min(1, k * 2);
+        chapeau.position.y = y + 0.6 + H * Math.min(1, k * 2.2) + R * 0.05;
+        chapeau.scale.set(R * (0.2 + 0.25 * m), R * (0.12 + 0.08 * m), R * (0.2 + 0.25 * m));
+        chapeau.material.opacity = 0.95 * (k < 0.6 ? 1 : (1 - k) / 0.4);
+      }, 600);
+      // Anneau de condensation autour de la colonne
+      const cond = anneau(0xeceff1, 0.6, 0.75);
+      place(cond, H * 0.55);
+      anim(cond, 4000, k => { cond.scale.setScalar(R * (0.3 + 0.6 * k)); cond.material.opacity = 0.6 * (1 - k); }, 1500);
+      debris(Math.min(300, 80 + R * 8), 0xffcc80, 2 + R * 0.6, 2600, 0.2, 4);
+    } else if (genre === 'trou_noir') {
+      // Disque d'accretion qui tourne, matiere aspiree, puis effondrement.
+      const R = Math.max(3, (rayon || 3) * 1.6);
+      const h = R * 0.45;
+      // Coeur opaque : il cache la lueur des disques qui passent derriere.
+      const coeur = place(new T.Mesh(new T.SphereGeometry(1, 28, 18), new T.MeshBasicMaterial({ color: 0x000000 })), h);
+      coeur.renderOrder = 8;
+      anim(coeur, 7000, k => {
+        const e = k < 0.15 ? k / 0.15 : k < 0.85 ? 1 : (1 - k) / 0.15;
+        coeur.scale.setScalar(R * 0.3 * e + 0.01);
+      });
+      const disque = (couleur, inc, vitesse, taille) => {
+        const d = new T.Mesh(new T.RingGeometry(0.35, 1, 96), mat(couleur, 0.85));
+        d.position.set(x, y + h, z);
+        anim(d, 7000, (k, t) => {
+          const e = k < 0.15 ? k / 0.15 : k < 0.85 ? 1 : (1 - k) / 0.15;
+          d.rotation.set(-Math.PI / 2 + inc, 0, t * vitesse);
+          d.scale.setScalar(R * taille * e + 0.01);
+          d.material.opacity = 0.65 * e;
+        });
+      };
+      disque(0xff6e40, 0.35, 4, 0.9);
+      disque(0xb388ff, -0.25, -6, 0.65);
+      // Particules qui spiralent vers le centre
+      const n = 260, g = new T.BufferGeometry(), p = new Float32Array(n * 3);
+      const part = Array.from({ length: n }, () => ({ a: Math.random() * Math.PI * 2, r: R * (0.9 + Math.random() * 1.3), h: (Math.random() - 0.5) * R * 0.5, v: 0.5 + Math.random() }));
+      g.setAttribute('position', new T.BufferAttribute(p, 3));
+      const pts = new T.Points(g, new T.PointsMaterial({ color: 0xffd180, size: 0.16, transparent: true, depthWrite: false, blending: T.AdditiveBlending }));
+      pts.position.set(x, y + h, z);
+      anim(pts, 6200, (k, t) => {
+        part.forEach((q, j) => {
+          const f = Math.max(0, 1 - ((t * q.v * 0.35) % 1));
+          const a = q.a + t * (2 + 3 * (1 - f)) * q.v;
+          p[3 * j] = Math.cos(a) * q.r * f; p[3 * j + 1] = q.h * f; p[3 * j + 2] = Math.sin(a) * q.r * f;
+        });
+        g.attributes.position.needsUpdate = true;
+        pts.material.opacity = k < 0.9 ? 1 : (1 - k) / 0.1;
+      }, 400);
+      // Effondrement final : eclair violet et onde
+      gonfle(boule(0xe040fb), 900, R * 0.7, 1, h, 6000, 0.3);
+      gonfle(anneau(0xb388ff, 0.9, 0.9), 1800, R * 1.6, 0.9, 0.15, 6000, 0.6);
+    } else if (genre === 'antimatiere') {
+      // Implosion, eclair d'annihilation, puis le cratere se creuse (reformer).
+      const R = Math.max(3, (rayon || 3) * 1.6);
+      const implo = place(boule(0x18ffff, 0.9), 0.8);
+      anim(implo, 700, k => { implo.scale.setScalar(R * 0.9 * (1 - k) + 0.05); implo.material.opacity = 0.3 + 0.6 * k; });
+      const lignes = new T.BufferGeometry(), lp = new Float32Array(60 * 6), dirs = [];
+      for (let j = 0; j < 60; j++) { const a = Math.random() * Math.PI * 2, e = (Math.random() - 0.2) * 1.2; dirs.push([Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e)]); }
+      lignes.setAttribute('position', new T.BufferAttribute(lp, 3));
+      const rayons = new T.LineSegments(lignes, new T.LineBasicMaterial({ color: 0x84ffff, transparent: true, depthWrite: false, blending: T.AdditiveBlending }));
+      rayons.position.set(x, y + 0.8, z);
+      anim(rayons, 700, k => {
+        dirs.forEach((d, j) => {
+          const a = R * 1.4 * (1 - k), b = a + R * 0.4;
+          lp.set([d[0] * a, d[1] * a, d[2] * a, d[0] * b, d[1] * b, d[2] * b], j * 6);
+        });
+        lignes.attributes.position.needsUpdate = true;
+      });
+      setTimeout(() => this.rappels.flash?.(), 700);
+      gonfle(boule(0xffffff, 1), 700, R * 0.6, 1, 0.8, 700, 0.3);
+      gonfle(boule(0xea80fc, 0.9), 1600, R * 0.9, 0.9, 0.8, 750, 0.4);
+      gonfle(anneau(0x18ffff, 1, 0.9), 2000, R * 1.5, 1, 0.15, 700, 0.55);
+      gonfle(anneau(0xea80fc, 0.7, 0.8), 2600, R * 1.1, 0.7, 0.15, 900, 0.6);
+      debris(160, 0x80d8ff, 3 + R * 0.5, 2200, 0.16, 4, 700);
+      // Vapeur au-dessus du cratere qui se remplit
+      fumee(R * 0.5, 1.5, 4000, 1600, 0xb3e5fc);
     } else if (genre === 'interception') {
-      ajout(sphere, 0x40c4ff, 900, 1.3, 0.9, 5);
+      gonfle(sphere(), 900, 1.3, 0.9, 5);
+      gonfle(boule(0x40c4ff), 900, 1.3, 0.9, 5);
+      debris(20, 0x80d8ff, 2, 900, 0.1, 3);
     } else if (genre === 'frappe') {
-      for (let k = 0; k < 3; k++) setTimeout(() => ajout(sphere, 0xff6e40, 700, 0.9), k * 160);
+      for (let k = 0; k < 3; k++) gonfle(boule(0xff6e40), 700, 0.9, 0.9, 0.4, k * 160);
     } else if (genre === 'bataille') {
-      ajout(sphere, 0xffd740, 1000, 1.2);
+      gonfle(boule(0xffd740), 1000, 1.2);
     } else {
-      ajout(sphere, genre === 'obus' ? 0xffab40 : 0xffe57f, 500, 0.55, 0.85, 0.6 + Math.random() * 0.4);
+      gonfle(boule(genre === 'obus' ? 0xffab40 : 0xffe57f), 500, 0.55, 0.85, 0.6 + Math.random() * 0.4);
     }
   }
 
@@ -1153,6 +1375,10 @@ export class Carte {
       this.cam.d = this.anim.d0 + (this.anim.d1 - this.anim.d0) * e;
       if (k >= 1) this.anim = null;
     }
+    if (this.deformation) {
+      const k = (performance.now() - this.deformation.t0) / this.deformation.duree;
+      if (k > 0) this.finirDeformation(Math.min(1, k));
+    }
     if (this.couleursSales) this.recolorer();
     // Avec les offensives, des cases changent de main chaque seconde : on
     // regroupe les reconstructions (frontieres, noms) au lieu de tout
@@ -1210,9 +1436,10 @@ export class Carte {
     const maint = performance.now();
     this.effets = this.effets.filter(f => {
       const k = (maint - f.t0) / f.duree;
+      if (k < 0) return true;
       if (k >= 1) { this.groupes.effets.remove(f.m); f.m.geometry.dispose(); f.m.material.dispose(); return false; }
-      f.m.scale.setScalar(0.05 + f.echelleMax * Math.pow(k, 0.45));
-      f.m.material.opacity = f.opacite * (1 - k);
+      if (!f.m.parent) this.groupes.effets.add(f.m);
+      f.maj(k, (maint - f.t0) / 1000);
       return true;
     });
     // Commandants : de leur case vers la province en cours de conquête

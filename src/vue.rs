@@ -268,7 +268,9 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
                 c.proprio.map(|x| x as i64).unwrap_or(-1),
                 c.bat.as_deref().unwrap_or(""),
                 c.niv,
-                if c.irradiee > m.temps { 1 } else { 0 }
+                if c.irradiee > m.temps { 1 } else { 0 },
+                // Terrain : change seulement sous un cratere d'antimatiere.
+                c.terrain
             ])
         })
         .collect();
