@@ -155,6 +155,9 @@ struct Identite {
     user_id: i64,
     nom: String,
     privilege: i64,
+    /// Rang VEX du compte (1 fondateur … 10 aucun) : couleur du nom dans la
+    /// barre, comme sur VEX. Sans lien avec l'administration de WorldFront.
+    rang_vex: i64,
     sombre: bool,
     /// Nœud VEX de l'utilisateur (mode reseau) : cible des liens VEX.
     noeud: Option<String>,
@@ -598,6 +601,7 @@ fn verifier_vex(pool: &mysql::Pool, cfg: &Config, jeton: &str, ip: &str, ua: &st
         user_id: id,
         nom,
         privilege: privilege.unwrap_or(10),
+        rang_vex: privilege.unwrap_or(10),
         sombre: teme.flatten().unwrap_or(0) == 1,
         noeud: None,
         // Meme serveur que VEX : le compte est reconnu par son e-mail
@@ -658,7 +662,7 @@ async fn identifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Opt
             return None;
         }
         let sombre = cookie(headers, "wf_theme") == "dark";
-        return Some(Identite { user_id: hash_nom(&nom), nom, privilege: 1, sombre, noeud: None, compte: None });
+        return Some(Identite { user_id: hash_nom(&nom), nom, privilege: 1, rang_vex: 10, sombre, noeud: None, compte: None });
     }
     if app.cfg.auth == "reseau" {
         let s = app.reseau.session(&cookie(headers, "wf_session"))?;
@@ -666,6 +670,7 @@ async fn identifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Opt
             user_id: reseau::id_compte(&s.compte),
             nom: s.nom,
             privilege: 10,
+            rang_vex: 10,
             sombre: s.sombre,
             noeud: if s.noeud.is_empty() { None } else { Some(s.noeud) },
             compte: Some(s.compte),
@@ -710,6 +715,25 @@ fn url_connexion(app: &App) -> String {
     }
 }
 
+/// Nom dans la barre du haut, comme build_nav_html() de VEX : nom anime
+/// pour le fondateur, couleur du rang pour les rangs 2 a 9.
+fn nom_barre(id: Option<&Identite>) -> String {
+    let nom = echapper(id.map(|i| i.nom.as_str()).unwrap_or(""));
+    let (titre, couleur) = match id.map(|i| i.rang_vex).unwrap_or(10) {
+        1 => return format!("<span class=\"user-name-top-7844 fona\" title=\"fondateur\">{}</span>", nom),
+        2 => ("super admin", "#6d0000"),
+        3 => ("admin", "#d30000"),
+        4 => ("verfircateur", "#4169e1"),
+        5 => ("Super-moderateur", "#4169e1"),
+        6 => ("Moderateur", "#006400"),
+        7 => ("", "#32cd32"),
+        8 => ("utilisateur certifie", "#4b4b4b"),
+        9 => ("beta-testeur", "#20012a"),
+        _ => return format!("<span class=\"user-name-top-7844\">{}</span>", nom),
+    };
+    format!("<span class=\"user-name-top-7844\" style=\"color:{}!important\" title=\"{}\">{}</span>", couleur, titre, nom)
+}
+
 fn gabarit(app: &App, fichier: &str, id: Option<&Identite>) -> Response {
     let chemin = app.racine.join("static").join(fichier);
     let Ok(html) = std::fs::read_to_string(&chemin) else {
@@ -731,6 +755,7 @@ fn gabarit(app: &App, fichier: &str, id: Option<&Identite>) -> Response {
         .replace("__VEX_DIRECT__", &echapper(&format!("{}/auth/debut?noeud={}", app.cfg.prefixe.trim_end_matches('/'), reseau::encoder(&app.cfg.noeud_par_defaut))))
         .replace("__INVITES__", if app.cfg.invites { "1" } else { "0" })
         .replace("__COMPTE__", &echapper(id.and_then(|i| i.compte.as_deref()).unwrap_or("")))
+        .replace("__NOM_TOP__", &nom_barre(id))
         .replace("__NOM__", &echapper(id.map(|i| i.nom.as_str()).unwrap_or("")))
         .replace("__CONNECTE__", if id.is_some() { "1" } else { "0" })
         .replace("__MODE__", &echapper(&app.cfg.auth))
