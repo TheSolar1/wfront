@@ -16,6 +16,17 @@ body {
 button, input, select, textarea { font: inherit; color: inherit; }
 code { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
 
+/* Barre du haut blanche en theme clair (demande utilisateur), icones et
+   nom sombres pour rester lisibles. Un nom colore par le rang VEX (style
+   en ligne) ou anime (.fona) garde sa couleur. */
+[data-theme="light"] { --nav-gradient: #ffffff; }
+[data-theme="light"] .top-nav-bar-haut7844 { border-bottom: 1px solid var(--panel-border); }
+[data-theme="light"] .user-name-top-7844:not(.fona):not([style]) { color: var(--text) !important; }
+[data-theme="light"] .user-icon-top-7844 { filter: var(--icon-filter); background: var(--alt); border-color: var(--panel-border); }
+[data-theme="light"] .apps-btn-nav-7844 { background: var(--alt); border-color: var(--panel-border); }
+[data-theme="light"] .topbar-btn-svg-7844 { filter: var(--icon-filter); }
+[data-theme="light"] .user-info-top-7844:hover { background: var(--sidebar-hover); }
+[data-theme="light"] .wf-nav-horloge { color: var(--text-dim); }
 .wf-nav-titre { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 17px; letter-spacing: .3px; color: var(--accent); margin-left: 4px; }
 [data-theme="dark"] .wf-nav-titre { color: #fff; }
 .wf-nav-titre .ico { width: 18px; height: 18px; }
