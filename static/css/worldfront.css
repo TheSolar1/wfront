@@ -827,3 +827,26 @@ body[data-mode="dev"] .wf-apps-vex, body[data-mode="dev"] .wf-lien-vex { display
 @keyframes wf-rad-in { from { transform: translate(-50%, -50%) scale(.3); opacity: 0; } }
 .wf-radial.ouvert .wf-rad-centre { animation: wf-rad-c .16s ease-out both; }
 @keyframes wf-rad-c { from { transform: translate(-50%, -50%) scale(.4); opacity: 0; } }
+
+/* ── Blasons des produits : forme = niveau, degrade propre au produit ── */
+.wf-blason {
+  --t: 34px; width: var(--t); height: var(--t); flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  background: radial-gradient(circle at 32% 28%, color-mix(in srgb, var(--c1) 70%, #fff) 0%, var(--c1) 38%, var(--c2) 100%);
+  color: #fff; vertical-align: middle; position: relative;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .25));
+}
+.wf-blason .ico { width: 52%; height: 52%; color: #fff; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .35)); }
+.wf-blason.n1, .wf-blason.n2 { border-radius: 50%; }
+.wf-blason.n3, .wf-blason.n4 { border-radius: 26%; }
+.wf-blason.n5, .wf-blason.n6 { clip-path: polygon(25% 4%, 75% 4%, 100% 50%, 75% 96%, 25% 96%, 0 50%); }
+.wf-blason.n7 { clip-path: polygon(30% 0, 70% 0, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0 70%, 0 30%); }
+.wf-blason.n8 { clip-path: polygon(50% 0, 61% 30%, 95% 25%, 72% 52%, 90% 85%, 56% 74%, 50% 100%, 44% 74%, 10% 85%, 28% 52%, 5% 25%, 39% 30%); }
+.wf-blason.n8 .ico { width: 40%; height: 40%; }
+/* Reflet anime sur les niveaux 7 et 8 */
+.wf-blason.n7::after, .wf-blason.n8::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(115deg, transparent 35%, rgba(255, 255, 255, .45) 50%, transparent 65%);
+  background-size: 250% 100%; animation: wf-reflet 3.2s linear infinite;
+}
+@keyframes wf-reflet { from { background-position: 150% 0; } to { background-position: -100% 0; } }
+.wf-puce .wf-blason, .wf-fab-puce .wf-blason { margin-right: 4px; }

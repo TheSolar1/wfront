@@ -843,7 +843,7 @@ function marcheObjets(S) {
       const prix = prixCours(S, o.id);
       const cherche = (o.nom + ' ' + o.id).toLowerCase();
       return `<div class="wf-plan wf-objet-ligne" data-nom="${esc(cherche)}" ${filtre && !cherche.includes(filtre) ? 'hidden' : ''}>
-        ${o.el ? `<b class="wf-symbole grand" style="--c:${FAMILLES[o.el.categorie][1]}">${esc(o.id)}</b>` : `<span class="wf-bat-ic" style="color:${COULEURS_NIVEAU[o.pr.niveau]}">${ico(o.ic)}</span>`}
+        ${o.el ? `<b class="wf-symbole grand" style="--c:${FAMILLES[o.el.categorie][1]}">${esc(o.id)}</b>` : blason(o.pr, 40)}
         <div class="wf-ligne-corps"><b>${esc(o.nom)}</b><small>${fmt(possede(S, o.id), 1)} en stock · vente ${fmt(prix)} · achat ${fmt(prix * 1.5)} ${ico('coins')}
           ${Math.abs(cours - 1) > 0.01 ? `<span class="${cours >= 1 ? 'pos' : 'neg'}">${cours >= 1 ? '▲' : '▼'} ${Math.round(Math.abs(cours - 1) * 100)} %</span>` : ''}</small></div>
         <button class="wf-btn petit" data-act="acheter_objet" data-objet="${o.id}">Acheter</button>
@@ -1197,7 +1197,7 @@ function puceMatiere(S, id, q) {
   const pr = !el && !mi ? S.defs.produits.find(x => x.id === id) : null;
   const label = el ? `<b class="wf-symbole" style="--c:${FAMILLES[el.categorie][1]}">${esc(el.id)}</b>`
     : mi ? `${ico(mi.icone, '', `color:${mi.couleur}`)}${esc(mi.nom.replace('Minerai ', 'minerai '))}`
-      : `${ico(pr?.icone || 'box', '', `color:${COULEURS_NIVEAU[pr?.niveau || 1]}`)}${esc(pr?.nom || id)}`;
+      : `${blason(pr, 20)}${esc(pr?.nom || id)}`;
   const ou = el ? `à raffiner (${fmt(el.qte)} ${el.minerai.replace('minerai_', 'minerai ')} chacun)`
     : mi ? 'extrait par vos mines et carrières' : pr ? `à fabriquer (niveau ${pr.niveau})` : '';
   return `<span class="wf-fab-puce ${ok ? 'ok' : 'manque'}" title="${esc(nomObjet(S, id))} : ${fmt(possede(S, id), 1)} / ${fmt(q, 1)}${ok ? '' : ' · ' + ou}">${fmt(q, 1)} ${label}</span>`;
@@ -1363,11 +1363,32 @@ export function recetteDeTable(S) {
  *  distingue d'un coup d'oeil. */
 export const COULEURS_NIVEAU = ['#64748b', '#64748b', '#16a34a', '#0d9488', '#2563eb', '#4f46e5', '#9333ea', '#db2777', '#d97706'];
 
+/** Blason d'un produit : forme selon le niveau (rond, carre, hexagone,
+ *  octogone, etoile), degrade propre au produit (teinte tiree de son id)
+ *  autour de la couleur du niveau, symbole blanc. `taille` en px. */
+export function blason(pr, taille = 34) {
+  if (!pr) return `<span class="wf-blason n1" style="--t:${taille}px;--c1:#94a3b8;--c2:#475569">${ico('box')}</span>`;
+  let h = 0;
+  for (const ch of pr.id) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  const base = COULEURS_NIVEAU[pr.niveau] || COULEURS_NIVEAU[1];
+  return `<span class="wf-blason n${pr.niveau}" style="--t:${taille}px;--c1:${melangerTeinte(base, h, 0.35, 1.25)};--c2:${melangerTeinte(base, h, 0.2, 0.6)}" title="${esc(pr.nom)} · niveau ${pr.niveau}">${ico(pr.icone || 'box')}</span>`;
+}
+
+/** Couleur `hex` tiree vers la teinte `h` (part `k`), eclaircie ou assombrie (`l`). */
+function melangerTeinte(hex, h, k, l) {
+  const n = parseInt(hex.slice(1), 16);
+  let [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const a = h / 60, x = 1 - Math.abs((a % 2) - 1);
+  const [tr, tg, tb] = a < 1 ? [1, x, 0] : a < 2 ? [x, 1, 0] : a < 3 ? [0, 1, x] : a < 4 ? [0, x, 1] : a < 5 ? [x, 0, 1] : [1, 0, x];
+  r = (r * (1 - k) + tr * 255 * k) * l; g = (g * (1 - k) + tg * 255 * k) * l; b = (b * (1 - k) + tb * 255 * k) * l;
+  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+}
+
 function iconeObjet(S, id, grand = false) {
   const el = S.defs.elements.find(e => e.id === id);
   if (el) return `<b class="wf-symbole ${grand ? 'grand' : ''}" style="--c:${FAMILLES[el.categorie][1]}">${esc(el.id)}</b>`;
   const pr = S.defs.produits.find(x => x.id === id);
-  return `<span class="wf-table-ic" style="--nc:${COULEURS_NIVEAU[pr?.niveau || 1]}">${ico(pr?.icone || 'box')}</span>`;
+  return blason(pr, grand ? 44 : 34);
 }
 
 function ongletFabrique(S) {
@@ -1458,7 +1479,7 @@ function ongletProduits(S) {
     const n = possede(S, p.id);
     const arme = ['bombe_trou_noir', 'bombe_antimatiere'].includes(p.id);
     return `<div class="wf-fab-carte">
-      <div class="wf-fab-carte-tete"><span class="wf-bat-ic" style="color:${COULEURS_NIVEAU[p.niveau]}">${ico(p.icone)}</span><div><b>${esc(p.nom)}</b><small>× ${fmt(n, 1)} · se vend ${fmt(prixCours(S, p.id))} ${ico('coins')} pièce</small></div></div>
+      <div class="wf-fab-carte-tete">${blason(p, 42)}<div><b>${esc(p.nom)}</b><small>× ${fmt(n, 1)} · se vend ${fmt(prixCours(S, p.id))} ${ico('coins')} pièce</small></div></div>
       ${p.effet ? `<div class="wf-effet">${ico('star')} ${esc(p.effet.texte)}</div>` : ''}
       ${debloque(S, p.id).length ? `<div class="wf-effet">${ico('unlock')} Débloque : ${esc(debloque(S, p.id).join(', '))}</div>` : ''}
       <div class="wf-fab-carte-pied">
