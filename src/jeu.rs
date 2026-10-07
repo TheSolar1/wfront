@@ -195,7 +195,7 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         b.conso = conso;
 
         // ── Recherche / influence ──
-        let mut rech = 12.0 * b.n("capitale") + 15.0 * b.n("laboratoire") * ratio + p.pop * 0.02;
+        let mut rech = 12.0 * b.n("capitale") + (15.0 * b.n("laboratoire") + 90.0 * b.n("labo_quantique")) * ratio + p.pop * 0.02;
         if p.a("ind_electronique") { rech *= 1.10; }
         if spe == "scientifique" { rech *= 1.20; }
         rech *= 1.0 + 0.08 * p.niv("sciences");
@@ -2563,10 +2563,16 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             if !peut_payer(p, &cout) {
                 return Err(manque(&cout, p));
             }
+            if !d.produit.is_empty() && fab::qte(&p.stock, d.produit) < 1.0 {
+                return Err(format!("Il faut un(e) {} fabriqué(e) (Fabrication).", fab::nom_objet(d.produit).to_lowercase()));
+            }
             let t = temps_batiment(d, 1);
             let cid = m.nouvel_id();
             let p = m.pays.get_mut(&pid).unwrap();
             payer(p, &cout);
+            if !d.produit.is_empty() {
+                fab::ajouter(&mut p.stock, d.produit, -1.0);
+            }
             p.chantiers.push(Chantier { id: cid, case: i, bat: id.into(), niv: 1, reste: t, total: t, });
             Ok(format!("Chantier lancé : {}.", d.nom))
         }
@@ -2596,10 +2602,16 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             if !peut_payer(p, &cout) {
                 return Err(manque(&cout, p));
             }
+            if !d.produit.is_empty() && fab::qte(&p.stock, d.produit) < 1.0 {
+                return Err(format!("Chaque niveau consomme un(e) {} fabriqué(e).", fab::nom_objet(d.produit).to_lowercase()));
+            }
             let t = temps_batiment(d, niv);
             let cid = m.nouvel_id();
             let p = m.pays.get_mut(&pid).unwrap();
             payer(p, &cout);
+            if !d.produit.is_empty() {
+                fab::ajouter(&mut p.stock, d.produit, -1.0);
+            }
             p.chantiers.push(Chantier { id: cid, case: i, bat: id.clone(), niv, reste: t, total: t });
             Ok(format!("Amélioration lancée : {} niveau {}.", d.nom, niv))
         }
@@ -2820,10 +2832,17 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             if !peut_payer(p, &cout) {
                 return Err(manque(&cout, p));
             }
+            // Unite debloquee par une recette : un produit fabrique par unite.
+            if !ud.produit.is_empty() && fab::qte(&p.stock, ud.produit) + 1e-9 < qte as f64 {
+                return Err(format!("Il faut {} × {} (fabrication), vous en avez {}.", qte, fab::nom_objet(ud.produit), fab::qte(&p.stock, ud.produit).floor()));
+            }
             let t = ud.temps * qte as f64;
             let cid = m.nouvel_id();
             let p = m.pays.get_mut(&pid).unwrap();
             payer(p, &cout);
+            if !ud.produit.is_empty() {
+                fab::ajouter(&mut p.stock, ud.produit, -(qte as f64));
+            }
             p.productions.push(Production { id: cid, case: i, unite: ud.id.into(), qte, reste: t, total: t });
             Ok(format!("Commande passée : {} × {}.", qte, ud.nom))
         }
@@ -3849,6 +3868,26 @@ mod tests_armes {
         assert!(m.rayon(cible, 3).iter().all(|&v| m.cases[v].proprio != Some(pid)), "le tireur perd aussi sa terre");
         assert!(m.rayon(cible, RAYON_CRATERE).iter().all(|&v| m.cases[v].terrain == T_MER), "cratere inonde");
         assert!(m.effets.iter().any(|e| e.genre == "antimatiere" && e.rayon == 3));
+    }
+
+    /// Recette qui debloque un batiment : la centrale a fusion exige un
+    /// reacteur a fusion fabrique, consomme a la construction.
+    #[test]
+    fn centrale_fusion_exige_un_reacteur() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let mut m = Monde::generer(60, 40, 7);
+        crate::bots::assurer(&mut m, 1, &regles, 0.0);
+        let pid = *m.pays.keys().next().unwrap();
+        let uid = m.pays[&pid].user_id;
+        let j = Joueur { user_id: uid, nom: "Test", admin: false, triche: false };
+        let cap = m.pays[&pid].capitale;
+        let case = m.voisins(cap).into_iter().find(|&v| m.cases[v].proprio == Some(pid) && m.cases[v].bat.is_none()).unwrap();
+        m.pays.get_mut(&pid).unwrap().res = [1.0e6; NB_RES];
+        let cmd = json!({ "action": "construire", "case": case, "bat": "centrale_fusion" });
+        assert!(commande(&mut m, &j, &cmd, &regles).is_err(), "sans reacteur : refuse");
+        fab::ajouter(&mut m.pays.get_mut(&pid).unwrap().stock, "reacteur_fusion", 1.0);
+        assert!(commande(&mut m, &j, &cmd, &regles).is_ok(), "avec reacteur : accepte");
+        assert_eq!(fab::qte(&m.pays[&pid].stock, "reacteur_fusion"), 0.0, "reacteur consomme");
     }
 
     /// Trou noir : il reste et grossit petit a petit en avalant les terres.

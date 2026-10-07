@@ -202,6 +202,18 @@ function panneauPays(S) {
 // ══════════════════════════════════════════════════════════════════
 // Construction
 // ══════════════════════════════════════════════════════════════════
+/** Produit fabrique exige (batiment ou unite debloques par une recette)
+ *  et absent du stock : texte a afficher, sinon ''. */
+function manqueProduit(S, d, qte = 1) {
+  if (!d.produit || possede(S, d.produit) + 1e-9 >= qte) return '';
+  return 'Exige : ' + nomObjet(S, d.produit).toLowerCase() + ' (Fabrication)';
+}
+
+/** Ce que debloque un produit (batiments et unites qui l'exigent). */
+function debloque(S, id) {
+  return [...S.defs.batiments.filter(d => d.produit === id), ...S.defs.unites.filter(u => u.produit === id)].map(d => d.nom);
+}
+
 function raisonBatiment(S, d, i) {
   if (d.tech && !aTech(S, d.tech)) return 'Technologie : ' + nomTech(S, d.tech);
   if (d.depot && S.carte.depot[i] !== d.depot) return 'Nécessite : ' + S.defs.depots[d.depot].nom.toLowerCase();
@@ -423,10 +435,11 @@ function menuConstruire(S, i) {
     <div class="wf-fab-niveaux">${cats.map(c => `<button class="wf-chip ${c === cat ? 'actif' : ''}" data-act="cat_construire" data-cat="${esc(c)}">${esc(c)}</button>`).join('')}</div>
     <div class="wf-menu-liste">${possibles.filter(d => d.categorie === cat).map(d => {
       const c = coutBatiment(d, 1, m.mods, m.spe);
-      const ok = peutPayer(S, c);
+      const exige = manqueProduit(S, d);
+      const ok = peutPayer(S, c) && !exige;
       return `<div class="wf-menu-item ${ok ? '' : 'cher'}" title="${esc(d.desc)}">
         <span class="wf-bat-ic">${ico(d.icone)}</span>
-        <div class="wf-ligne-corps"><b>${esc(d.nom)}</b><small>${cout(S, c)} · ${ico('clock')} ${duree(d.temps / m.bilan.vitesse / S.vitesse)}</small></div>
+        <div class="wf-ligne-corps"><b>${esc(d.nom)}</b><small>${cout(S, c)} · ${ico('clock')} ${duree(d.temps / m.bilan.vitesse / S.vitesse)}${d.produit ? ` · ${ico('box')} ${esc(nomObjet(S, d.produit))}` : ''}</small>${exige ? `<small class="neg">${esc(exige)}</small>` : ''}</div>
         <button class="wf-btn petit" data-act="construire" data-case="${i}" data-bat="${d.id}" ${ok ? '' : 'disabled'}>Bâtir</button>
       </div>`;
     }).join('')}</div>
@@ -442,11 +455,12 @@ function menuProduction(S, i) {
     ${file.length ? `<div class="wf-insp-ligne petit">${ico('list-check')} En production : ${file.map(p => `${p.qte} × ${esc(uniDef(S, p.unite)?.nom)}`).join(', ')}</div>` : ''}
     <div class="wf-menu-liste">${unites.map(u => {
       const c = coutUnite(u, 1, m.mods, m.spe);
-      return `<div class="wf-menu-item" title="${esc(u.desc)}">
+      const exige = manqueProduit(S, u);
+      return `<div class="wf-menu-item ${exige ? 'cher' : ''}" title="${esc(u.desc)}">
         <span class="wf-bat-ic">${ico(u.icone)}</span>
-        <div class="wf-ligne-corps"><b>${esc(u.nom)}</b><small>${cout(S, c)} / unité</small></div>
+        <div class="wf-ligne-corps"><b>${esc(u.nom)}</b><small>${cout(S, c)}${u.produit ? ` + 1 ${esc(nomObjet(S, u.produit).toLowerCase())} (${fmt(Math.floor(possede(S, u.produit)))} en stock)` : ''} / unité</small>${exige ? `<small class="neg">${esc(exige)}</small>` : ''}</div>
         <input type="number" min="1" max="50" value="1" id="qc-${u.id}" data-garder class="wf-qte">
-        <button class="wf-btn petit" data-act="produire" data-case="${i}" data-unite="${u.id}" data-champ="qc-${u.id}">${ico('plus')}</button>
+        <button class="wf-btn petit" data-act="produire" data-case="${i}" data-unite="${u.id}" data-champ="qc-${u.id}" ${exige ? 'disabled' : ''}>${ico('plus')}</button>
       </div>`;
     }).join('') || '<div class="wf-insp-ligne petit">Aucune unité disponible : faites de la recherche.</div>'}</div>
     ${b === 'silo' ? blocArsenal(S, i) : ''}`;
@@ -1416,7 +1430,8 @@ function ongletFabrique(S) {
     const cherche = (p.nom + ' ' + p.desc + ' ' + (p.effet?.texte || '')).toLowerCase();
     return `<div class="wf-livre-ligne ${ok ? 'faisable' : ''} ${p.niveau > nivMax ? 'verrou' : ''}" data-nom="${esc(cherche)}" ${filtre && !cherche.includes(filtre) ? 'hidden' : ''}>
       <div class="wf-livre-sortie">${iconeObjet(S, p.id)}<div><b>${esc(p.nom)}</b> <small>niv. ${p.niveau} · → ${fmt(p.sortie * q)}${possede(S, p.id) > 0 ? ` · ${fmt(possede(S, p.id), 1)} en stock` : ''}</small>
-        ${p.effet ? `<div class="wf-effet">${ico('star')} ${esc(p.effet.texte)}</div>` : ''}</div></div>
+        ${p.effet ? `<div class="wf-effet">${ico('star')} ${esc(p.effet.texte)}</div>` : ''}
+        ${debloque(S, p.id).length ? `<div class="wf-effet">${ico('unlock')} Débloque : ${esc(debloque(S, p.id).join(', '))}</div>` : ''}</div></div>
       <span class="wf-fab-recette">${p.entrees.map(([id, n]) => puceMatiere(S, id, n * q)).join('')}</span>
       <span class="wf-livre-boutons">
         <button class="wf-btn petit" data-act="fab_direct" data-objet="${p.id}" ${p.niveau <= nivMax ? '' : 'disabled'} title="${ok ? `Fabriquer ${q} fois avec ce que vous avez` : 'Il manque des matières : elles seront raffinées et fabriquées automatiquement avec votre minerai'}">${ico(ok ? 'hammer' : 'sitemap')} Fabriquer</button>
@@ -1445,6 +1460,7 @@ function ongletProduits(S) {
     return `<div class="wf-fab-carte">
       <div class="wf-fab-carte-tete"><span class="wf-bat-ic" style="color:${COULEURS_NIVEAU[p.niveau]}">${ico(p.icone)}</span><div><b>${esc(p.nom)}</b><small>× ${fmt(n, 1)} · se vend ${fmt(prixCours(S, p.id))} ${ico('coins')} pièce</small></div></div>
       ${p.effet ? `<div class="wf-effet">${ico('star')} ${esc(p.effet.texte)}</div>` : ''}
+      ${debloque(S, p.id).length ? `<div class="wf-effet">${ico('unlock')} Débloque : ${esc(debloque(S, p.id).join(', '))}</div>` : ''}
       <div class="wf-fab-carte-pied">
         ${arme ? `<button class="wf-btn petit danger" data-act="ordre_special" data-objet="${p.id}">${ico('crosshairs')} Lancer</button>` : '<span></span>'}
         <span class="wf-boutons"><button class="wf-btn petit secondaire" data-act="vendre_objet" data-objet="${p.id}" data-qte="1">Vendre 1</button>
@@ -1519,7 +1535,8 @@ export function actionsRadiales(S, i) {
         ico: ICONES_CAT[cat] || 'helmet-safety', label: cat,
         sous: possibles.filter(d => d.categorie === cat).map(d => {
           const c = coutBatiment(d, 1, m.mods, m.spe);
-          return { ico: d.icone, label: d.nom, info: coutTexte(S, c), act: 'construire', data: { case: i, bat: d.id }, off: !peutPayer(S, c) };
+          const exige = manqueProduit(S, d);
+          return { ico: d.icone, label: d.nom, info: exige || coutTexte(S, c) + (d.produit ? ' · ' + nomObjet(S, d.produit).toLowerCase() : ''), act: 'construire', data: { case: i, bat: d.id }, off: !peutPayer(S, c) || !!exige };
         }),
       }));
       if (sous.length) items.push({ ico: 'helmet-safety', label: 'Construire', sous: sous.length === 1 ? sous[0].sous : sous });
@@ -1528,7 +1545,8 @@ export function actionsRadiales(S, i) {
       const niv = S.carte.niv[i];
       if (niv < m.mods.niv_max) {
         const c = coutBatiment(d, niv + 1, m.mods, m.spe);
-        items.push({ ico: 'arrow-up', label: `Améliorer (niveau ${niv + 1})`, info: coutTexte(S, c), act: 'ameliorer', data: { case: i }, off: !peutPayer(S, c) });
+        const exige = manqueProduit(S, d);
+        items.push({ ico: 'arrow-up', label: `Améliorer (niveau ${niv + 1})`, info: exige || coutTexte(S, c), act: 'ameliorer', data: { case: i }, off: !peutPayer(S, c) || !!exige });
       }
       items.push({ ico: 'sliders', label: `Gérer : ${d?.nom || b}`, info: 'Production, recherche, détails', act: 'infos_case', data: { case: i } });
       if (b !== 'capitale') items.push({ ico: 'trash', label: 'Démolir', act: 'demolir', data: { case: i }, danger: true });

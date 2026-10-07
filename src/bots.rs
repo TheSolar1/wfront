@@ -24,6 +24,8 @@ use std::collections::{BTreeMap, HashMap};
 const BASE_ID: i64 = -2_000_000_000;
 /// Un bot reflechit toutes les N secondes de jeu.
 const REFLEXION_S: f64 = 6.0;
+/// Aucune guerre declaree par un bot pendant les 20 premieres minutes de jeu.
+const PAIX_INITIALE_S: f64 = 1200.0;
 /// Delai (s de jeu) avant de refonder une nation de bot aneantie.
 
 pub const NOMS: &[&str] = &[
@@ -391,8 +393,10 @@ fn guerroyer(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng:
     let ennemis: Vec<u32> = m.pays.keys().copied().filter(|&x| x != pid && m.en_guerre(pid, x)).collect();
 
     if ennemis.is_empty() {
-        // Declare parfois la guerre a un voisin plus faible (25 % d'ecart).
-        if !rng.gen_bool(0.04) {
+        // Paix des 20 premieres minutes, puis guerre de temps en temps (en
+        // moyenne une fois toutes les 8 min) contre un voisin NETTEMENT plus
+        // faible : les bots ne s'eliminent plus en une heure.
+        if m.temps < PAIX_INITIALE_S || !rng.gen_bool(0.012) {
             return;
         }
         let voisins = pays_voisins(m, pid);
@@ -400,7 +404,7 @@ fn guerroyer(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng:
         let faible = voisins.into_iter().find(|v| {
             let pv = &m.pays[v];
             !pv.elimine && pv.protection <= chrono::Utc::now().timestamp()
-                && publics.get(v).map(|x| x.puissance * 1.25 < b.puissance).unwrap_or(false)
+                && publics.get(v).map(|x| x.puissance * 1.6 < b.puissance).unwrap_or(false)
         });
         if let Some(cible) = faible {
             cmd(m, uid, regles, json!({ "action": "guerre", "pays": cible }));
@@ -408,14 +412,21 @@ fn guerroyer(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng:
         return;
     }
 
-    // En guerre : la moitie des troupes part a l'offensive (une a la fois).
+    // Lassitude : de temps en temps, le bot propose la paix (meme s'il gagne).
+    if rng.gen_bool(0.015) {
+        let e = ennemis[rng.gen_range(0..ennemis.len())];
+        if !m.propositions.iter().any(|x| x.de == pid && x.a == e) {
+            cmd(m, uid, regles, json!({ "action": "proposer", "pays": e, "genre": "paix" }));
+        }
+    }
+    // En guerre : un tiers des troupes part a l'offensive (une a la fois).
     let p = &m.pays[&pid];
-    if p.troupes > 0.5 * b.troupes_max && !m.attaques.values().any(|a| a.de == pid && a.cible.is_some()) {
+    if p.troupes > 0.6 * b.troupes_max && !m.attaques.values().any(|a| a.de == pid && a.cible.is_some()) {
         let front: Option<usize> = (0..m.cases.len())
             .filter(|&i| m.cases[i].proprio.map(|o| ennemis.contains(&o)).unwrap_or(false))
             .find(|&i| m.voisins(i).iter().any(|&v| m.cases[v].proprio == Some(pid)));
         if let Some(i) = front {
-            cmd(m, uid, regles, json!({ "action": "etendre", "case": i, "ratio": 0.5 }));
+            cmd(m, uid, regles, json!({ "action": "etendre", "case": i, "ratio": 0.35 }));
         }
     }
     // Et chaque armee terrestre au repos marche sur la case ennemie la plus
@@ -492,11 +503,13 @@ fn repondre_propositions(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: 
         return;
     }
     let publics = jeu::bilans(m);
+    let mut rng = rand::thread_rng();
     for (de, genre) in props {
         let force_autre = publics.get(&de).map(|x| x.puissance).unwrap_or(0.0);
         let accepte = match genre.as_str() {
-            // Paix : acceptee si le bot n'a pas l'avantage.
-            "paix" => force_autre * 1.2 >= b.puissance,
+            // Paix : acceptee si le bot n'a pas l'avantage, et parfois meme
+            // s'il gagne (une guerre ne doit pas finir en elimination).
+            "paix" => force_autre * 1.2 >= b.puissance || rng.gen_bool(0.35),
             // Pacte : accepte avec les plus forts, refuse avec les faibles.
             _ => force_autre >= b.puissance * 0.7,
         };
@@ -531,7 +544,9 @@ mod tests {
         }
         m.pays.get_mut(&a).unwrap().influence = 100.0;
         let mut rng = rand::thread_rng();
-        for _ in 0..400 {
+        // Apres la paix initiale.
+        m.temps = PAIX_INITIALE_S + 1.0;
+        for _ in 0..1500 {
             let bl = jeu::bilans(&m);
             guerroyer(&mut m, a, BASE_ID, &regles, &bl[&a], &mut rng);
             if m.en_guerre(a, b) { break; }
