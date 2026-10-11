@@ -1074,7 +1074,7 @@ const ACTIONS = {
   rechercher: d => agir('rechercher', { tech: d.tech }),
   annuler_recherche: d => agir('annuler_recherche', { tech: d.tech }),
   branche: d => { S.brancheRecherche = d.branche; majPanneau(true); majInspecteur(true); },
-  produire: d => agir('produire', { case: +d.case, unite: d.unite, qte: Math.max(1, Math.min(50, +val(d.champ || 'qte-' + d.unite) || 1)) }),
+  produire: d => agir('produire', { case: +d.case, unite: d.unite, qte: d.qte ? Math.max(1, Math.min(50, +d.qte)) : Math.max(1, Math.min(50, +val(d.champ || 'qte-' + d.unite) || 1)) }),
   annuler_production: d => agir('annuler_production', { id: +d.id }),
   prod_case: d => { S.prodCase = +d.case; majPanneau(true); },
 

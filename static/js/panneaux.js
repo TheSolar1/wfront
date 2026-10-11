@@ -1580,6 +1580,18 @@ export function actionsRadiales(S, i) {
         const exige = manqueProduit(S, d);
         items.push({ ico: 'arrow-up', label: `Améliorer (niveau ${niv + 1})`, info: exige || coutTexte(S, c), act: 'ameliorer', data: { case: i }, off: !peutPayer(S, c) || !!exige });
       }
+      // Produire des unités depuis le menu rond (caserne, aéroport, usine, port, silo).
+      const produisibles = S.defs.unites.filter(u => u.batiment === b);
+      if (produisibles.length) {
+        const sousP = produisibles.map(u => {
+          if (u.tech && !aTech(S, u.tech)) return { ico: 'lock', label: u.nom, info: 'Technologie : ' + nomTech(S, u.tech), off: true };
+          return { ico: u.icone, label: u.nom, info: coutTexte(S, coutUnite(u, 1, m.mods, m.spe)), sous: [1, 5, 10].map(q => {
+            const c = coutUnite(u, q, m.mods, m.spe);
+            return { ico: u.icone, label: `×${q}`, info: coutTexte(S, c), act: 'produire', data: { case: i, unite: u.id, qte: q }, off: !peutPayer(S, c) };
+          }) };
+        });
+        items.push({ ico: 'hammer', label: 'Produire', sous: sousP });
+      }
       // Silo : tirer missiles ET armes non conventionnelles directement depuis le menu rond.
       if (b === 'silo') {
         const tirs = [];
