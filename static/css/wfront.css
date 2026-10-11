@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════════════════════════
-   worldfront.css — Styles de WorldFront
+   wfront.css — Styles de WFront
    S'appuie uniquement sur les jetons de theme.css (copie a l'identique
    de VEX) : memes couleurs, memes rayons, memes ombres, clair/sombre
    pilote par data-theme sur <html>.
@@ -786,7 +786,7 @@ body.wf-dev { min-height: 100vh; display: flex; align-items: center; justify-con
 .wf-resbar { min-height: 40px; }
 .wf-res { padding: 3px 8px; }
 
-/* Barre VEX dans WorldFront : logo WorldFront en couleur (celui de VEX est gris) ;
+/* Barre VEX dans WFront : logo WFront en couleur (celui de VEX est gris) ;
    la grille d'applis et le compte VEX sont caches aux invites et en mode dev. */
 .nav-logo-flat-7844.wf-nav-logo { filter: none !important; width: 34px; height: 34px; display: block; }
 body[data-invite="1"] .wf-apps-vex, body[data-invite="1"] .wf-lien-vex,

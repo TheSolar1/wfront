@@ -1,4 +1,4 @@
-# WorldFront
+# WFront
 
 Jeu de stratégie et de guerre multijoueur dans le navigateur : on dirige un pays, on le fait grandir, on gère ses alliances… puis la guerre.
 
@@ -36,8 +36,8 @@ Puis ouvrir http://127.0.0.1:8095. En **mode dev** (`"auth": "dev"`), n'importe 
 
 L'administration (annonce mondiale, suppression de nations, `devTout`) n'apparaît et ne fonctionne que pour le détenteur de la **clé d'administration** :
 
-1. Créer une paire de clés Ed25519 : `openssl genpkey -algorithm ed25519 -out "worldfront admin.pem"`.
-2. Mettre la clé publique (32 octets en base64 : `openssl pkey -in "worldfront admin.pem" -pubout -outform DER | tail -c 32 | base64`) dans `admin_cle_publique` du `config.json`.
+1. Créer une paire de clés Ed25519 : `openssl genpkey -algorithm ed25519 -out "wfront admin.pem"`.
+2. Mettre la clé publique (32 octets en base64 : `openssl pkey -in "wfront admin.pem" -pubout -outform DER | tail -c 32 | base64`) dans `admin_cle_publique` du `config.json`.
 3. Ouvrir `/admin` et choisir le fichier `.pem` : le navigateur signe un défi du serveur, la clé ne quitte jamais l'ordinateur. Le déverrouillage dure 12 h et ne vaut que pour le compte qui l'a obtenu.
 
 `cargo run -- --apercu` affiche la carte en texte, pratique pour choisir une `graine`.
@@ -47,29 +47,29 @@ L'administration (annonce mondiale, suppression de nations, `devTout`) n'appara�
 Un joueur se connecte avec son compte de **n'importe quel nœud du réseau VEX** :
 
 1. Sur la page d'accueil, **Se connecter avec VEX** l'envoie directement sur le nœud par défaut (`noeud_par_defaut`). Sur `/connexion`, il peut indiquer un autre nœud.
-2. WorldFront récupère la clé publique Ed25519 du nœud (`/p2p/ping`) et vérifie qu'il figure dans l'annuaire du réseau (`annuaire_url`).
+2. WFront récupère la clé publique Ed25519 du nœud (`/p2p/ping`) et vérifie qu'il figure dans l'annuaire du réseau (`annuaire_url`).
 3. Le joueur est envoyé sur `/p2p/sso` de son nœud. Il s'y connecte si besoin, puis clique sur **Autoriser**.
 4. Le nœud signe son identité (`user_id@node_id`, nom, thème) avec sa clé P2P et le renvoie sur `/auth/retour`.
-5. WorldFront vérifie la signature, puis ouvre sa propre session (cookie `wf_session`, 30 jours).
+5. WFront vérifie la signature, puis ouvre sa propre session (cookie `wf_session`, 30 jours).
 
 Le mot de passe ne quitte jamais le nœud. Un nœud ne peut signer que pour ses propres comptes.
 
 **Côté VEX :** chaque nœud doit avoir la version de VEX qui contient `src/p2p/sso.rs` (route `/p2p/sso`) et le paramètre `?suite=` de `/login`. Un nœud plus ancien renvoie une erreur à l'étape 3.
 
-Dans ce mode, WorldFront peut tourner n'importe où, même sur un autre domaine que VEX. Il faut que `url_publique` soit l'adresse que voient les joueurs (ex. `https://jeu.exemple.org`), car le nœud y renvoie le joueur. L'administration du jeu passe par la clé d'administration (voir plus haut).
+Dans ce mode, WFront peut tourner n'importe où, même sur un autre domaine que VEX. Il faut que `url_publique` soit l'adresse que voient les joueurs (ex. `https://jeu.exemple.org`), car le nœud y renvoie le joueur. L'administration du jeu passe par la clé d'administration (voir plus haut).
 
 ## Option : même serveur que VEX (mode `vex`, un seul nœud)
 
-WorldFront est un **processus séparé** avec son propre port. Il ne modifie jamais la base VEX : il lit seulement `loginc`, `login` et `pref` pour reconnaître la session.
+WFront est un **processus séparé** avec son propre port. Il ne modifie jamais la base VEX : il lit seulement `loginc`, `login` et `pref` pour reconnaître la session.
 
 ### Pourquoi derrière le même Apache que VEX
 
-VEX enregistre l'IP de la session **telle que vue derrière Apache** (`127.0.0.1`), et son cookie `connexion_cookie` n'est envoyé qu'au même domaine. WorldFront doit donc être servi par le même Apache, sous un chemin (ex. `https://vex.hopto.org/worldfront/`) : le cookie arrive, et l'IP vue par WorldFront (`127.0.0.1`) est la même que celle enregistrée par VEX.
+VEX enregistre l'IP de la session **telle que vue derrière Apache** (`127.0.0.1`), et son cookie `connexion_cookie` n'est envoyé qu'au même domaine. WFront doit donc être servi par le même Apache, sous un chemin (ex. `https://vex.hopto.org/wfront/`) : le cookie arrive, et l'IP vue par WFront (`127.0.0.1`) est la même que celle enregistrée par VEX.
 
 ### 1. Compiler et configurer
 
 ```bash
-cd ~/worldfront
+cd ~/wfront
 cargo build --release
 cp config.example.json config.json
 ```
@@ -81,7 +81,7 @@ cp config.example.json config.json
   "adresse": "127.0.0.1",
   "port": 8095,
   "vex_url": "",
-  "prefixe": "/worldfront",
+  "prefixe": "/wfront",
   "auth": "vex",
   "vex_db_fichier": "../vex-rs/db.json",
   "proxy_de_confiance": false
@@ -89,7 +89,7 @@ cp config.example.json config.json
 ```
 
 - `vex_url` vide : les liens vers VEX restent sur le même domaine (`/login/dashboard`, `/login`…).
-- `vex_db_fichier` : le `db.json` de VEX, relatif au dossier de WorldFront (mêmes identifiants MySQL).
+- `vex_db_fichier` : le `db.json` de VEX, relatif au dossier de WFront (mêmes identifiants MySQL).
 - `adresse: 127.0.0.1` : seul Apache peut joindre le jeu.
 - `proxy_de_confiance` doit rester à `false`, comme VEX qui compare l'IP brute du proxy.
 
@@ -102,10 +102,10 @@ sudo a2enmod proxy proxy_http proxy_wstunnel
 Dans le VirtualHost de VEX, **avant** les règles qui renvoient vers VEX :
 
 ```apache
-RedirectMatch ^/worldfront$ /worldfront/
-ProxyPass        /worldfront/ws  ws://127.0.0.1:8095/ws
-ProxyPass        /worldfront/    http://127.0.0.1:8095/
-ProxyPassReverse /worldfront/    http://127.0.0.1:8095/
+RedirectMatch ^/wfront$ /wfront/
+ProxyPass        /wfront/ws  ws://127.0.0.1:8095/ws
+ProxyPass        /wfront/    http://127.0.0.1:8095/
+ProxyPassReverse /wfront/    http://127.0.0.1:8095/
 ```
 
 ```bash
@@ -118,9 +118,9 @@ Même méthode que VEX : attendre que l'ancien processus soit vraiment arrêté 
 
 ```bash
 cargo build --release
-PID=$(pgrep -f './worldfront$'); [ -n "$PID" ] && kill $PID && while kill -0 $PID 2>/dev/null; do sleep 0.5; done
-cp -f target/release/worldfront ./worldfront
-setsid nohup ./worldfront >> worldfront.out 2>&1 < /dev/null & disown
+PID=$(pgrep -f './wfront$'); [ -n "$PID" ] && kill $PID && while kill -0 $PID 2>/dev/null; do sleep 0.5; done
+cp -f target/release/wfront ./wfront
+setsid nohup ./wfront >> wfront.out 2>&1 < /dev/null & disown
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8095/
 ```
 
@@ -138,7 +138,7 @@ La session VEX dure une heure (`datecra` dans `loginc`). Une partie déjà ouver
 | `vex_url` | `http://127.0.0.1:8080` | Adresse de VEX pour les liens et la connexion (vide = même domaine) |
 | `prefixe` | `""` | Chemin exposé par le proxy, pour les redirections |
 | `auth` | `reseau` | `reseau` = « Se connecter avec VEX » (tout nœud), `vex` = sessions d'un seul nœud lues dans sa base, `dev` = pseudo libre (tests locaux) |
-| `url_publique` | `""` | Adresse publique de WorldFront (mode reseau), sinon déduite de l'en-tête Host |
+| `url_publique` | `""` | Adresse publique de WFront (mode reseau), sinon déduite de l'en-tête Host |
 | `annuaire_url` | `https://vex.hopto.org/neut/annuaire` | Seuls les nœuds de cet annuaire sont acceptés (vide = tout serveur VEX) |
 | `noeud_par_defaut` | `vex.hopto.org` | Pré-rempli sur la page de connexion |
 | `admin_cle_publique` | `""` | Clé publique de la clé d'administration (voir plus haut) |
@@ -170,7 +170,7 @@ src/
 static/
   accueil.html, jeu.html, dev.html
   css/theme.css        copie à l'identique du thème VEX
-  css/worldfront.css   styles du jeu (jetons de theme.css uniquement)
+  css/wfront.css   styles du jeu (jetons de theme.css uniquement)
   js/jeu.js            client : connexion, interface, ordres
   js/carte.js          rendu 3D Three.js
   js/panneaux.js       panneaux (pays, construction, armées, recherche…)

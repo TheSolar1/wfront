@@ -91,7 +91,7 @@ impl Admin {
         let code = format!("{:04}-{:04}", r.gen_range(0..10000), r.gen_range(0..10000));
         if let Some(d) = &self.dossier {
             let texte = format!(
-                "Code de recuperation de l'administration WorldFront : {}\n\n\
+                "Code de recuperation de l'administration WFront : {}\n\n\
                  A saisir sur la page /admin (usage unique). Un nouveau code est tire a chaque\n\
                  redemarrage du serveur et apres chaque utilisation.\n",
                 code
@@ -174,7 +174,7 @@ impl Admin {
 
     pub fn defi(&self, user_id: i64) -> String {
         let t = maintenant();
-        let message = format!("WorldFront admin|{}|{}|{}", user_id, t, aleatoire());
+        let message = format!("WFront admin|{}|{}|{}", user_id, t, aleatoire());
         let mut d = self.defis.lock().unwrap();
         d.retain(|_, (_, cree)| t - *cree < DUREE_DEFI);
         if d.len() < 1000 {

@@ -4,11 +4,11 @@
 //   /auth/debut?noeud=vex.exemple.org
 //      -> GET {noeud}/p2p/ping : node_id + cle publique Ed25519 du nœud
 //      -> verifie que ce nœud figure dans l'annuaire du reseau VEX
-//      -> redirige vers {noeud}/p2p/sso?service=WorldFront&retour=..&etat=..
+//      -> redirige vers {noeud}/p2p/sso?service=WFront&retour=..&etat=..
 //   /auth/retour?etat=..&jeton=..&sig=..
 //      -> verifie la signature du jeton avec la cle du nœud, l'etat,
 //         l'adresse de retour et l'expiration, puis ouvre une session
-//         WorldFront (cookie wf_session, 30 jours).
+//         WFront (cookie wf_session, 30 jours).
 //
 // Le mot de passe ne quitte jamais le nœud de l'utilisateur. Un nœud ne
 // peut signer que pour SES comptes : l'identite retenue est
@@ -68,7 +68,7 @@ fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(8))
         .redirects(2)
-        .user_agent("WorldFront/0.1")
+        .user_agent("WFront/0.1")
         .build()
 }
 
@@ -183,7 +183,7 @@ impl Reseau {
             a.insert(etat.clone(), Attente { noeud: noeud.clone(), node_id, pub_key, cree: t });
         }
         Ok(format!(
-            "{}/p2p/sso?service=WorldFront&retour={}&etat={}",
+            "{}/p2p/sso?service=WFront&retour={}&etat={}",
             noeud,
             encoder(retour),
             etat

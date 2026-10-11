@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════════
-// WorldFront — serveur
+// WFront — serveur
 // Processus independant de VEX (son propre port), qui reutilise la
 // connexion VEX : le cookie `connexion_cookie` pose par VEX est relu
 // ici et verifie dans la base VEX exactement comme c::verifier_session
@@ -54,16 +54,16 @@ struct Config {
     adresse: String,
     port: u16,
     /// URL publique de VEX (liens de la barre de navigation, page de connexion).
-    /// Vide si WorldFront est servi sur le meme domaine que VEX.
+    /// Vide si WFront est servi sur le meme domaine que VEX.
     vex_url: String,
-    /// Chemin sous lequel le reverse proxy expose WorldFront (ex. "/worldfront"),
-    /// utilise pour les redirections. Vide si WorldFront est a la racine.
+    /// Chemin sous lequel le reverse proxy expose WFront (ex. "/wfront"),
+    /// utilise pour les redirections. Vide si WFront est a la racine.
     prefixe: String,
     /// "reseau" (defaut) : « Se connecter avec VEX » depuis n'importe quel nœud
     /// du reseau VEX. "vex" : sessions lues dans la base d'un seul nœud.
     /// "dev" : simple pseudo, pour tester en local.
     auth: String,
-    /// Adresse publique de WorldFront, prefixe compris (ex.
+    /// Adresse publique de WFront, prefixe compris (ex.
     /// "https://jeu.exemple.org"). Vide : deduite de l'en-tete Host.
     url_publique: String,
     /// Annuaire du reseau VEX : seuls les nœuds qui y figurent sont acceptes.
@@ -77,7 +77,7 @@ struct Config {
     session_duree_s: i64,
     verifier_ip: bool,
     verifier_navigateur: bool,
-    /// Si WorldFront est derriere un reverse proxy : lire X-Forwarded-For.
+    /// Si WFront est derriere un reverse proxy : lire X-Forwarded-For.
     proxy_de_confiance: bool,
     /// Privilege maximal pour les outils d'administration du jeu. Depuis la
     /// cle d'administration, seul son detenteur a le privilege 1.
@@ -156,7 +156,7 @@ struct Identite {
     nom: String,
     privilege: i64,
     /// Rang VEX du compte (1 fondateur … 10 aucun) : couleur du nom dans la
-    /// barre, comme sur VEX. Sans lien avec l'administration de WorldFront.
+    /// barre, comme sur VEX. Sans lien avec l'administration de WFront.
     rang_vex: i64,
     sombre: bool,
     /// Nœud VEX de l'utilisateur (mode reseau) : cible des liens VEX.
@@ -427,7 +427,7 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    println!("WorldFront en ligne sur http://{}  (VEX : {})", adr, cfg.vex_url);
+    println!("WFront en ligne sur http://{}  (VEX : {})", adr, cfg.vex_url);
     axum::serve(ecoute, routes.into_make_service_with_connect_info::<SocketAddr>())
         .await
         .unwrap();
@@ -454,7 +454,7 @@ async fn signal_arret() {
     let _ = tokio::signal::ctrl_c().await;
 }
 
-/// `worldfront --apercu` : dessine la carte en texte (reglage de la graine).
+/// `wfront --apercu` : dessine la carte en texte (reglage de la graine).
 fn apercu_carte(cfg: &Config) {
     let graine = graine_carte(cfg);
     println!("graine {}", graine);
@@ -708,7 +708,7 @@ fn echapper(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&#39;")
 }
 
-/// Chemin public d'une page de WorldFront (tient compte du prefixe du proxy).
+/// Chemin public d'une page de WFront (tient compte du prefixe du proxy).
 fn chemin(app: &App, page: &str) -> String {
     format!("{}{}", app.cfg.prefixe.trim_end_matches('/'), page)
 }
