@@ -1477,7 +1477,7 @@ function ongletProduits(S) {
   html += titre('Produits', 'boxes-stacked', `<small>${produits.length}</small>`);
   html += produits.length ? `<div class="wf-fab-cartes">${produits.map(p => {
     const n = possede(S, p.id);
-    const arme = ['bombe_trou_noir', 'bombe_antimatiere'].includes(p.id);
+    const arme = ['bombe_trou_noir', 'bombe_antimatiere', 'generateur_point_zero'].includes(p.id);
     return `<div class="wf-fab-carte">
       <div class="wf-fab-carte-tete">${blason(p, 42)}<div><b>${esc(p.nom)}</b><small>× ${fmt(n, 1)} · se vend ${fmt(prixCours(S, p.id))} ${ico('coins')} pièce</small></div></div>
       ${p.effet ? `<div class="wf-effet">${ico('star')} ${esc(p.effet.texte)}</div>` : ''}
@@ -1622,9 +1622,10 @@ export function actionsRadiales(S, i) {
           frappes.push({ ico: u.icone, label: `Tirer : ${u.nom}`, info: `${n} en silo`, act: 'tirer_ici', data: { armee: a.id, genre: id, case: i }, danger: id === 'missile_nucleaire' });
         }
       }
-      for (const o of ['bombe_antimatiere', 'bombe_trou_noir']) {
+      for (const o of ['bombe_antimatiere', 'bombe_trou_noir', 'generateur_point_zero']) {
         const n = possede(S, o);
-        if (n >= 1) frappes.push({ ico: o === 'bombe_trou_noir' ? 'circle' : 'explosion', label: nomObjet(S, o), info: `${fmt(n)} en stock · depuis votre silo`, act: 'arme_ici', data: { objet: o, case: i }, danger: true });
+        const ic = o === 'bombe_trou_noir' ? 'circle' : o === 'generateur_point_zero' ? 'mountain' : 'explosion';
+        if (n >= 1) frappes.push({ ico: ic, label: nomObjet(S, o), info: `${fmt(n)} en stock · depuis votre silo`, act: 'arme_ici', data: { objet: o, case: i }, danger: true });
       }
       if (frappes.length) items.push(frappes.length === 1 ? frappes[0] : { ico: 'crosshairs', label: 'Frappes', sous: frappes, danger: true });
     }

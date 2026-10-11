@@ -454,13 +454,16 @@ export class Carte {
         const a = teinte[4 * i + 3];
         if (a > 0) { r += (teinte[4 * i] - r) * a; g += (teinte[4 * i + 1] - g) * a; b += (teinte[4 * i + 2] - b) * a; }
         if (brume[i]) {
+          // Vrai brouillard de guerre : hors vision, la terre est noyée dans le
+          // voile (on ne distingue plus le terrain), pas juste grisée.
           const l = 0.3 * r + 0.59 * g + 0.11 * b;
-          r = (r + (l - r) * 0.6); g = (g + (l - g) * 0.6); b = (b + (l - b) * 0.6);
-          const f = sombre ? 0.3 : 0.35;
+          r = (r + (l - r) * 0.9); g = (g + (l - g) * 0.9); b = (b + (l - b) * 0.9);
+          const f = sombre ? 0.9 : 0.9;
           r += (vr - r) * f; g += (vg - g) * f; b += (vb - b) * f;
         }
       } else if (i >= 0 && brume[i]) {
-        r *= 0.75; g *= 0.75; b *= 0.8;
+        // Mer hors vision : voile épais aussi.
+        r += (vr - r) * 0.85; g += (vg - g) * 0.85; b += (vb - b) * 0.85;
       }
       out[3 * k] = r; out[3 * k + 1] = g; out[3 * k + 2] = b;
     }
@@ -681,9 +684,11 @@ export class Carte {
         }
         this.vision = v;
         this.couleursSales = true;
+        this.appliquerVision();
       } else if (!e.vision && this.vision) {
         this.vision = null;
         this.couleursSales = true;
+        this.appliquerVision();
       }
       this.visionHex = e.vision;
     }
@@ -703,6 +708,14 @@ export class Carte {
 
   /** Petit modèle 3D du bâtiment, plus grand avec le niveau, et son
    *  numéro de niveau dans une pastille aux couleurs du pays. */
+  // Brouillard de guerre : montre/cache les sprites selon ce que le joueur voit.
+  appliquerVision() {
+    const vu = i => !this.vision || !!this.vision[i];
+    this.spritesBat.forEach((g, i) => { g.visible = vu(i); });
+    this.spritesDepot.forEach((s, i) => { s.visible = vu(i); });
+    this.labelsSales = true;
+  }
+
   majBatiment(i) {
     const ancien = this.spritesBat.get(i);
     if (ancien) {
@@ -731,6 +744,7 @@ export class Carte {
     }
     const [x, z] = this.pos(i);
     groupe.position.set(x, this.haut(i) - 0.02, z);
+    groupe.visible = !this.vision || !!this.vision[i];   // caché sous le brouillard
     this.groupes.bats.add(groupe);
     this.spritesBat.set(i, groupe);
   }
@@ -922,6 +936,7 @@ export class Carte {
       const [x, z] = this.pos(i);
       s.position.set(x + 0.42, this.haut(i) + 0.32, z + 0.3);
       s.material.opacity = 0.9;
+      s.visible = !this.vision || !!this.vision[i];   // caché sous le brouillard
       this.groupes.depots.add(s);
       this.spritesDepot.set(i, s);
     }
@@ -1043,6 +1058,7 @@ export class Carte {
     for (let i = 0; i < this.g.n; i++) {
       const p = this.proprio[i];
       if (p < 0) continue;
+      if (this.vision && !this.vision[i]) continue;   // nation invisible sous le brouillard
       const [x, z] = this.pos(i);
       const s = sommes.get(p) || { x: 0, z: 0, n: 0 };
       s.x += x; s.z += z; s.n++;

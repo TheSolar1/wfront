@@ -341,8 +341,8 @@ let radial = null; // { i, pile: [entrees], x, y }
 
 function ouvrirRadial(i, e) {
   const items = actionsRadiales(S, i);
-  // Seulement « Infos » : inutile d'ouvrir un cercle.
-  if (items.length === 1) { choisirCase(i); return; }
+  // Toujours le menu rond (jamais le panneau d'info auto) — demande utilisateur.
+  if (items.length === 0) return;
   const r = $('#wf-carte').getBoundingClientRect();
   const x = Math.max(130, Math.min(r.width - 130, e.clientX - r.left));
   const y = Math.max(130, Math.min(r.height - 150, e.clientY - r.top));
@@ -362,7 +362,7 @@ function dessinerRadial() {
   const el = $('#wf-radial');
   const items = radial.pile[radial.pile.length - 1];
   const n = items.length;
-  const R = n <= 5 ? 74 : n <= 8 ? 92 : 112;
+  const R = n <= 5 ? 92 : n <= 8 ? 114 : 138;
   const p = S.carte.proprio[radial.i] >= 0 ? S.pays.get(S.carte.proprio[radial.i]) : null;
   const titre = `${esc(nomCase(S, radial.i))}${p ? ` · ${esc(p.nom)}` : ''}`;
   el.style.left = radial.x + 'px';

@@ -11,7 +11,7 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
-  font-size: 14px;
+  font-size: 16px;
 }
 button, input, select, textarea { font: inherit; color: inherit; }
 code { background: var(--surface2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 12px; }
@@ -338,14 +338,14 @@ body.wf-panneau-ouvert.wf-panneau-large .wf-toasts { right: 696px; }
    Composants
    ══════════════════════════════════════════════════════════════════ */
 .wf-btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 8px 14px;
-  background: var(--accent); color: #fff; border: 1px solid transparent; border-radius: 8px;
-  font-weight: 600; font-size: 13.5px; cursor: pointer; text-decoration: none; transition: filter .15s, background .15s;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 18px;
+  background: var(--accent); color: #fff; border: 1px solid transparent; border-radius: 9px;
+  font-weight: 600; font-size: 15px; cursor: pointer; text-decoration: none; transition: filter .15s, background .15s;
   white-space: nowrap;
 }
 .wf-btn:hover { filter: brightness(.93); }
 .wf-btn:disabled { opacity: .45; cursor: not-allowed; filter: none; }
-.wf-btn.petit { padding: 5px 10px; font-size: 12.5px; border-radius: 7px; }
+.wf-btn.petit { padding: 8px 14px; font-size: 14px; border-radius: 8px; }
 .wf-btn.secondaire { background: var(--surface2); color: var(--text); border-color: var(--panel-border); }
 .wf-btn.secondaire:hover { background: var(--sidebar-hover); color: var(--accent); filter: none; }
 .wf-btn.danger { background: var(--danger); }
@@ -354,8 +354,8 @@ body.wf-panneau-ouvert.wf-panneau-large .wf-toasts { right: 696px; }
 .wf-btn .wf-cout { gap: 6px; }
 .wf-btn .wf-cout-r { background: rgba(255,255,255,.2); color: inherit; }
 .wf-btn-ic {
-  width: 32px; height: 32px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--panel-border); border-radius: 8px; background: var(--surface); color: var(--text-dim); cursor: pointer;
+  width: 40px; height: 40px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--panel-border); border-radius: 9px; background: var(--surface); color: var(--text-dim); cursor: pointer; font-size: 16px;
 }
 .wf-btn-ic:hover { color: var(--accent); background: var(--sidebar-hover); }
 .wf-btn-ic.danger:hover { color: var(--danger); background: rgba(220,38,38,.08); }
@@ -390,7 +390,9 @@ body.wf-panneau-ouvert.wf-panneau-large .wf-toasts { right: 696px; }
 .wf-barre.anim div { width: 40%; animation: wf-charge 1.2s ease-in-out infinite; }
 
 .wf-drapeau {
-  width: var(--t); height: var(--t); border-radius: 50%; background: var(--pc); flex-shrink: 0;
+  --t: 22px;
+  width: var(--t); height: var(--t); min-width: var(--t); aspect-ratio: 1; flex: 0 0 auto; box-sizing: border-box;
+  border-radius: 50%; background: var(--pc);
   display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
   box-shadow: 0 0 0 2px var(--surface), 0 0 0 3px color-mix(in srgb, var(--pc) 60%, transparent);
 }
@@ -800,8 +802,8 @@ body[data-mode="dev"] .wf-apps-vex, body[data-mode="dev"] .wf-lien-vex { display
   box-shadow: 0 6px 18px rgba(0, 0, 0, .28);
   transition: transform .18s cubic-bezier(.2, .9, .3, 1.3), background .12s, border-color .12s, opacity .12s;
 }
-.wf-rad-btn { width: 50px; height: 50px; transform: translate(-50%, -50%) translate(var(--dx), var(--dy)); }
-.wf-rad-btn .ico { width: 21px; height: 21px; background: var(--accent); }
+.wf-rad-btn { width: 62px; height: 62px; transform: translate(-50%, -50%) translate(var(--dx), var(--dy)); }
+.wf-rad-btn .ico { width: 27px; height: 27px; background: var(--accent); }
 .wf-rad-btn:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); transform: translate(-50%, -50%) translate(var(--dx), var(--dy)) scale(1.12); }
 .wf-rad-btn:hover:not(:disabled) .ico { background: #fff; }
 .wf-rad-btn.groupe::after { content: ''; position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); }

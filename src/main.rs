@@ -135,8 +135,8 @@ impl Default for Config {
             admin_cle_publique: String::new(),
             admins: Vec::new(),
             invites: true,
-            carte_largeur: 128,
-            carte_hauteur: 80,
+            carte_largeur: 384,
+            carte_hauteur: 240,
             graine: 0,
             vitesse: 1.0,
             protection_heures: 2.0,
@@ -273,7 +273,7 @@ fn charger_monde(cfg: &Config, racine: &Path) -> monde::Monde {
     }
     let graine = graine_carte(cfg);
     println!("[monde] generation d'une carte {}x{} (graine {}).", cfg.carte_largeur, cfg.carte_hauteur, graine);
-    monde::Monde::generer(cfg.carte_largeur.clamp(30, 200), cfg.carte_hauteur.clamp(20, 140), graine)
+    monde::Monde::generer(cfg.carte_largeur.clamp(30, 600), cfg.carte_hauteur.clamp(20, 400), graine)
 }
 
 /// Graine de config.json, ou une graine au hasard si elle vaut 0.

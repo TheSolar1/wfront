@@ -365,7 +365,7 @@ impl Monde {
 
     /// Zone morte d'un trou noir : plus personne ne peut y vivre ni la prendre.
     pub fn zone_morte(&self, i: usize) -> bool {
-        self.cases[i].irradiee > self.temps + 1.0e8
+        self.cases[i].irradiee > self.temps
     }
 
     pub fn est_cote(&self, i: usize) -> bool {

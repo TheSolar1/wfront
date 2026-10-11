@@ -268,6 +268,7 @@ pub const PRODUITS: &[ProduitDef] = &[
     p("antimatiere", "Antimatière", 7, &[("piege_antimatiere", 2.0), ("reacteur_fusion", 1.0)], 1.0, 400.0, "circle-half-stroke", "Un gramme vaut une bombe atomique."),
     p("moteur_antimatiere", "Moteur à antimatière", 7, &[("antimatiere", 2.0), ("confinement", 1.0)], 1.0, 400.0, "rocket", "Propulsion interstellaire."),
     p("bombe_antimatiere", "Bombe à antimatière", 7, &[("antimatiere", 3.0), ("confinement", 1.0), ("guidage", 1.0)], 1.0, 420.0, "explosion", "Annihilation totale dans un rayon de 3 cases : la terre redevient neutre (même la vôtre) et le centre se creuse en un cratère que la mer envahit."),
+    p("generateur_point_zero", "Générateur de point zéro", 7, &[("distorseur", 1.0), ("matiere_exotique", 2.0), ("guidage", 1.0)], 1.0, 440.0, "mountain", "Bouleverse le relief dans un rayon de 3 cases : la zone est rasée (plus aucun propriétaire), des montagnes surgissent et de nouveaux gisements de minerai légendaire et rare apparaissent. Sans irradiation."),
     p("bouclier_energie", "Bouclier d'énergie", 7, &[("reacteur_fusion", 1.0), ("metamateriau", 4.0), ("ordinateur_quantique", 1.0)], 1.0, 380.0, "shield-heart", "Champ de force."),
     p("ia_superieure", "IA supérieure", 7, &[("ordinateur_quantique", 2.0), ("nanomachines", 4.0)], 1.0, 400.0, "brain", "Pense plus vite que tous les humains réunis."),
     p("noyau_superlourd", "Noyau superlourd", 7, &[("Lv", 1.0), ("Mc", 1.0), ("Nh", 1.0), ("Rg", 1.0), ("Ds", 1.0)], 1.0, 300.0, "atom", "Assemblage d'éléments éphémères : à fabriquer vite."),

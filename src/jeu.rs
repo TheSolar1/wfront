@@ -382,12 +382,12 @@ fn avaler(m: &mut Monde, centre: usize, r: i64) {
         m.armees.retain(|_, a| a.case != v);
         let c = &mut m.cases[v];
         let ancien = c.proprio.take();
-        let deja = c.terrain == T_NEANT && ancien.is_none() && c.bat.is_none() && c.irradiee > m.temps + 1.0e8;
+        let deja = c.terrain == T_NEANT && ancien.is_none() && c.bat.is_none() && c.irradiee > m.temps;
         c.bat = None;
         c.niv = 0;
         c.terrain = T_NEANT;
         c.depot = D_AUCUN;
-        c.irradiee = m.temps + 1.0e9;
+        c.irradiee = m.temps + 3600.0;
         if let Some(o) = ancien {
             if let Some(p) = m.pays.get_mut(&o) {
                 p.chantiers.retain(|x| x.case != v);
@@ -1422,14 +1422,16 @@ fn fabriquer(p: &mut Pays, b: &Bilan, dt: f64) -> Vec<String> {
 /// illimitee, impossible a intercepter).
 fn arme_speciale(m: &mut Monde, pid: u32, cmd: &Value, regles: &Regles) -> Result<String, String> {
     let objet = s(cmd, "objet").to_string();
-    if !matches!(objet.as_str(), "bombe_trou_noir" | "bombe_antimatiere") {
+    if !matches!(objet.as_str(), "bombe_trou_noir" | "bombe_antimatiere" | "generateur_point_zero") {
         return Err("Arme inconnue.".into());
     }
     let cible = u(cmd, "cible").ok_or("Cible manquante.")? as usize;
     if cible >= m.cases.len() {
         return Err("Cible invalide.".into());
     }
-    if !m.cases[cible].proprio.map(|o| hostile(m, pid, o)).unwrap_or(false) {
+    // Le generateur de point zero peut viser n'importe quelle case (meme la votre) ;
+    // les autres armes speciales exigent une nation ennemie en guerre.
+    if objet != "generateur_point_zero" && !m.cases[cible].proprio.map(|o| hostile(m, pid, o)).unwrap_or(false) {
         return Err("La cible doit appartenir à une nation en guerre avec vous.".into());
     }
     if fab::qte(&m.pays[&pid].stock, &objet) < 1.0 {
@@ -1481,19 +1483,27 @@ pub const RAYON_CRATERE: i64 = 1;
 /// Impact d'une bombe a trou noir ou a antimatiere.
 fn frappe_speciale(m: &mut Monde, pid: u32, genre: &str, cible: usize) {
     let trou_noir = genre == "bombe_trou_noir";
+    let point_zero = genre == "generateur_point_zero";
     let zone: Vec<(usize, f64)> = m.rayon(cible, 3).into_iter().map(|v| (v, if trou_noir { 0.98 } else { 0.9 })).collect();
     let defenseur = m.cases[cible].proprio;
     let morts = pertes_frappe(m, &zone);
+    let mut rng = rand::thread_rng();
     for &(v, _) in &zone {
         m.armees.retain(|_, a| a.case != v);
         let c = &mut m.cases[v];
         c.bat = None;
         c.niv = 0;
-        // Les deux armes prennent toute la zone, meme au tireur.
+        // Toutes ces armes prennent la zone, meme au tireur (plus de proprietaire).
         let ancien = c.proprio.take();
-        if trou_noir {
+        if point_zero {
+            // Bombe a point zero : souleve des montagnes et fait jaillir de
+            // nouveaux gisements de minerai ; aucune irradiation.
+            c.terrain = T_MONTAGNE;
+            // Chaque case touchee recoit un gisement (legendaire ou rare).
+            c.depot = if rng.gen_range(0..100) < 30 { D_METEORITE } else { D_TERRES_RARES };
+        } else if trou_noir {
             // Zone morte : plus personne, plus rien ne s'y construit.
-            c.irradiee = m.temps + 1.0e9;
+            c.irradiee = m.temps + 3600.0;
         } else {
             c.irradiee = m.temps + 1200.0;
         }
@@ -1512,7 +1522,7 @@ fn frappe_speciale(m: &mut Monde, pid: u32, genre: &str, cible: usize) {
         m.trous_noirs.push(TrouNoir { id, case: cible, rayon: 3.0 });
     }
     // Antimatiere : l'annihilation creuse un cratere au centre, que l'eau envahit.
-    if !trou_noir {
+    if !trou_noir && !point_zero {
         for v in m.rayon(cible, RAYON_CRATERE) {
             m.cases[v].terrain = T_MER;
             m.cases[v].depot = D_AUCUN;
@@ -1524,10 +1534,10 @@ fn frappe_speciale(m: &mut Monde, pid: u32, genre: &str, cible: usize) {
     for o in sans_capitale {
         relocaliser_capitale(m, o);
     }
-    m.effets.push(Effet { genre: if trou_noir { "trou_noir" } else { "antimatiere" }.into(), case: cible, rayon: 3 });
+    m.effets.push(Effet { genre: if trou_noir { "trou_noir" } else if point_zero { "antimatiere" } else { "antimatiere" }.into(), case: cible, rayon: 3 });
     let nom_att = m.nom_pays(pid);
     let cible_nom = defenseur.map(|d| m.nom_pays(d)).unwrap_or_else(|| "une zone neutre".into());
-    let quoi = if trou_noir { "UN TROU NOIR A AVALÉ" } else { "ANNIHILATION : l'antimatière a frappé" };
+    let quoi = if trou_noir { "UN TROU NOIR A AVALÉ" } else if point_zero { "LE GÉNÉRATEUR DE POINT ZÉRO a bouleversé" } else { "ANNIHILATION : l'antimatière a frappé" };
     m.evenement(None, "nucleaire", format!("{} {} (tiré par {}) : {} milliers de morts.", quoi, cible_nom, nom_att, morts.round()), Some(cible));
 }
 
@@ -2179,7 +2189,7 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
         let cible = mv.cible;
         let nucleaire = mv.genre == "missile_nucleaire";
         let defenseur = m.cases[cible].proprio;
-        if mv.genre == "bombe_trou_noir" || mv.genre == "bombe_antimatiere" {
+        if mv.genre == "bombe_trou_noir" || mv.genre == "bombe_antimatiere" || mv.genre == "generateur_point_zero" {
             frappe_speciale(m, pid, &mv.genre, cible);
             continue;
         }

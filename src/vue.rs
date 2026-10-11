@@ -45,7 +45,7 @@ pub fn visions(m: &Monde, bl: &HashMap<u32, Bilan>) -> Visions {
             v[k] = true;
         }
         if c.bat.as_deref() == Some("radar") && c.irradiee <= m.temps {
-            let rr = 3 + c.niv as i64;
+            let rr = 10 * (c.niv as i64).max(1);
             let zone = m.rayon(i, rr);
             for &k in &zone {
                 v[k] = true;
