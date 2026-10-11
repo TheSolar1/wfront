@@ -482,6 +482,17 @@ function blocArsenal(S, i) {
       </div>`);
     }
   }
+  // Armes non conventionnelles (antimatière, trou noir, générateur de point zéro) : en stock, tirées depuis ce silo.
+  for (const o of ['bombe_antimatiere', 'bombe_trou_noir', 'generateur_point_zero']) {
+    const n = possede(S, o);
+    if (n < 1) continue;
+    const ic = o === 'bombe_trou_noir' ? 'circle' : o === 'generateur_point_zero' ? 'mountain' : 'explosion';
+    lignes.push(`<div class="wf-menu-item" title="Arme non conventionnelle · portée illimitée">
+      <span class="wf-bat-ic">${ico(ic)}</span>
+      <div class="wf-ligne-corps"><b>${esc(nomObjet(S, o))}</b><small>${fmt(n)} en stock · portée illimitée</small></div>
+      <button class="wf-btn petit danger" data-act="ordre_special" data-objet="${o}">${ico('crosshairs')} Lancer</button>
+    </div>`);
+  }
   const verrous = S.defs.unites.filter(u => u.batiment === 'silo' && u.tech && !aTech(S, u.tech))
     .map(u => `${esc(u.nom)} : recherchez « ${esc(nomTech(S, u.tech))} »`);
   return `<div class="wf-menu-titre">${ico('rocket')} Missiles en stock</div>
@@ -1568,6 +1579,21 @@ export function actionsRadiales(S, i) {
         const c = coutBatiment(d, niv + 1, m.mods, m.spe);
         const exige = manqueProduit(S, d);
         items.push({ ico: 'arrow-up', label: `Améliorer (niveau ${niv + 1})`, info: exige || coutTexte(S, c), act: 'ameliorer', data: { case: i }, off: !peutPayer(S, c) || !!exige });
+      }
+      // Silo : tirer missiles ET armes non conventionnelles directement depuis le menu rond.
+      if (b === 'silo') {
+        const tirs = [];
+        for (const a of S.armees.filter(x => x.proprio === m.id && x.case === i && x.dom === 'missile')) {
+          for (const [id, nn] of Object.entries(a.unites || {})) {
+            const u = uniDef(S, id);
+            if (u && nn) tirs.push({ ico: u.icone, label: `Tirer : ${u.nom}`, info: `${fmt(nn)} en stock`, act: 'ordre', data: { type: 'missile', genre: id, armee: a.id }, danger: id === 'missile_nucleaire' });
+          }
+        }
+        for (const o of ['bombe_antimatiere', 'bombe_trou_noir', 'generateur_point_zero']) {
+          const nn = possede(S, o);
+          if (nn >= 1) tirs.push({ ico: o === 'bombe_trou_noir' ? 'circle' : o === 'generateur_point_zero' ? 'mountain' : 'explosion', label: `Lancer : ${nomObjet(S, o)}`, info: `${fmt(nn)} en stock`, act: 'ordre_special', data: { objet: o }, danger: true });
+        }
+        if (tirs.length) items.push({ ico: 'crosshairs', label: 'Tirer / Lancer', sous: tirs, danger: true });
       }
       items.push({ ico: 'sliders', label: `Gérer : ${d?.nom || b}`, info: 'Production, recherche, détails', act: 'infos_case', data: { case: i } });
       if (b !== 'capitale') items.push({ ico: 'trash', label: 'Démolir', act: 'demolir', data: { case: i }, danger: true });
