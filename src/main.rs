@@ -167,7 +167,7 @@ struct Identite {
 
 struct Client {
     user_id: i64,
-    tx: mpsc::UnboundedSender<String>,
+    tx: mpsc::Sender<String>,
     suivi: vue::Suivi,
 }
 
@@ -181,6 +181,8 @@ struct App {
     reseau: reseau::Reseau,
     regles: jeu::Regles,
     admin: admin::Admin,
+    /// Anti-abus : dernière création de session invité par IP (timestamp).
+    invites: Mutex<HashMap<String, i64>>,
 }
 
 type Partage = Arc<App>;
@@ -343,6 +345,7 @@ async fn main() {
         reseau: reseau::Reseau::charger(racine.join("data").join("sessions.json")),
         regles,
         admin: admin::Admin::charger(racine.join("data")),
+        invites: Mutex::new(HashMap::new()),
     });
     if cfg.admin_cle_publique.trim().is_empty() {
         println!("[admin] pas de admin_cle_publique (fichier .pem) : utilisez le code de recuperation ou une cle d'acces.");
@@ -499,7 +502,8 @@ fn boucle(app: &Partage, dt: f64, avec_publics: bool) {
     let publics = vue::publics(&m, &bl);
     {
         let mut clients = app.clients.lock().unwrap();
-        for c in clients.values_mut() {
+        let mut morts = Vec::new();
+        for (cid, c) in clients.iter_mut() {
             let pid = jeu::pays_du_joueur(&m, c.user_id);
             let ctx = vue::Contexte {
                 m: &m,
@@ -508,7 +512,13 @@ fn boucle(app: &Partage, dt: f64, avec_publics: bool) {
                 publics: if avec_publics || !c.suivi.premier { Some(&publics) } else { None },
             };
             let msg = vue::etat(&ctx, pid, &mut c.suivi);
-            let _ = c.tx.send(msg);
+            // File pleine (client trop lent) ou fermée : on le déconnecte.
+            if c.tx.try_send(msg).is_err() {
+                morts.push(*cid);
+            }
+        }
+        for cid in morts {
+            clients.remove(&cid);
         }
     }
     m.effets.clear();
@@ -928,7 +938,7 @@ struct InviteParams {
 }
 
 /// Jouer sans compte VEX : un pseudo suffit (session « invite »).
-async fn invite_entrer(State(app): State<Partage>, headers: HeaderMap, Query(q): Query<InviteParams>) -> Response {
+async fn invite_entrer(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Query(q): Query<InviteParams>) -> Response {
     if app.cfg.auth != "reseau" || !app.cfg.invites {
         return Redirect::to(&url_connexion(&app)).into_response();
     }
@@ -936,6 +946,19 @@ async fn invite_entrer(State(app): State<Partage>, headers: HeaderMap, Query(q):
     let nom = nom.trim().to_string();
     if nom.chars().count() < 2 {
         return Redirect::to(&format!("{}?erreur={}", chemin(&app, "/connexion"), reseau::encoder("Choisissez un pseudo d'au moins 2 caractères."))).into_response();
+    }
+    // Anti-abus : au plus une session invité toutes les 15 s par adresse IP
+    // (sinon un script pourrait créer des sessions à l'infini et gonfler sessions.json).
+    {
+        let t = chrono::Utc::now().timestamp();
+        let ip = ip_client(&app, &headers, addr);
+        let mut inv = app.invites.lock().unwrap();
+        inv.retain(|_, x| t - *x < 300);
+        if inv.get(&ip).map(|x| t - *x < 15).unwrap_or(false) {
+            return Redirect::to(&format!("{}?erreur={}", chemin(&app, "/connexion"),
+                reseau::encoder("Trop de connexions invité depuis cette adresse ; réessayez dans un instant."))).into_response();
+        }
+        inv.insert(ip, t);
     }
     let noeud = reseau::normaliser_noeud(&app.cfg.noeud_par_defaut).unwrap_or_default();
     let jeton = app.reseau.session_invite(&format!("{} (invité)", nom), q.theme == "dark", &noeud);
@@ -1222,6 +1245,24 @@ async fn ws(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Response {
+    // Anti-CSWSH : si le navigateur envoie un Origin, son hôte doit correspondre
+    // à celui du site (bloque les connexions WebSocket depuis un autre site).
+    // Compatible reverse-proxy : on accepte Host, X-Forwarded-Host ou l'URL publique.
+    if let Some(orig) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        let hote_orig = orig.split("://").nth(1).unwrap_or("").trim_end_matches('/').to_ascii_lowercase();
+        let mut hotes_ok: Vec<String> = Vec::new();
+        for h in [header::HOST.as_str(), "x-forwarded-host"] {
+            if let Some(v) = headers.get(h).and_then(|v| v.to_str().ok()) {
+                hotes_ok.push(v.trim().trim_end_matches('/').to_ascii_lowercase());
+            }
+        }
+        if let Some(h) = app.cfg.url_publique.split("://").nth(1) {
+            if !h.is_empty() { hotes_ok.push(h.trim_end_matches('/').to_ascii_lowercase()); }
+        }
+        if !hote_orig.is_empty() && !hotes_ok.is_empty() && !hotes_ok.iter().any(|h| h == &hote_orig) {
+            return (StatusCode::FORBIDDEN, "Origine non autorisée").into_response();
+        }
+    }
     match authentifier(&app, &headers, addr).await {
         Some(id) => ws.on_upgrade(move |s| client(app, s, id)),
         None => (StatusCode::UNAUTHORIZED, "Session VEX invalide ou expiree").into_response(),
@@ -1230,20 +1271,22 @@ async fn ws(
 
 async fn client(app: Partage, socket: WebSocket, id: Identite) {
     let (mut envoi, mut reception) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    // File d'envoi BORNÉE (128 messages) : un client trop lent est coupé au lieu
+    // de faire grossir la mémoire du serveur indéfiniment.
+    let (tx, mut rx) = mpsc::channel::<String>(128);
     let cid = app.prochain_client.fetch_add(1, Ordering::Relaxed);
     let admin = id.privilege <= app.cfg.admin_privilege_max;
 
     {
         let m = app.monde.lock().unwrap();
-        let _ = tx.send(vue::init(&m, &id.nom, admin, app.cfg.vitesse, &app.cfg.vex_url));
+        let _ = tx.try_send(vue::init(&m, &id.nom, admin, app.cfg.vitesse, &app.cfg.vex_url));
         let bl = jeu::bilans(&m);
         let vis = vue::visions(&m, &bl);
         let publics = vue::publics(&m, &bl);
         let mut suivi = vue::Suivi::default();
         let pid = jeu::pays_du_joueur(&m, id.user_id);
         let ctx = vue::Contexte { m: &m, bl: &bl, vis: &vis, publics: Some(&publics) };
-        let _ = tx.send(vue::etat(&ctx, pid, &mut suivi));
+        let _ = tx.try_send(vue::etat(&ctx, pid, &mut suivi));
         app.clients.lock().unwrap().insert(cid, Client { user_id: id.user_id, tx: tx.clone(), suivi });
     }
 
@@ -1255,11 +1298,22 @@ async fn client(app: Partage, socket: WebSocket, id: Identite) {
         }
     });
 
+    // Anti-spam : au plus ~25 commandes par seconde et par joueur.
+    let mut fenetre = std::time::Instant::now();
+    let mut compte = 0u32;
     while let Some(Ok(msg)) = reception.next().await {
         match msg {
             Message::Text(t) => {
                 if t.len() > 8192 {
                     continue;
+                }
+                if fenetre.elapsed().as_secs_f64() >= 1.0 {
+                    fenetre = std::time::Instant::now();
+                    compte = 0;
+                }
+                compte += 1;
+                if compte > 25 {
+                    continue; // débit trop élevé : commande ignorée
                 }
                 let Ok(cmd) = serde_json::from_str::<Value>(&t) else { continue };
                 traiter(&app, cid, &id, admin, &cmd, &tx);
@@ -1272,10 +1326,10 @@ async fn client(app: Partage, socket: WebSocket, id: Identite) {
     ecrivain.abort();
 }
 
-fn traiter(app: &Partage, cid: u64, id: &Identite, admin: bool, cmd: &Value, tx: &mpsc::UnboundedSender<String>) {
+fn traiter(app: &Partage, cid: u64, id: &Identite, admin: bool, cmd: &Value, tx: &mpsc::Sender<String>) {
     let req = cmd.get("req").cloned().unwrap_or(Value::Null);
     if cmd.get("action").and_then(|a| a.as_str()) == Some("ping") {
-        let _ = tx.send(json!({"t": "pong", "req": req}).to_string());
+        let _ = tx.try_send(json!({"t": "pong", "req": req}).to_string());
         return;
     }
     let mut m = app.monde.lock().unwrap();
@@ -1285,7 +1339,7 @@ fn traiter(app: &Partage, cid: u64, id: &Identite, admin: bool, cmd: &Value, tx:
         Ok(s) => (true, s),
         Err(e) => (false, e),
     };
-    let _ = tx.send(json!({"t": "reponse", "req": req, "ok": ok, "msg": msg}).to_string());
+    let _ = tx.try_send(json!({"t": "reponse", "req": req, "ok": ok, "msg": msg}).to_string());
 
     // Vue a jour immediatement, sans attendre le prochain tick.
     let bl = jeu::bilans(&m);
@@ -1293,8 +1347,13 @@ fn traiter(app: &Partage, cid: u64, id: &Identite, admin: bool, cmd: &Value, tx:
     let publics = vue::publics(&m, &bl);
     let pid = jeu::pays_du_joueur(&m, id.user_id);
     let mut clients = app.clients.lock().unwrap();
-    if let Some(c) = clients.get_mut(&cid) {
+    let plein = if let Some(c) = clients.get_mut(&cid) {
         let ctx = vue::Contexte { m: &m, bl: &bl, vis: &vis, publics: Some(&publics) };
-        let _ = c.tx.send(vue::etat(&ctx, pid, &mut c.suivi));
+        c.tx.try_send(vue::etat(&ctx, pid, &mut c.suivi)).is_err()
+    } else {
+        false
+    };
+    if plein {
+        clients.remove(&cid); // client trop lent : déconnecté
     }
 }

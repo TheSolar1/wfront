@@ -39,6 +39,8 @@ pub struct Admin {
     /// l'administration sans fichier de cle, par exemple pour enregistrer
     /// une premiere cle d'acces.
     code: Mutex<Option<String>>,
+    /// Nombre d'essais ratés du code de récupération (anti brute-force).
+    erreurs_code: Mutex<u32>,
 }
 
 fn maintenant() -> i64 {
@@ -77,6 +79,7 @@ impl Admin {
             jetons: Mutex::new(jetons),
             cles: Mutex::new(cles),
             code: Mutex::new(None),
+            erreurs_code: Mutex::new(0),
         };
         a.nouveau_code();
         a
@@ -105,8 +108,19 @@ impl Admin {
         let bon = self.code.lock().unwrap().clone().ok_or("Aucun code actif : redémarrez le serveur.")?;
         let saisi: String = code.chars().filter(|c| c.is_ascii_digit()).collect();
         if saisi != bon.replace('-', "") {
+            // Anti brute-force : apres 5 essais rates, on tire un NOUVEAU code
+            // (les tentatives precedentes deviennent inutiles) et on remet le compteur a zero.
+            let mut e = self.erreurs_code.lock().unwrap();
+            *e += 1;
+            if *e >= 5 {
+                *e = 0;
+                drop(e);
+                self.nouveau_code();
+                return Err("Trop d'essais : un nouveau code a été généré (voir data/admin_code.txt sur le serveur).".into());
+            }
             return Err("Code incorrect.".into());
         }
+        *self.erreurs_code.lock().unwrap() = 0;
         self.nouveau_code();
         Ok(self.ouvrir(user_id))
     }
