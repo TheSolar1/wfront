@@ -1,72 +1,72 @@
 # WFront
 
-Jeu de stratégie et de guerre multijoueur dans le navigateur : on dirige un pays, on le fait grandir, on gère ses alliances… puis la guerre.
+A multiplayer strategy and war game in the browser: you lead a country, grow it, manage your alliances… then go to war.
 
-Serveur en **Rust** (Axum + Tokio, WebSocket temps réel), carte 3D en **Three.js**, connexion avec les **comptes VEX**. Même charte que VEX : couleurs, icônes, barre de navigation, cartes, thème clair/sombre de l'utilisateur.
+**Rust** server (Axum + Tokio, real-time WebSocket), 3D map in **Three.js**, sign-in with **VEX accounts**. Same look as VEX: colors, icons, navigation bar, cards, and the user's light/dark theme.
 
-## Contenu du jeu
+## Game content
 
 | | |
 |---|---|
-| **Carte** | Monde hexagonal généré au hasard (128 × 80 par défaut) : taille des continents, niveau de la mer, côtes et climat changent à chaque monde. Océans, côtes, plaines, forêts, collines, montagnes, déserts, toundra, cratères de météorite. Relief 3D, brouillard de guerre, trois modes (politique, terrain, ressources). |
-| **Ressources** | Crédits, nourriture, métal, pétrole, uranium, terres rares, plus électricité, population, influence et recherche. Chaque région a ses gisements. |
-| **Troupes (façon OpenFront)** | Une réserve de troupes qui se remplit toute seule (maximum selon le territoire, les villes, la capitale, les casernes). **Clic droit** sur une case : on y envoie une part réglable des troupes, qui avancent case par case vers elle (terres neutres : le pays s'agrandit ; ennemi en guerre : invasion contre son relief, ses forts et ses troupes ; côte lointaine : débarquement depuis un chantier naval). **Clic gauche** : construire. |
-| **Minerais et fabrication** | 4 minerais (commun, rare, radioactif, légendaire), extraits par les carrières et les mines. La raffinerie en tire le métal, les terres rares, l'uranium, ou n'importe lequel des **118 éléments** du tableau périodique (les légendaires se désintègrent vite). La fabrique assemble **105 produits** sur 8 niveaux, de l'acier au **trou noir**. |
-| **Bâtiments** | 29 bâtiments (ville, fermes, mines, puits, centrales thermique/solaire/nucléaire, industrie, laboratoires, entrepôts, banque, hôpital, caserne, usine de blindés, base aérienne, chantier naval, silo, batterie sol-air, fortifications, radar…), 5 niveaux (8 avec « Grands travaux »). |
-| **Technologies** | 48 technologies en 4 branches (militaire, économie, diplomatie, industrie) qui se croisent. File de recherche. |
-| **Unités** | 17 unités : infanterie, forces spéciales (furtives), blindés, chars, artillerie, DCA mobile, chasseurs, hélicoptères, bombardiers, drones, frégates, destroyers, sous-marins (furtifs), porte-avions, missiles de croisière, balistiques, nucléaires (puissance selon la matière fissile embarquée et les explosifs ; pertes selon la densité de population), bombes à antimatière et à trou noir. |
-| **Guerre en temps réel** | Déplacements avec recherche de chemin, assauts, bonus de relief et de fortifications, bombardement à distance, raids aériens avec interception (batteries, DCA, chasse ennemie), missiles interceptables, frappe nucléaire (zone irradiée, alerte mondiale), capture de capitale et repli du gouvernement, opérations amphibies. |
-| **Diplomatie** | Guerre, paix, pactes de non-agression, aide en ressources, espionnage (sabotage, vol technologique, déstabilisation), protection des nouveaux joueurs. |
-| **Blocs** | Alliances façon OTAN : défense collective automatique, vision et radars partagés, trésor commun, canal de discussion privé, candidatures et invitations. |
-| **Marché mondial** | Prix communs à tous, qui montent à l'achat et baissent à la vente. |
-| **Classements** | Général, militaire, économie, territoire, technologie, population, diplomatie, victoires, blocs. |
-| **Social** | Journal (événements du pays et actualité mondiale), messagerie monde et bloc, notifications. |
+| **Map** | Randomly generated hexagonal world (128 × 80 by default): continent size, sea level, coasts and climate change with every world. Oceans, coasts, plains, forests, hills, mountains, deserts, tundra, meteorite craters. 3D relief, fog of war, three modes (political, terrain, resources). |
+| **Resources** | Credits, food, metal, oil, uranium, rare earths, plus electricity, population, influence and research. Each region has its own deposits. |
+| **Troops (OpenFront style)** | A troop pool that refills on its own (maximum depends on territory, cities, the capital, barracks). **Right-click** a tile: send an adjustable share of your troops, which advance tile by tile toward it (neutral land: the country expands; enemy at war: invasion against its terrain, forts and troops; distant coast: landing from a shipyard). **Left-click**: build. |
+| **Ores and crafting** | 4 ores (common, rare, radioactive, legendary), extracted by quarries and mines. The refinery turns them into metal, rare earths, uranium, or any of the **118 elements** of the periodic table (legendary ones decay quickly). The factory assembles **105 products** across 8 tiers, from steel to the **black hole**. |
+| **Buildings** | 29 buildings (city, farms, mines, wells, thermal/solar/nuclear plants, industry, labs, warehouses, bank, hospital, barracks, armor factory, air base, shipyard, silo, surface-to-air battery, fortifications, radar…), 5 levels (8 with "Great works"). |
+| **Technologies** | 48 technologies in 4 interlocking branches (military, economy, diplomacy, industry). Research queue. |
+| **Units** | 17 units: infantry, special forces (stealth), armored vehicles, tanks, artillery, mobile AA, fighters, helicopters, bombers, drones, frigates, destroyers, submarines (stealth), aircraft carriers, cruise, ballistic and nuclear missiles (yield depends on the fissile material and explosives loaded; casualties depend on population density), antimatter and black hole bombs. |
+| **Real-time war** | Pathfinding movement, assaults, terrain and fortification bonuses, ranged bombardment, air raids with interception (batteries, AA, enemy fighters), interceptable missiles, nuclear strikes (irradiated zone, global alert), capital capture and government relocation, amphibious operations. |
+| **Diplomacy** | War, peace, non-aggression pacts, resource aid, espionage (sabotage, tech theft, destabilization), protection for new players. |
+| **Blocs** | NATO-style alliances: automatic collective defense, shared vision and radars, common treasury, private chat channel, applications and invitations. |
+| **World market** | Prices shared by everyone, rising on purchases and falling on sales. |
+| **Rankings** | Overall, military, economy, territory, technology, population, diplomacy, victories, blocs. |
+| **Social** | Journal (country events and world news), world and bloc messaging, notifications. |
 
-Des nations jouées par l'ordinateur peuvent compléter la partie (`"bots"` dans `config.json`, 0 pour aucune).
+Computer-controlled nations can fill the game (`"bots"` in `config.json`, 0 for none).
 
-## Lancer en local (sans VEX)
+## Run locally (without VEX)
 
 ```bash
 cargo run --release
 ```
 
-Puis ouvrir http://127.0.0.1:8095. En **mode dev** (`"auth": "dev"`), n'importe quel pseudo ouvre une session ; après avoir déverrouillé l'administration (voir plus bas), `devTout()` dans la console du navigateur donne toutes les technologies, des ressources et un peu de chaque élément.
+Then open http://127.0.0.1:8095. In **dev mode** (`"auth": "dev"`), any nickname opens a session; after unlocking administration (see below), `devTout()` in the browser console gives all technologies, resources and a bit of every element.
 
-## Administration : clé privée
+## Administration: private key
 
-L'administration (annonce mondiale, suppression de nations, `devTout`) n'apparaît et ne fonctionne que pour le détenteur de la **clé d'administration** :
+Administration (world announcement, nation removal, `devTout`) only appears and works for the holder of the **admin key**:
 
-1. Créer une paire de clés Ed25519 : `openssl genpkey -algorithm ed25519 -out "wfront admin.pem"`.
-2. Mettre la clé publique (32 octets en base64 : `openssl pkey -in "wfront admin.pem" -pubout -outform DER | tail -c 32 | base64`) dans `admin_cle_publique` du `config.json`.
-3. Ouvrir `/admin` et choisir le fichier `.pem` : le navigateur signe un défi du serveur, la clé ne quitte jamais l'ordinateur. Le déverrouillage dure 12 h et ne vaut que pour le compte qui l'a obtenu.
+1. Create an Ed25519 key pair: `openssl genpkey -algorithm ed25519 -out "wfront admin.pem"`.
+2. Put the public key (32 bytes in base64: `openssl pkey -in "wfront admin.pem" -pubout -outform DER | tail -c 32 | base64`) in `admin_cle_publique` in `config.json`.
+3. Open `/admin` and choose the `.pem` file: the browser signs a server challenge, and the key never leaves the computer. Unlocking lasts 12 h and only applies to the account that obtained it.
 
-`cargo run -- --apercu` affiche la carte en texte, pratique pour choisir une `graine`.
+`cargo run -- --apercu` prints the map as text, handy for choosing a `graine` (seed).
 
-## Connexion : « Se connecter avec VEX » (mode `reseau`, par défaut)
+## Sign-in: "Sign in with VEX" (`reseau` mode, the default)
 
-Un joueur se connecte avec son compte de **n'importe quel nœud du réseau VEX** :
+A player signs in with their account from **any node of the VEX network**:
 
-1. Sur la page d'accueil, **Se connecter avec VEX** l'envoie directement sur le nœud par défaut (`noeud_par_defaut`). Sur `/connexion`, il peut indiquer un autre nœud.
-2. WFront récupère la clé publique Ed25519 du nœud (`/p2p/ping`) et vérifie qu'il figure dans l'annuaire du réseau (`annuaire_url`).
-3. Le joueur est envoyé sur `/p2p/sso` de son nœud. Il s'y connecte si besoin, puis clique sur **Autoriser**.
-4. Le nœud signe son identité (`user_id@node_id`, nom, thème) avec sa clé P2P et le renvoie sur `/auth/retour`.
-5. WFront vérifie la signature, puis ouvre sa propre session (cookie `wf_session`, 30 jours).
+1. On the home page, **Sign in with VEX** sends them straight to the default node (`noeud_par_defaut`). On `/connexion`, they can enter another node.
+2. WFront fetches the node's Ed25519 public key (`/p2p/ping`) and checks that it appears in the network directory (`annuaire_url`).
+3. The player is sent to `/p2p/sso` on their node. They log in there if needed, then click **Authorize**.
+4. The node signs their identity (`user_id@node_id`, name, theme) with its P2P key and sends them back to `/auth/retour`.
+5. WFront verifies the signature, then opens its own session (cookie `wf_session`, 30 days).
 
-Le mot de passe ne quitte jamais le nœud. Un nœud ne peut signer que pour ses propres comptes.
+The password never leaves the node. A node can only sign for its own accounts.
 
-**Côté VEX :** chaque nœud doit avoir la version de VEX qui contient `src/p2p/sso.rs` (route `/p2p/sso`) et le paramètre `?suite=` de `/login`. Un nœud plus ancien renvoie une erreur à l'étape 3.
+**On the VEX side:** every node must run the VEX version that contains `src/p2p/sso.rs` (route `/p2p/sso`) and the `?suite=` parameter of `/login`. An older node returns an error at step 3.
 
-Dans ce mode, WFront peut tourner n'importe où, même sur un autre domaine que VEX. Il faut que `url_publique` soit l'adresse que voient les joueurs (ex. `https://jeu.exemple.org`), car le nœud y renvoie le joueur. L'administration du jeu passe par la clé d'administration (voir plus haut).
+In this mode, WFront can run anywhere, even on a different domain from VEX. `url_publique` must be the address players see (e.g. `https://jeu.exemple.org`), because the node sends the player back there. Game administration goes through the admin key (see above).
 
-## Option : même serveur que VEX (mode `vex`, un seul nœud)
+## Option: same server as VEX (`vex` mode, a single node)
 
-WFront est un **processus séparé** avec son propre port. Il ne modifie jamais la base VEX : il lit seulement `loginc`, `login` et `pref` pour reconnaître la session.
+WFront is a **separate process** with its own port. It never modifies the VEX database: it only reads `loginc`, `login` and `pref` to recognize the session.
 
-### Pourquoi derrière le même Apache que VEX
+### Why behind the same Apache as VEX
 
-VEX enregistre l'IP de la session **telle que vue derrière Apache** (`127.0.0.1`), et son cookie `connexion_cookie` n'est envoyé qu'au même domaine. WFront doit donc être servi par le même Apache, sous un chemin (ex. `https://vex.hopto.org/wfront/`) : le cookie arrive, et l'IP vue par WFront (`127.0.0.1`) est la même que celle enregistrée par VEX.
+VEX records the session IP **as seen behind Apache** (`127.0.0.1`), and its `connexion_cookie` cookie is only sent to the same domain. WFront must therefore be served by the same Apache, under a path (e.g. `https://vex.hopto.org/wfront/`): the cookie arrives, and the IP WFront sees (`127.0.0.1`) is the same as the one VEX recorded.
 
-### 1. Compiler et configurer
+### 1. Build and configure
 
 ```bash
 cd ~/wfront
@@ -74,7 +74,7 @@ cargo build --release
 cp config.example.json config.json
 ```
 
-`config.json` :
+`config.json`:
 
 ```json
 {
@@ -88,10 +88,10 @@ cp config.example.json config.json
 }
 ```
 
-- `vex_url` vide : les liens vers VEX restent sur le même domaine (`/login/dashboard`, `/login`…).
-- `vex_db_fichier` : le `db.json` de VEX, relatif au dossier de WFront (mêmes identifiants MySQL).
-- `adresse: 127.0.0.1` : seul Apache peut joindre le jeu.
-- `proxy_de_confiance` doit rester à `false`, comme VEX qui compare l'IP brute du proxy.
+- `vex_url` empty: links to VEX stay on the same domain (`/login/dashboard`, `/login`…).
+- `vex_db_fichier`: VEX's `db.json`, relative to the WFront folder (same MySQL credentials).
+- `adresse: 127.0.0.1`: only Apache can reach the game.
+- `proxy_de_confiance` must stay `false`, like VEX which compares the proxy's raw IP.
 
 ### 2. Apache
 
@@ -99,7 +99,7 @@ cp config.example.json config.json
 sudo a2enmod proxy proxy_http proxy_wstunnel
 ```
 
-Dans le VirtualHost de VEX, **avant** les règles qui renvoient vers VEX :
+In VEX's VirtualHost, **before** the rules that forward to VEX:
 
 ```apache
 RedirectMatch ^/wfront$ /wfront/
@@ -112,9 +112,9 @@ ProxyPassReverse /wfront/    http://127.0.0.1:8095/
 sudo apachectl configtest && sudo systemctl reload apache2
 ```
 
-### 3. Démarrer / mettre à jour
+### 3. Start / update
 
-Même méthode que VEX : attendre que l'ancien processus soit vraiment arrêté avant de copier le binaire.
+Same method as VEX: wait until the old process has really stopped before copying the binary.
 
 ```bash
 cargo build --release
@@ -124,58 +124,58 @@ setsid nohup ./wfront >> wfront.out 2>&1 < /dev/null & disown
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8095/
 ```
 
-Le monde est sauvegardé toutes les 30 s, et aussi à l'arrêt (`kill` ou Ctrl+C). Seul un `kill -9` peut faire perdre les 30 dernières secondes.
+The world is saved every 30 s, and also on shutdown (`kill` or Ctrl+C). Only a `kill -9` can lose the last 30 seconds.
 
-### Session VEX
+### VEX session
 
-La session VEX dure une heure (`datecra` dans `loginc`). Une partie déjà ouverte continue, mais une reconnexion après expiration affiche « Session VEX expirée » avec un lien vers la connexion VEX.
+The VEX session lasts one hour (`datecra` in `loginc`). A game already open keeps going, but reconnecting after expiry shows "VEX session expired" with a link to the VEX login.
 
-## Réglages (`config.json`)
+## Settings (`config.json`)
 
-| Clé | Défaut | Rôle |
+| Key | Default | Purpose |
 |---|---|---|
-| `adresse`, `port` | `0.0.0.0`, `8095` | Écoute du serveur |
-| `vex_url` | `http://127.0.0.1:8080` | Adresse de VEX pour les liens et la connexion (vide = même domaine) |
-| `prefixe` | `""` | Chemin exposé par le proxy, pour les redirections |
-| `auth` | `reseau` | `reseau` = « Se connecter avec VEX » (tout nœud), `vex` = sessions d'un seul nœud lues dans sa base, `dev` = pseudo libre (tests locaux) |
-| `url_publique` | `""` | Adresse publique de WFront (mode reseau), sinon déduite de l'en-tête Host |
-| `annuaire_url` | `https://vex.hopto.org/neut/annuaire` | Seuls les nœuds de cet annuaire sont acceptés (vide = tout serveur VEX) |
-| `noeud_par_defaut` | `vex.hopto.org` | Pré-rempli sur la page de connexion |
-| `admin_cle_publique` | `""` | Clé publique de la clé d'administration (voir plus haut) |
-| `vex_db_fichier` / `vex_db` | — | Accès MySQL de VEX (chemin du `db.json`, ou identifiants en ligne) |
-| `session_duree_s` | `3600` | Même durée que VEX |
-| `verifier_ip`, `verifier_navigateur` | `true` | Mêmes contrôles que `verifier_session` de VEX |
-| `carte_largeur`, `carte_hauteur`, `graine` | `128`, `80`, `0` | Génération du monde (au premier lancement seulement). `graine` à 0 : carte tirée au hasard |
-| `vitesse` | `1.0` | Accélère tout le jeu (tests) |
-| `protection_heures` | `2` | Durée pendant laquelle un nouveau pays ne peut pas être attaqué |
-| `sauvegarde`, `intervalle_sauvegarde_s` | `data/monde.json`, `30` | Fichier du monde et fréquence d'enregistrement |
-| `bots` | `6` | Nations jouées par l'ordinateur (0 = aucune, 16 au maximum). Elles suivent les mêmes règles que les joueurs : elles se développent, annexent, recherchent, s'arment, répondent aux propositions de paix et attaquent parfois un voisin plus faible (jamais pendant sa protection). |
+| `adresse`, `port` | `0.0.0.0`, `8095` | Server listen address |
+| `vex_url` | `http://127.0.0.1:8080` | VEX address for links and sign-in (empty = same domain) |
+| `prefixe` | `""` | Path exposed by the proxy, for redirects |
+| `auth` | `reseau` | `reseau` = "Sign in with VEX" (any node), `vex` = sessions of a single node read from its database, `dev` = free nickname (local tests) |
+| `url_publique` | `""` | Public address of WFront (reseau mode), otherwise inferred from the Host header |
+| `annuaire_url` | `https://vex.hopto.org/neut/annuaire` | Only nodes in this directory are accepted (empty = any VEX server) |
+| `noeud_par_defaut` | `vex.hopto.org` | Pre-filled on the sign-in page |
+| `admin_cle_publique` | `""` | Public key of the admin key (see above) |
+| `vex_db_fichier` / `vex_db` | — | VEX MySQL access (path to `db.json`, or inline credentials) |
+| `session_duree_s` | `3600` | Same duration as VEX |
+| `verifier_ip`, `verifier_navigateur` | `true` | Same checks as VEX's `verifier_session` |
+| `carte_largeur`, `carte_hauteur`, `graine` | `128`, `80`, `0` | World generation (first launch only). `graine` at 0: random map |
+| `vitesse` | `1.0` | Speeds up the whole game (tests) |
+| `protection_heures` | `2` | How long a new country cannot be attacked |
+| `sauvegarde`, `intervalle_sauvegarde_s` | `data/monde.json`, `30` | World file and save frequency |
+| `bots` | `6` | Computer-controlled nations (0 = none, 16 max). They follow the same rules as players: they grow, annex, research, arm themselves, answer peace proposals and sometimes attack a weaker neighbor (never during its protection). |
 
-Pour repartir d'un monde neuf : arrêter le serveur, supprimer `data/monde.json`, relancer.
+To start from a fresh world: stop the server, delete `data/monde.json`, restart.
 
-## Organisation du code
+## Code layout
 
 ```
 src/
-  main.rs    serveur HTTP/WebSocket, configuration, session VEX, boucle de jeu, sauvegarde
-  defs.rs    tout le contenu : ressources, terrains, bâtiments, unités, technologies
-  monde.rs   état du monde, géométrie hexagonale, génération de la carte
-  jeu.rs     règles : économie, construction, recherche, déplacements, combats,
-             raids, missiles, diplomatie, blocs, marché, espionnage
-  front.rs   troupes et offensives façon OpenFront (clic droit)
-  fabrication.rs  minerais, 118 éléments, raffinerie, 105 recettes de fabrique
-  admin.rs   clé d'administration (défi signé Ed25519)
-  bots.rs    nations jouées par l'ordinateur
-  vue.rs     ce que chaque joueur voit (brouillard de guerre, données masquées)
+  main.rs    HTTP/WebSocket server, configuration, VEX session, game loop, saving
+  defs.rs    all the content: resources, terrains, buildings, units, technologies
+  monde.rs   world state, hexagonal geometry, map generation
+  jeu.rs     rules: economy, construction, research, movement, combat,
+             raids, missiles, diplomacy, blocs, market, espionage
+  front.rs   OpenFront-style troops and offensives (right-click)
+  fabrication.rs  ores, 118 elements, refinery, 105 factory recipes
+  admin.rs   admin key (Ed25519 signed challenge)
+  bots.rs    computer-controlled nations
+  vue.rs     what each player sees (fog of war, hidden data)
 static/
   accueil.html, jeu.html, dev.html
-  css/theme.css        copie à l'identique du thème VEX
-  css/wfront.css   styles du jeu (jetons de theme.css uniquement)
-  js/jeu.js            client : connexion, interface, ordres
-  js/carte.js          rendu 3D Three.js
-  js/panneaux.js       panneaux (pays, construction, armées, recherche…)
-  img/solid/           icônes VEX
-  vendor/              Three.js (servi localement, pas de CDN)
+  css/theme.css        exact copy of the VEX theme
+  css/wfront.css   game styles (theme.css tokens only)
+  js/jeu.js            client: connection, interface, orders
+  js/carte.js          Three.js 3D rendering
+  js/panneaux.js       panels (country, construction, armies, research…)
+  img/solid/           VEX icons
+  vendor/              Three.js (served locally, no CDN)
 ```
 
-Le serveur valide chaque action : le client n'envoie que des intentions (`construire`, `deplacer`, `guerre`…).
+The server validates every action: the client only sends intentions (`construire`, `deplacer`, `guerre`…).
