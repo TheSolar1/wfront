@@ -2,7 +2,7 @@
 
 A multiplayer strategy and war game in the browser: you lead a country, grow it, manage your alliances… then go to war.
 
-**Rust** server (Axum + Tokio, real-time WebSocket), 3D map in **Three.js**, sign-in with **VEX accounts**. Same look as VEX: colors, icons, navigation bar, cards, and the user's light/dark theme.
+**Rust** server (Axum + Tokio, real-time WebSocket), 3D map in **Three.js**. The game is **standalone**: players create a **WFront account** (nickname + password) or play as a guest. VEX accounts are only used for **testing between developers** (`reseau`, `vex` and `dev` modes below).
 
 ## Game content
 
@@ -24,13 +24,14 @@ A multiplayer strategy and war game in the browser: you lead a country, grow it,
 
 Computer-controlled nations can fill the game (`"bots"` in `config.json`, 0 for none).
 
-## Run locally (without VEX)
+## Run locally
 
 ```bash
+cp config.example.json config.json
 cargo run --release
 ```
 
-Then open http://127.0.0.1:8095. In **dev mode** (`"auth": "dev"`), any nickname opens a session; after unlocking administration (see below), `devTout()` in the browser console gives all technologies, resources and a bit of every element.
+Then open http://127.0.0.1:8095: create an account (or play without one) and you're in. In **dev mode** (`"auth": "dev"`), any nickname opens a session; after unlocking administration (see below), `devTout()` in the browser console gives all technologies, resources and a bit of every element.
 
 ## Administration: private key
 
@@ -42,7 +43,23 @@ Administration (world announcement, nation removal, `devTout`) only appears and 
 
 `cargo run -- --apercu` prints the map as text, handy for choosing a `graine` (seed).
 
-## Sign-in: "Sign in with VEX" (`reseau` mode, the default)
+## Player accounts (`comptes` mode, the default, for release)
+
+This is the mode used when the game is released. It needs nothing but WFront itself (no VEX, no database server):
+
+- **Create an account** (`/connexion#inscription`): a unique nickname (3 to 20 characters: letters, digits, `_`, `-`, `.`; not case-sensitive) and a password (8 characters minimum). No e-mail is asked.
+- **Sign in** (`/connexion`): nickname + password. After 10 failed attempts, an IP address is blocked for 15 minutes; at most 5 accounts can be created per IP and per hour.
+- **Play without an account** (`"invites": true`): a nickname is enough, the game is tied to the browser. When a guest then creates an account (or signs in), **their nation follows them**.
+- **My account** (`/compte`): light/dark theme (remembered on every device), password change (other devices are signed out), account deletion (the nation is deleted with it, its land becomes neutral).
+
+Passwords are stored as **Argon2id** hashes in `data/comptes.json`; sessions (30 days, `wf_session` cookie) are in `data/sessions.json`. Back up the `data/` folder together with the world. To make an account an administrator, put its nickname in `"admins"` in `config.json` (e.g. `"admins": ["clement"]`).
+
+There is no password recovery by e-mail yet: an administrator can delete a forgotten account's entry from `data/comptes.json` (server stopped) so the player can sign up again.
+
+## Testing between developers: "Sign in with VEX" (`reseau` mode)
+
+> Only for testing. Use `config.reseau.json` as a starting point. In this mode the VEX navigation bar (app grid, VEX account) is shown; it is hidden in `comptes` mode.
+
 
 A player signs in with their account from **any node of the VEX network**:
 
@@ -58,7 +75,7 @@ The password never leaves the node. A node can only sign for its own accounts.
 
 In this mode, WFront can run anywhere, even on a different domain from VEX. `url_publique` must be the address players see (e.g. `https://jeu.exemple.org`), because the node sends the player back there. Game administration goes through the admin key (see above).
 
-## Option: same server as VEX (`vex` mode, a single node)
+## Testing between developers: same server as VEX (`vex` mode, a single node)
 
 WFront is a **separate process** with its own port. It never modifies the VEX database: it only reads `loginc`, `login` and `pref` to recognize the session.
 
@@ -135,16 +152,18 @@ The VEX session lasts one hour (`datecra` in `loginc`). A game already open keep
 | Key | Default | Purpose |
 |---|---|---|
 | `adresse`, `port` | `0.0.0.0`, `8095` | Server listen address |
-| `vex_url` | `http://127.0.0.1:8080` | VEX address for links and sign-in (empty = same domain) |
+| `vex_url` | `""` | VEX address for links and sign-in (test modes only; empty = same domain) |
 | `prefixe` | `""` | Path exposed by the proxy, for redirects |
-| `auth` | `reseau` | `reseau` = "Sign in with VEX" (any node), `vex` = sessions of a single node read from its database, `dev` = free nickname (local tests) |
-| `url_publique` | `""` | Public address of WFront (reseau mode), otherwise inferred from the Host header |
-| `annuaire_url` | `https://vex.hopto.org/neut/annuaire` | Only nodes in this directory are accepted (empty = any VEX server) |
-| `noeud_par_defaut` | `vex.hopto.org` | Pre-filled on the sign-in page |
+| `auth` | `comptes` | `comptes` = WFront accounts (release). Test modes: `reseau` = "Sign in with VEX" (any node), `vex` = sessions of a single node read from its database, `dev` = free nickname (local tests) |
+| `invites` | `true` | Allow playing without an account (`comptes` and `reseau` modes) |
+| `admins` | `[]` | Administrator accounts: the nickname in `comptes` mode, `user_id@node_id` in `reseau` mode, the e-mail in `vex` mode |
+| `url_publique` | `""` | Public address of WFront (e.g. `https://jeu.exemple.org`), otherwise inferred from the Host header |
+| `annuaire_url` | `https://vex.hopto.org/neut/annuaire` | `reseau` mode: only nodes in this directory are accepted (empty = any VEX server) |
+| `noeud_par_defaut` | `vex.hopto.org` | `reseau` mode: pre-filled on the sign-in page |
 | `admin_cle_publique` | `""` | Public key of the admin key (see above) |
 | `vex_db_fichier` / `vex_db` | — | VEX MySQL access (path to `db.json`, or inline credentials) |
-| `session_duree_s` | `3600` | Same duration as VEX |
-| `verifier_ip`, `verifier_navigateur` | `true` | Same checks as VEX's `verifier_session` |
+| `session_duree_s` | `3600` | `vex` mode: same duration as VEX |
+| `verifier_ip`, `verifier_navigateur` | `true` | `vex` mode: same checks as VEX's `verifier_session` |
 | `carte_largeur`, `carte_hauteur`, `graine` | `128`, `80`, `0` | World generation (first launch only). `graine` at 0: random map |
 | `vitesse` | `1.0` | Speeds up the whole game (tests) |
 | `protection_heures` | `2` | How long a new country cannot be attacked |
@@ -157,7 +176,9 @@ To start from a fresh world: stop the server, delete `data/monde.json`, restart.
 
 ```
 src/
-  main.rs    HTTP/WebSocket server, configuration, VEX session, game loop, saving
+  main.rs    HTTP/WebSocket server, configuration, sign-in, game loop, saving
+  comptes.rs WFront accounts (nickname + Argon2id password)
+  reseau.rs  sessions, and "Sign in with VEX" (test mode)
   defs.rs    all the content: resources, terrains, buildings, units, technologies
   monde.rs   world state, hexagonal geometry, map generation
   jeu.rs     rules: economy, construction, research, movement, combat,
@@ -168,13 +189,14 @@ src/
   bots.rs    computer-controlled nations
   vue.rs     what each player sees (fog of war, hidden data)
 static/
-  accueil.html, jeu.html, dev.html
-  css/theme.css        exact copy of the VEX theme
+  accueil.html, jeu.html, entrer.html (sign in / sign up), compte.html (my account)
+  connexion.html, dev.html (test modes)
+  css/theme.css        theme tokens (light / dark)
   css/wfront.css   game styles (theme.css tokens only)
   js/jeu.js            client: connection, interface, orders
   js/carte.js          Three.js 3D rendering
   js/panneaux.js       panels (country, construction, armies, research…)
-  img/solid/           VEX icons
+  img/solid/           icons
   vendor/              Three.js (served locally, no CDN)
 ```
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════════════════
-# deploy-sur.sh — Déploiement MANUEL et sûr de WorldFront sur le Pi.
+# deploy-sur.sh — Déploiement MANUEL et sûr de WFront sur le Pi.
 #
 # Pensé pour le cas « 2 collaborateurs sur GitHub » : on NE déploie
 # JAMAIS automatiquement. On regarde d'abord qui a poussé quoi, on
@@ -9,16 +9,22 @@
 #
 # PAS de cron, PAS de pull automatique : tu lances ce script toi-même.
 #
-#   cd ~/worldfront
+#   cd ~/wfront
 #   ./deploy-sur.sh            # montre les nouveautés puis demande confirmation
 #   ./deploy-sur.sh --oui      # enchaîne sans la question (si tu as déjà vu)
+#
+# Ancien nom : si le dossier s'appelle encore ~/worldfront, renomme-le
+# une fois (mv ~/worldfront ~/wfront). L'ancien process « worldfront »
+# est arrêté automatiquement à la bascule.
 # ══════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-DIR="$HOME/worldfront"
+DIR="$HOME/wfront"
 PORT=8095
 BRANCHE=main
-BIN=worldfront
+BIN=wfront
+# Nom du binaire avant le renommage WorldFront -> WFront (arrêté à la bascule).
+ANCIEN_BIN=worldfront
 SAUVE="$DIR/.sauvegardes"
 HORO=$(date +%Y%m%d-%H%M%S)
 AUTO_OUI=0
@@ -76,7 +82,8 @@ echo "── 5. Bascule du binaire ───────────────
 # Évite le piège « Text file busy » : on arrête l'ancien process,
 # on attend sa sortie, puis on remplace le binaire.
 pkill -x "$BIN" 2>/dev/null || true
-for _ in $(seq 1 10); do pgrep -x "$BIN" >/dev/null || break; sleep 1; done
+pkill -x "$ANCIEN_BIN" 2>/dev/null || true
+for _ in $(seq 1 10); do pgrep -x "$BIN" >/dev/null || pgrep -x "$ANCIEN_BIN" >/dev/null || break; sleep 1; done
 cp -f target/release/"$BIN" "./$BIN"
 setsid nohup "./$BIN" > "$DIR/$BIN.out" 2>&1 < /dev/null &
 
@@ -88,7 +95,7 @@ for _ in $(seq 1 10); do
   sleep 1
 done
 if [ "$OK" = "1" ]; then
-  echo "✅ WorldFront déployé et répond 200 sur le port $PORT."
+  echo "✅ WFront déployé et répond 200 sur le port $PORT."
   echo "   (sauvegarde de l'ancien binaire : $SAUVE/$BIN.$HORO)"
 else
   echo "❌ Le nouveau site ne répond pas. RETOUR ARRIÈRE automatique…"

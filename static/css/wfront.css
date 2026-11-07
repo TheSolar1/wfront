@@ -786,11 +786,13 @@ body.wf-dev { min-height: 100vh; display: flex; align-items: center; justify-con
 .wf-resbar { min-height: 40px; }
 .wf-res { padding: 3px 8px; }
 
-/* Barre VEX dans WFront : logo WFront en couleur (celui de VEX est gris) ;
-   la grille d'applis et le compte VEX sont caches aux invites et en mode dev. */
+/* Barre du haut : logo WFront en couleur. En test VEX, la grille d'applis
+   et le compte VEX sont caches aux invites et en mode dev. */
 .nav-logo-flat-7844.wf-nav-logo { filter: none !important; width: 34px; height: 34px; display: block; }
 body[data-invite="1"] .wf-apps-vex, body[data-invite="1"] .wf-lien-vex,
 body[data-mode="dev"] .wf-apps-vex, body[data-mode="dev"] .wf-lien-vex { display: none !important; }
+/* « Mon compte » : seulement pour un compte WFront (pas un invite, pas le mode dev). */
+body[data-compte-wf="0"] .wf-lien-compte { display: none !important; }
 
 /* ── Menu radial (facon OpenFront) ─────────────────────────────── */
 .wf-radial { position: absolute; width: 0; height: 0; z-index: 40; pointer-events: none; }
@@ -852,3 +854,19 @@ body[data-mode="dev"] .wf-apps-vex, body[data-mode="dev"] .wf-lien-vex { display
 }
 @keyframes wf-reflet { from { background-position: 150% 0; } to { background-position: -100% 0; } }
 .wf-puce .wf-blason, .wf-fab-puce .wf-blason { margin-right: 4px; }
+
+/* ── Pages de compte (inscription, connexion, Mon compte) ──────── */
+body.wf-dev.wf-colonne { flex-direction: column; gap: 14px; }
+.wf-ok { position: relative; display: block; padding: 10px 12px 10px 36px; border-radius: 10px; line-height: 1.45; background: var(--alt); color: var(--accent); font-weight: 600; }
+.wf-ok > .ico:first-child { position: absolute; left: 12px; top: 12px; }
+.wf-entrer-onglets { display: flex; gap: 4px; background: var(--surface2); border: 1px solid var(--panel-border); border-radius: 10px; padding: 3px; }
+.wf-entrer-onglets a { flex: 1; text-align: center; padding: 8px 6px; border-radius: 7px; font-weight: 700; font-size: 13px; color: var(--text-dim); text-decoration: none; }
+.wf-entrer-onglets a:hover { color: var(--accent); background: var(--sidebar-hover); }
+.wf-entrer-onglets a.actif { background: var(--accent); color: #fff; }
+.wf-entrer-volet[hidden] { display: none !important; }
+.wf-compte-infos { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 14px; }
+.wf-compte-infos dt { color: var(--text-dim); }
+.wf-compte-infos dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.wf-dev-carte details summary { cursor: pointer; font-weight: 700; }
+.wf-dev-carte details[open] summary { margin-bottom: 10px; }
+.wf-liens-bas { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; }

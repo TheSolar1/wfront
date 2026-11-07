@@ -1,5 +1,6 @@
 // ══════════════════════════════════════════════════════════════════
-// reseau.rs — « Se connecter avec VEX » (n'importe quel nœud du reseau)
+// reseau.rs — Sessions WFront (cookie wf_session) et « Se connecter
+// avec VEX » (n'importe quel nœud du reseau, mode de test entre devs)
 //
 //   /auth/debut?noeud=vex.exemple.org
 //      -> GET {noeud}/p2p/ping : node_id + cle publique Ed25519 du nœud
@@ -30,10 +31,12 @@ const CACHE_ANNUAIRE: i64 = 600;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct SessionWf {
-    /// Identite reseau « user_id@node_id ».
+    /// Identite : « user_id@node_id » (VEX), « wf:pseudo » (compte WFront)
+    /// ou « invite:... ».
     pub compte: String,
     pub nom: String,
-    /// Adresse du nœud VEX de l'utilisateur (liens de la barre VEX).
+    /// Adresse du nœud VEX de l'utilisateur (liens de la barre VEX) ;
+    /// vide hors connexion VEX.
     pub noeud: String,
     pub sombre: bool,
     pub expire: i64,
@@ -258,13 +261,12 @@ impl Reseau {
 }
 
 impl Reseau {
-    /// Ouvre une session « invite » : pas de compte VEX, un identifiant tire
-    /// au hasard (personne ne peut reprendre la nation d'un autre en tapant
-    /// le meme pseudo). Rend le jeton du cookie.
-    pub fn session_invite(&self, nom: &str, sombre: bool, noeud: &str) -> String {
+    /// Ouvre une session pour un compte deja verifie (compte WFront ou
+    /// invite). Rend le jeton du cookie wf_session.
+    pub fn ouvrir(&self, compte: &str, nom: &str, noeud: &str, sombre: bool) -> String {
         let t = maintenant();
         let session = SessionWf {
-            compte: format!("invite:{}", aleatoire(24)),
+            compte: compte.to_string(),
             nom: nom.to_string(),
             noeud: noeud.to_string(),
             sombre,
@@ -276,6 +278,38 @@ impl Reseau {
         sessions.insert(cle.clone(), session);
         self.enregistrer(&sessions);
         cle
+    }
+
+    /// Ouvre une session « invite » : pas de compte, un identifiant tire
+    /// au hasard (personne ne peut reprendre la nation d'un autre en tapant
+    /// le meme pseudo). Rend le jeton du cookie.
+    pub fn session_invite(&self, nom: &str, sombre: bool, noeud: &str) -> String {
+        self.ouvrir(&format!("invite:{}", aleatoire(24)), nom, noeud, sombre)
+    }
+
+    /// Theme clair / sombre : la session du jeton, et toutes celles du meme
+    /// compte (le choix suit le joueur sur ses autres appareils).
+    pub fn changer_theme(&self, jeton: &str, sombre: bool) {
+        let mut sessions = self.sessions.lock().unwrap();
+        let Some(compte) = sessions.get(jeton).map(|s| s.compte.clone()) else { return };
+        let invite = compte.starts_with("invite:");
+        for (k, s) in sessions.iter_mut() {
+            if k == jeton || (!invite && s.compte == compte) {
+                s.sombre = sombre;
+            }
+        }
+        self.enregistrer(&sessions);
+    }
+
+    /// Ferme toutes les sessions d'un compte sauf `garder` (changement de
+    /// mot de passe : les autres appareils doivent se reconnecter).
+    pub fn fermer_compte(&self, compte: &str, garder: &str) {
+        let mut sessions = self.sessions.lock().unwrap();
+        let avant = sessions.len();
+        sessions.retain(|k, s| k == garder || s.compte != compte);
+        if sessions.len() != avant {
+            self.enregistrer(&sessions);
+        }
     }
 }
 

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="__THEME__">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WFront — mon compte</title>
+  <link rel="icon" type="image/svg+xml" href="static/img/wfront.svg">
+  <link rel="stylesheet" href="static/css/theme.css?v=__V__">
+  <link rel="stylesheet" href="static/css/wfront.css?v=__V__">
+  <meta name="theme-color" content="#4fa553">
+  <meta name="robots" content="noindex">
+</head>
+<body class="wf-dev wf-colonne">
+  <div class="card wf-dev-carte">
+    <div class="card-header">
+      <div class="card-icon"><i class="ico" style="--ic:url('__P__/static/img/solid/user-circle.svg')"></i></div>
+      <div class="card-header-text"><div class="card-title">Mon compte</div><div class="card-subtitle">__NOM__</div></div>
+    </div>
+    <div class="wf-avert" id="erreur" hidden><i class="ico" style="--ic:url('__P__/static/img/solid/triangle-exclamation.svg')"></i><span></span></div>
+    <div class="wf-ok" id="ok" hidden><i class="ico" style="--ic:url('__P__/static/img/solid/circle-check.svg')"></i><span></span></div>
+
+    <dl class="wf-compte-infos">
+      <dt>Pseudo</dt><dd>__NOM__</dd>
+      <dt>Membre depuis</dt><dd>__COMPTE_CREE__</dd>
+      <dt>Nation</dt><dd>__NATION__</dd>
+    </dl>
+
+    <div class="wf-form">
+      <a class="wf-btn" href="jeu"><i class="ico" style="--ic:url('__P__/static/img/solid/play.svg')"></i> Jouer</a>
+      <a class="wf-btn secondaire" href="theme?t=__THEME_SUIVANT__&amp;retour=compte"><i class="ico" style="--ic:url('__P__/static/img/solid/__THEME_ICONE__.svg')"></i> __THEME_LIBELLE__</a>
+    </div>
+
+    <details id="mdp">
+      <summary>Changer de mot de passe</summary>
+      <form class="wf-form" action="compte/mdp" method="post">
+        <input type="text" name="nom" value="__NOM__" autocomplete="username" hidden>
+        <label>Mot de passe actuel <input name="ancien" type="password" required maxlength="128" autocomplete="current-password"></label>
+        <label>Nouveau mot de passe <small>Au moins 8 caractères.</small><input name="nouveau" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
+        <label>Confirmer <input name="nouveau2" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
+        <button class="wf-btn" type="submit">Changer le mot de passe</button>
+        <p class="wf-note">Vos autres appareils seront déconnectés.</p>
+      </form>
+    </details>
+
+    <details id="supprimer">
+      <summary>Supprimer mon compte</summary>
+      <form class="wf-form" action="compte/supprimer" method="post" id="f-suppr">
+        <p class="wf-avert" style="margin:0"><i class="ico" style="--ic:url('__P__/static/img/solid/triangle-exclamation.svg')"></i>Définitif : votre compte et votre nation sont supprimés, ses terres redeviennent neutres.</p>
+        <label>Mot de passe <input name="mdp" type="password" required maxlength="128" autocomplete="current-password"></label>
+        <button class="wf-btn danger" type="submit">Supprimer définitivement</button>
+      </form>
+    </details>
+
+    <div class="wf-liens-bas">
+      <a class="wf-lien" href="./">Accueil</a>
+      <a class="wf-lien" href="deconnexion">Déconnexion</a>
+    </div>
+  </div>
+  <script>
+    (function () {
+      var q = new URLSearchParams(location.search);
+      [['erreur', 'erreur'], ['ok', 'ok']].forEach(function (c) {
+        var t = q.get(c[0]);
+        if (t) { var b = document.getElementById(c[1]); b.hidden = false; b.querySelector('span').textContent = t; }
+      });
+      // Erreur sur un formulaire : on le rouvre.
+      if (q.get('erreur')) document.getElementById(location.hash === '#supprimer' ? 'supprimer' : 'mdp').open = true;
+      document.getElementById('f-suppr').addEventListener('submit', function (e) {
+        if (!confirm('Supprimer définitivement votre compte et votre nation ?')) e.preventDefault();
+      });
+    })();
+  </script>
+</body>
+</html>

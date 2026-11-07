@@ -26,14 +26,15 @@
     </div>
 
     <div id="invite" hidden>
-      <p>Vous jouez en invité : l'administration est réservée aux comptes VEX.</p>
+      <p>Vous jouez en invité : l'administration est réservée aux comptes.</p>
       <div class="wf-form">
-        <a class="wf-btn" href="__VEX_DIRECT__"><img src="static/img/vex.svg" alt="" class="wf-btn-logo"> Se connecter avec VEX</a>
+        <!--wf--><a class="wf-btn" href="connexion#connexion"><i class="ico" style="--ic:url('__P__/static/img/solid/right-to-bracket.svg')"></i> Se connecter</a><!--/wf-->
+        <!--vex--><a class="wf-btn" href="__VEX_DIRECT__"><img src="static/img/vex.svg" alt="" class="wf-btn-logo"> Se connecter avec VEX</a><!--/vex-->
       </div>
     </div>
 
     <div id="choix" hidden>
-      <p>L'administration s'ouvre toute seule pour les comptes VEX listés dans <code>"admins"</code> du <code>config.json</code> de WFront. Votre compte : <code>__COMPTE__</code></p>
+      <p>L'administration s'ouvre toute seule pour les comptes listés dans <code>"admins"</code> du <code>config.json</code> de WFront (pour un compte WFront, son pseudo suffit). Votre compte : <code>__COMPTE__</code></p>
       <details>
         <summary>Code de récupération</summary>
         <p class="wf-note">En dépannage, le serveur écrit un code à usage unique dans <code>data/admin_code.txt</code> (seul quelqu'un qui a accès au serveur peut le lire).</p>

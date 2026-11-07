@@ -1,11 +1,9 @@
 {
-  "_aide": "Copier en config.json. auth = \"reseau\" : connexion avec un compte de n'importe quel noeud VEX (voir README). \"dev\" pour tester en local.",
+  "_aide": "Copier en config.json. auth = \"comptes\" (production) : les joueurs creent un compte WFront (pseudo + mot de passe) ou jouent en invite. Les modes \"reseau\", \"vex\" et \"dev\" ne servent qu'aux tests entre developpeurs (voir README).",
   "adresse": "0.0.0.0",
   "port": 8095,
   "url_publique": "https://jeu.exemple.org",
-  "auth": "reseau",
-  "annuaire_url": "https://vex.hopto.org/neut/annuaire",
-  "noeud_par_defaut": "vex.hopto.org",
+  "auth": "comptes",
   "proxy_de_confiance": false,
   "carte_largeur": 84,
   "carte_hauteur": 52,
@@ -17,8 +15,8 @@
   "bots": 6,
   "_aide_admin": "Cle publique de la cle d'administration (32 octets en base64). Seul le detenteur de la cle privee voit et utilise l'administration, via la page /admin. Vide = administration desactivee.",
   "admin_cle_publique": "",
-  "_aide_admins": "Comptes VEX administrateurs (\"user_id@node_id\", affiche sur /admin et dans le journal du serveur) : ils ont l'administration des qu'ils se connectent avec VEX.",
+  "_aide_admins": "Pseudos des comptes WFront administrateurs (ex. [\"clement\"]) : ils ont l'administration des qu'ils se connectent.",
   "admins": [],
-  "_aide_invites": "true : on peut aussi jouer sans compte VEX, avec un simple pseudo.",
+  "_aide_invites": "true : on peut aussi jouer sans compte, avec un simple pseudo (la nation suit si le joueur cree son compte ensuite).",
   "invites": true
 }

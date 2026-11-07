@@ -1781,7 +1781,7 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
 }
 
 /// Retire une nation et rend toutes ses terres neutres (administration).
-fn supprimer_pays(m: &mut Monde, cible: u32) {
+pub fn supprimer_pays(m: &mut Monde, cible: u32) {
     for c in m.cases.iter_mut().filter(|c| c.proprio == Some(cible)) {
         c.proprio = None;
         if c.bat.is_some() {

@@ -1,10 +1,11 @@
 // ══════════════════════════════════════════════════════════════════
 // WFront — serveur
-// Processus independant de VEX (son propre port), qui reutilise la
-// connexion VEX : le cookie `connexion_cookie` pose par VEX est relu
-// ici et verifie dans la base VEX exactement comme c::verifier_session
-// (cookie + IP + navigateur + anciennete < 1 h). Aucune ecriture n'est
-// faite dans la base VEX.
+// Jeu autonome : en production (mode "comptes", par defaut), les joueurs
+// creent un compte WFront (pseudo + mot de passe, voir comptes.rs) ou
+// jouent en invite. VEX ne sert qu'aux tests entre developpeurs :
+//   "reseau" : « Se connecter avec VEX » depuis un nœud du reseau VEX ;
+//   "vex"    : session VEX relue dans la base d'un seul nœud ;
+//   "dev"    : simple pseudo, en local.
 //
 // Temps reel : WebSocket /ws, un tick de simulation par seconde, chaque
 // client recoit sa propre vue (vue.rs).
@@ -12,6 +13,7 @@
 
 mod admin;
 mod bots;
+mod comptes;
 mod defs;
 mod fabrication;
 mod front;
@@ -29,7 +31,7 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
     routing::{get, post},
-    Json, Router,
+    Form, Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use mysql::prelude::Queryable;
@@ -53,15 +55,16 @@ use tower_http::set_header::SetResponseHeaderLayer;
 struct Config {
     adresse: String,
     port: u16,
-    /// URL publique de VEX (liens de la barre de navigation, page de connexion).
-    /// Vide si WFront est servi sur le meme domaine que VEX.
+    /// URL publique de VEX (modes de test "reseau" / "vex" seulement : liens
+    /// de la barre VEX, page de connexion). Inutile en mode "comptes".
     vex_url: String,
     /// Chemin sous lequel le reverse proxy expose WFront (ex. "/wfront"),
     /// utilise pour les redirections. Vide si WFront est a la racine.
     prefixe: String,
-    /// "reseau" (defaut) : « Se connecter avec VEX » depuis n'importe quel nœud
-    /// du reseau VEX. "vex" : sessions lues dans la base d'un seul nœud.
-    /// "dev" : simple pseudo, pour tester en local.
+    /// "comptes" (defaut, production) : comptes WFront (pseudo + mot de passe).
+    /// Modes de test entre developpeurs : "reseau" (« Se connecter avec VEX »
+    /// depuis n'importe quel nœud du reseau VEX), "vex" (sessions lues dans la
+    /// base d'un seul nœud), "dev" (simple pseudo, en local).
     auth: String,
     /// Adresse publique de WFront, prefixe compris (ex.
     /// "https://jeu.exemple.org"). Vide : deduite de l'en-tete Host.
@@ -82,11 +85,12 @@ struct Config {
     /// Privilege maximal pour les outils d'administration du jeu. Depuis la
     /// cle d'administration, seul son detenteur a le privilege 1.
     admin_privilege_max: i64,
-    /// Comptes VEX administrateurs du jeu : « user_id@node_id » en mode
-    /// reseau, ou l'e-mail du compte en mode vex (visible sur /admin). Ils ont
-    /// l'administration des qu'ils sont connectes, sans cle ni code.
+    /// Comptes administrateurs du jeu : le pseudo en mode comptes,
+    /// « user_id@node_id » en mode reseau, l'e-mail du compte en mode vex
+    /// (visible sur /admin). Ils ont l'administration des qu'ils sont
+    /// connectes, sans cle ni code.
     admins: Vec<String>,
-    /// Autoriser a jouer sans compte VEX (pseudo, session « invite »).
+    /// Autoriser a jouer sans compte (pseudo, session « invite »).
     invites: bool,
     /// Cle publique Ed25519 (32 octets en base64) de la cle d'administration.
     /// Seul le detenteur de la cle privee correspondante voit et utilise
@@ -119,9 +123,9 @@ impl Default for Config {
         Config {
             adresse: "0.0.0.0".into(),
             port: 8095,
-            vex_url: "http://127.0.0.1:8080".into(),
+            vex_url: String::new(),
             prefixe: String::new(),
-            auth: "reseau".into(),
+            auth: "comptes".into(),
             url_publique: String::new(),
             annuaire_url: "https://vex.hopto.org/neut/annuaire".into(),
             noeud_par_defaut: "vex.hopto.org".into(),
@@ -155,13 +159,13 @@ struct Identite {
     user_id: i64,
     nom: String,
     privilege: i64,
-    /// Rang VEX du compte (1 fondateur … 10 aucun) : couleur du nom dans la
-    /// barre, comme sur VEX. Sans lien avec l'administration de WFront.
+    /// Rang VEX du compte (1 fondateur … 10 aucun ; toujours 10 hors mode
+    /// "vex") : couleur du nom dans la barre. Sans lien avec l'administration.
     rang_vex: i64,
     sombre: bool,
     /// Nœud VEX de l'utilisateur (mode reseau) : cible des liens VEX.
     noeud: Option<String>,
-    /// Compte reseau « user_id@node_id » (ou « invite:... »).
+    /// Compte : « wf:pseudo », « user_id@node_id » (VEX) ou « invite:... ».
     compte: Option<String>,
 }
 
@@ -178,7 +182,9 @@ struct App {
     clients: Mutex<HashMap<u64, Client>>,
     prochain_client: AtomicU64,
     db: Option<mysql::Pool>,
+    /// Sessions WFront (cookie wf_session) : comptes, invites, VEX reseau.
     reseau: reseau::Reseau,
+    comptes: comptes::Comptes,
     regles: jeu::Regles,
     admin: admin::Admin,
     /// Anti-abus : dernière création de session invité par IP (timestamp).
@@ -186,6 +192,17 @@ struct App {
 }
 
 type Partage = Arc<App>;
+
+impl Config {
+    /// Modes de test qui passent par VEX (barre et liens VEX affiches).
+    fn mode_vex(&self) -> bool {
+        self.auth == "reseau" || self.auth == "vex"
+    }
+    /// Modes dont les sessions sont gerees par WFront (cookie wf_session).
+    fn sessions_wf(&self) -> bool {
+        self.auth == "comptes" || self.auth == "reseau"
+    }
+}
 
 // ══════════════════════════════════════════════════════════════════
 // Demarrage
@@ -323,12 +340,14 @@ async fn main() {
     }
     let db = if cfg.auth == "vex" { pool_vex(&cfg, &racine) } else { None };
     match cfg.auth.as_str() {
+        "comptes" => println!("[auth] comptes WFront (pseudo + mot de passe){}.", if cfg.invites { ", invites autorises" } else { "" }),
         "dev" => println!("[auth] MODE DEV : connexion par simple pseudo, ne pas exposer en production."),
         "reseau" => println!(
-            "[auth] « Se connecter avec VEX » (annuaire : {}).",
+            "[auth] TEST : « Se connecter avec VEX » (annuaire : {}).",
             if cfg.annuaire_url.is_empty() { "non vérifié" } else { cfg.annuaire_url.as_str() }
         ),
-        _ => {}
+        "vex" => println!("[auth] TEST : sessions lues dans la base VEX."),
+        autre => eprintln!("[auth] mode « {} » inconnu : utilisez \"comptes\" (ou \"reseau\", \"vex\", \"dev\" pour tester).", autre),
     }
     let monde = charger_monde(&cfg, &racine);
     let regles = jeu::Regles {
@@ -343,6 +362,7 @@ async fn main() {
         prochain_client: AtomicU64::new(1),
         db,
         reseau: reseau::Reseau::charger(racine.join("data").join("sessions.json")),
+        comptes: comptes::Comptes::charger(racine.join("data").join("comptes.json")),
         regles,
         admin: admin::Admin::charger(racine.join("data")),
         invites: Mutex::new(HashMap::new()),
@@ -400,6 +420,12 @@ async fn main() {
         .route("/auth/debut", get(auth_debut))
         .route("/auth/retour", get(auth_retour))
         .route("/invite/entrer", get(invite_entrer))
+        .route("/compte", get(page_compte))
+        .route("/compte/connexion", post(compte_connexion))
+        .route("/compte/inscription", post(compte_inscription))
+        .route("/compte/mdp", post(compte_mdp))
+        .route("/compte/supprimer", post(compte_supprimer))
+        .route("/theme", get(changer_theme))
         .route("/deconnexion", get(deconnexion))
         .route("/api/statut", get(api_statut))
         .route("/admin", get(page_admin))
@@ -427,7 +453,11 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    println!("WFront en ligne sur http://{}  (VEX : {})", adr, cfg.vex_url);
+    if cfg.mode_vex() {
+        println!("WFront en ligne sur http://{}  (test VEX : {})", adr, cfg.vex_url);
+    } else {
+        println!("WFront en ligne sur http://{}", adr);
+    }
     axum::serve(ecoute, routes.into_make_service_with_connect_info::<SocketAddr>())
         .await
         .unwrap();
@@ -525,7 +555,7 @@ fn boucle(app: &Partage, dt: f64, avec_publics: bool) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// Authentification (session VEX)
+// Authentification
 // ══════════════════════════════════════════════════════════════════
 fn cookie(headers: &HeaderMap, nom: &str) -> String {
     for v in headers.get_all(header::COOKIE) {
@@ -652,13 +682,20 @@ fn decoder_url(s: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
+/// Le compte figure-t-il dans « admins » de config.json ? Pour un compte
+/// WFront, on peut y ecrire simplement le pseudo (ou « wf:pseudo »).
+fn est_admin_config(cfg: &Config, compte: &str) -> bool {
+    let pseudo = compte.strip_prefix(comptes::PREFIXE);
+    cfg.admins.iter().map(|a| a.trim()).any(|a| a.eq_ignore_ascii_case(compte) || pseudo.map(|p| a.eq_ignore_ascii_case(p)).unwrap_or(false))
+}
+
 /// Identite du visiteur. Le privilege d'administration ne vient QUE de la
-/// cle d'administration (cookie wf_admin obtenu sur /admin), jamais du mode
-/// d'authentification ni du privilege VEX.
+/// liste « admins » ou de la cle d'administration (cookie wf_admin obtenu
+/// sur /admin), jamais du mode d'authentification ni du privilege VEX.
 async fn authentifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Option<Identite> {
     let mut id = identifier(app, headers, addr).await?;
-    let compte_admin = id.compte.as_ref().map(|c| app.cfg.admins.iter().any(|a| a.trim().eq_ignore_ascii_case(c))).unwrap_or(false);
-    // Un invite (sans compte VEX) n'a jamais l'administration.
+    let compte_admin = id.compte.as_deref().map(|c| est_admin_config(&app.cfg, c)).unwrap_or(false);
+    // Un invite (sans compte) n'a jamais l'administration.
     let invite = id.compte.as_deref().map(|c| c.starts_with("invite:")).unwrap_or(false);
     id.privilege = if !invite && (compte_admin || app.admin.valide(&cookie(headers, "wf_admin"), id.user_id)) { 1 } else { 10 };
     Some(id)
@@ -674,8 +711,17 @@ async fn identifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Opt
         let sombre = cookie(headers, "wf_theme") == "dark";
         return Some(Identite { user_id: hash_nom(&nom), nom, privilege: 1, rang_vex: 10, sombre, noeud: None, compte: None });
     }
-    if app.cfg.auth == "reseau" {
+    if app.cfg.sessions_wf() {
         let s = app.reseau.session(&cookie(headers, "wf_session"))?;
+        if app.cfg.auth == "comptes" {
+            // Production : seulement les comptes WFront (encore existants) et
+            // les invites, jamais une ancienne session VEX.
+            if s.compte.starts_with(comptes::PREFIXE) {
+                app.comptes.par_identite(&s.compte)?;
+            } else if !s.compte.starts_with("invite:") {
+                return None;
+            }
+        }
         return Some(Identite {
             user_id: reseau::id_compte(&s.compte),
             nom: s.nom,
@@ -716,7 +762,7 @@ fn chemin(app: &App, page: &str) -> String {
 fn url_connexion(app: &App) -> String {
     if app.cfg.auth == "dev" {
         chemin(app, "/dev")
-    } else if app.cfg.auth == "reseau" {
+    } else if app.cfg.sessions_wf() {
         chemin(app, "/connexion")
     } else {
         // Meme serveur que VEX : sa page de connexion, puis retour au jeu
@@ -744,12 +790,47 @@ fn nom_barre(id: Option<&Identite>) -> String {
     format!("<span class=\"user-name-top-7844\" style=\"color:{}!important\" title=\"{}\">{}</span>", couleur, titre, nom)
 }
 
+/// Retire des pages les blocs `<!--debut-->…<!--fin-->`.
+fn retirer_blocs(html: &str, debut: &str, fin: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut reste = html;
+    while let Some(i) = reste.find(debut) {
+        out.push_str(&reste[..i]);
+        match reste[i..].find(fin) {
+            Some(j) => reste = &reste[i + j + fin.len()..],
+            None => {
+                reste = "";
+                break;
+            }
+        }
+    }
+    out.push_str(reste);
+    out
+}
+
 fn gabarit(app: &App, fichier: &str, id: Option<&Identite>) -> Response {
+    gabarit_avec(app, fichier, id, &[])
+}
+
+/// Page HTML de static/ avec ses marqueurs remplaces. Les blocs
+/// `<!--vex-->…<!--/vex-->` n'existent qu'en mode de test VEX, les blocs
+/// `<!--wf-->…<!--/wf-->` seulement sans VEX (comptes WFront, dev).
+fn gabarit_avec(app: &App, fichier: &str, id: Option<&Identite>, extra: &[(&str, String)]) -> Response {
     let chemin = app.racine.join("static").join(fichier);
     let Ok(html) = std::fs::read_to_string(&chemin) else {
         return (StatusCode::INTERNAL_SERVER_ERROR, format!("Page introuvable : {}", chemin.display())).into_response();
     };
-    let theme = if id.map(|i| i.sombre).unwrap_or(false) { "dark" } else { "light" };
+    let html = if app.cfg.mode_vex() {
+        retirer_blocs(&html, "<!--wf-->", "<!--/wf-->")
+    } else {
+        retirer_blocs(&html, "<!--vex-->", "<!--/vex-->")
+    };
+    let mut html = html;
+    for (k, v) in extra {
+        html = html.replace(k, &echapper(v));
+    }
+    let sombre = id.map(|i| i.sombre).unwrap_or(false);
+    let theme = if sombre { "dark" } else { "light" };
     // Liens VEX (grille d'applis, compte) : vers le nœud de l'utilisateur.
     let vex = id
         .and_then(|i| i.noeud.clone())
@@ -757,12 +838,23 @@ fn gabarit(app: &App, fichier: &str, id: Option<&Identite>) -> Response {
     let html = html
         .replace("__P__", &echapper(app.cfg.prefixe.trim_end_matches('/')))
         .replace("__THEME__", theme)
+        .replace("__THEME_SUIVANT__", if sombre { "light" } else { "dark" })
+        .replace("__THEME_LIBELLE__", if sombre { "Thème clair" } else { "Thème sombre" })
+        .replace("__THEME_ICONE__", if sombre { "sun" } else { "moon" })
+        .replace("__COMPTE_WF__", if id.and_then(|i| i.compte.as_deref()).map(|c| c.starts_with(comptes::PREFIXE)).unwrap_or(false) { "1" } else { "0" })
         .replace("__VEX__", &echapper(vex.trim_end_matches('/')))
         .replace("__NOEUD_DEFAUT__", &echapper(&app.cfg.noeud_par_defaut))
         .replace("__CONNEXION__", &echapper(&url_connexion(app)))
         .replace("__ENTREE__", &echapper(&url_entree(app)))
         .replace("__INVITE__", if id.and_then(|i| i.compte.as_deref()).map(|c| c.starts_with("invite:")).unwrap_or(false) { "1" } else { "0" })
-        .replace("__VEX_DIRECT__", &echapper(&format!("{}/auth/debut?noeud={}", app.cfg.prefixe.trim_end_matches('/'), reseau::encoder(&app.cfg.noeud_par_defaut))))
+        .replace(
+            "__VEX_DIRECT__",
+            &if app.cfg.mode_vex() {
+                echapper(&format!("{}/auth/debut?noeud={}", app.cfg.prefixe.trim_end_matches('/'), reseau::encoder(&app.cfg.noeud_par_defaut)))
+            } else {
+                String::new()
+            },
+        )
         .replace("__INVITES__", if app.cfg.invites { "1" } else { "0" })
         .replace("__COMPTE__", &echapper(id.and_then(|i| i.compte.as_deref()).unwrap_or("")))
         .replace("__NOM_TOP__", &nom_barre(id))
@@ -799,7 +891,7 @@ async fn page_jeu(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<Soc
 /// Connexion en un clic : en mode reseau, droit vers le nœud VEX par defaut
 /// (la page /connexion reste la pour choisir un autre nœud).
 fn url_entree(app: &App) -> String {
-    if app.cfg.auth == "reseau" && app.cfg.invites {
+    if app.cfg.auth == "comptes" || (app.cfg.auth == "reseau" && app.cfg.invites) {
         chemin(app, "/connexion")
     } else if app.cfg.auth == "reseau" && !app.cfg.noeud_par_defaut.is_empty() {
         format!("{}?noeud={}", chemin(app, "/auth/debut"), reseau::encoder(&app.cfg.noeud_par_defaut))
@@ -860,13 +952,17 @@ fn url_retour(app: &App, headers: &HeaderMap) -> String {
 }
 
 async fn page_connexion(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Response {
-    if app.cfg.auth != "reseau" {
+    if !app.cfg.sessions_wf() {
         return Redirect::to(&url_connexion(&app)).into_response();
     }
-    if authentifier(&app, &headers, addr).await.is_some() {
+    let id = authentifier(&app, &headers, addr).await;
+    let invite = id.as_ref().and_then(|i| i.compte.as_deref()).map(|c| c.starts_with("invite:")).unwrap_or(false);
+    // Un invite peut venir ici creer son compte (sa nation le suit).
+    if id.is_some() && !invite {
         return Redirect::to(&chemin(&app, "/jeu")).into_response();
     }
-    gabarit(&app, "connexion.html", None)
+    let page = if app.cfg.auth == "comptes" { "entrer.html" } else { "connexion.html" };
+    gabarit(&app, page, id.as_ref())
 }
 
 #[derive(Deserialize)]
@@ -902,28 +998,10 @@ async fn auth_retour(State(app): State<Partage>, headers: HeaderMap, Query(q): Q
         Ok((jeton, s)) => {
             println!("[auth] connexion de {} ({}) via {}", s.nom, s.compte, s.noeud);
             if let Some(inv) = ancienne {
-                let (de, vers) = (reseau::id_compte(&inv.compte), reseau::id_compte(&s.compte));
-                let mut m = app.monde.lock().unwrap();
-                if jeu::pays_du_joueur(&m, vers).is_none() {
-                    if let Some(pid) = jeu::pays_du_joueur(&m, de) {
-                        let p = m.pays.get_mut(&pid).unwrap();
-                        p.user_id = vers;
-                        p.joueur = s.nom.clone();
-                        println!("[auth] la nation de l'invite {} passe sur le compte {}", inv.nom, s.compte);
-                    }
-                }
-                drop(m);
+                reprendre_nation_invite(&app, &inv, &s.compte, &s.nom);
                 app.reseau.fermer(&cookie(&headers, "wf_session"));
             }
-            let secure = if retour.starts_with("https://") { "; Secure" } else { "" };
-            let mut r = Redirect::to(&chemin(&app, "/jeu")).into_response();
-            r.headers_mut().append(
-                header::SET_COOKIE,
-                format!("wf_session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{}", jeton, reseau::DUREE_SESSION, secure)
-                    .parse()
-                    .unwrap(),
-            );
-            r
+            avec_session(&app, &headers, Redirect::to(&chemin(&app, "/jeu")).into_response(), &jeton)
         }
         Err(e) => Redirect::to(&format!("{}?erreur={}", chemin(&app, "/connexion"), reseau::encoder(&e))).into_response(),
     }
@@ -937,9 +1015,9 @@ struct InviteParams {
     theme: String,
 }
 
-/// Jouer sans compte VEX : un pseudo suffit (session « invite »).
+/// Jouer sans compte : un pseudo suffit (session « invite »).
 async fn invite_entrer(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Query(q): Query<InviteParams>) -> Response {
-    if app.cfg.auth != "reseau" || !app.cfg.invites {
+    if !app.cfg.sessions_wf() || !app.cfg.invites {
         return Redirect::to(&url_connexion(&app)).into_response();
     }
     let nom: String = q.nom.chars().filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '-' | '.')).take(24).collect();
@@ -960,16 +1038,35 @@ async fn invite_entrer(State(app): State<Partage>, ConnectInfo(addr): ConnectInf
         }
         inv.insert(ip, t);
     }
-    let noeud = reseau::normaliser_noeud(&app.cfg.noeud_par_defaut).unwrap_or_default();
+    let noeud = if app.cfg.auth == "reseau" { reseau::normaliser_noeud(&app.cfg.noeud_par_defaut).unwrap_or_default() } else { String::new() };
     let jeton = app.reseau.session_invite(&format!("{} (invité)", nom), q.theme == "dark", &noeud);
     println!("[auth] invite : {}", nom);
-    let secure = if url_retour(&app, &headers).starts_with("https://") { "; Secure" } else { "" };
-    let mut r = Redirect::to(&chemin(&app, "/jeu")).into_response();
+    avec_session(&app, &headers, Redirect::to(&chemin(&app, "/jeu")).into_response(), &jeton)
+}
+
+/// Pose le cookie de session wf_session sur une reponse.
+fn avec_session(app: &App, headers: &HeaderMap, mut r: Response, jeton: &str) -> Response {
+    let secure = if url_retour(app, headers).starts_with("https://") { "; Secure" } else { "" };
     r.headers_mut().append(
         header::SET_COOKIE,
         format!("wf_session={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}{}", jeton, reseau::DUREE_SESSION, secure).parse().unwrap(),
     );
     r
+}
+
+/// Un invite se connecte ou cree son compte : sa nation passe sur ce compte
+/// (sauf si le compte en a deja une).
+fn reprendre_nation_invite(app: &App, inv: &reseau::SessionWf, compte: &str, nom: &str) {
+    let (de, vers) = (reseau::id_compte(&inv.compte), reseau::id_compte(compte));
+    let mut m = app.monde.lock().unwrap();
+    if jeu::pays_du_joueur(&m, vers).is_none() {
+        if let Some(pid) = jeu::pays_du_joueur(&m, de) {
+            let p = m.pays.get_mut(&pid).unwrap();
+            p.user_id = vers;
+            p.joueur = nom.to_string();
+            println!("[auth] la nation de l'invite {} passe sur le compte {}", inv.nom, compte);
+        }
+    }
 }
 
 async fn deconnexion(State(app): State<Partage>, headers: HeaderMap) -> Response {
@@ -1179,7 +1276,7 @@ async fn admin_code(
 ) -> Response {
     let Some(id) = authentifier(&app, &headers, addr).await else { return erreur(StatusCode::UNAUTHORIZED, "Connectez-vous d'abord.") };
     if id.compte.as_deref().map(|c| c.starts_with("invite:")).unwrap_or(false) {
-        return erreur(StatusCode::FORBIDDEN, "Connectez-vous avec un compte VEX : un invité ne peut pas administrer le jeu.");
+        return erreur(StatusCode::FORBIDDEN, "Connectez-vous avec un compte : un invité ne peut pas administrer le jeu.");
     }
     match app.admin.utiliser_code(&p.code, id.user_id) {
         Ok(jeton) => {
@@ -1237,6 +1334,265 @@ async fn api_statut(State(app): State<Partage>) -> Json<Value> {
 }
 
 // ══════════════════════════════════════════════════════════════════
+// Comptes WFront (mode "comptes")
+// ══════════════════════════════════════════════════════════════════
+/// Anti-CSRF / CSWSH : si le navigateur envoie un Origin, son hote doit
+/// etre celui du site. Compatible reverse-proxy : on accepte Host,
+/// X-Forwarded-Host ou l'URL publique.
+fn origine_ok(app: &App, headers: &HeaderMap) -> bool {
+    let Some(orig) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) else { return true };
+    let hote_orig = orig.split("://").nth(1).unwrap_or("").trim_end_matches('/').to_ascii_lowercase();
+    let mut hotes_ok: Vec<String> = Vec::new();
+    for h in [header::HOST.as_str(), "x-forwarded-host"] {
+        if let Some(v) = headers.get(h).and_then(|v| v.to_str().ok()) {
+            hotes_ok.push(v.trim().trim_end_matches('/').to_ascii_lowercase());
+        }
+    }
+    if let Some(h) = app.cfg.url_publique.split("://").nth(1) {
+        let h = h.split('/').next().unwrap_or("");
+        if !h.is_empty() {
+            hotes_ok.push(h.to_ascii_lowercase());
+        }
+    }
+    hote_orig.is_empty() || hotes_ok.is_empty() || hotes_ok.iter().any(|h| h == &hote_orig)
+}
+
+/// Redirection vers une page avec un message (?erreur= ou ?ok=) et un onglet.
+fn vers(app: &App, page: &str, cle: &str, msg: &str, extra: &str, ancre: &str) -> Response {
+    let mut url = format!("{}?{}={}", chemin(app, page), cle, reseau::encoder(msg));
+    if !extra.is_empty() {
+        url.push('&');
+        url.push_str(extra);
+    }
+    if !ancre.is_empty() {
+        url.push('#');
+        url.push_str(ancre);
+    }
+    Redirect::to(&url).into_response()
+}
+
+#[derive(Deserialize)]
+struct FormConnexion {
+    #[serde(default)]
+    nom: String,
+    #[serde(default)]
+    mdp: String,
+}
+
+async fn compte_connexion(
+    State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Form(f): Form<FormConnexion>,
+) -> Response {
+    if app.cfg.auth != "comptes" {
+        return Redirect::to(&url_connexion(&app)).into_response();
+    }
+    if !origine_ok(&app, &headers) {
+        return (StatusCode::FORBIDDEN, "Origine non autorisée").into_response();
+    }
+    let ip = ip_client(&app, &headers, addr);
+    let (a, nom, mdp) = (app.clone(), f.nom.clone(), f.mdp);
+    let res = tokio::task::spawn_blocking(move || a.comptes.verifier(&nom, &mdp, &ip))
+        .await
+        .unwrap_or_else(|_| Err("Erreur interne.".into()));
+    match res {
+        Ok(c) => {
+            let ident = c.identite();
+            println!("[auth] connexion du compte {}", c.nom);
+            let jeton_ancien = cookie(&headers, "wf_session");
+            if let Some(inv) = app.reseau.session(&jeton_ancien).filter(|s| s.compte.starts_with("invite:")) {
+                reprendre_nation_invite(&app, &inv, &ident, &c.nom);
+            }
+            app.reseau.fermer(&jeton_ancien);
+            let jeton = app.reseau.ouvrir(&ident, &c.nom, "", c.sombre);
+            avec_session(&app, &headers, Redirect::to(&chemin(&app, "/jeu")).into_response(), &jeton)
+        }
+        Err(e) => vers(&app, "/connexion", "erreur", &e, &format!("nom={}", reseau::encoder(f.nom.trim())), "connexion"),
+    }
+}
+
+#[derive(Deserialize)]
+struct FormInscription {
+    #[serde(default)]
+    nom: String,
+    #[serde(default)]
+    mdp: String,
+    #[serde(default)]
+    mdp2: String,
+}
+
+async fn compte_inscription(
+    State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Form(f): Form<FormInscription>,
+) -> Response {
+    if app.cfg.auth != "comptes" {
+        return Redirect::to(&url_connexion(&app)).into_response();
+    }
+    if !origine_ok(&app, &headers) {
+        return (StatusCode::FORBIDDEN, "Origine non autorisée").into_response();
+    }
+    let retour_nom = format!("nom={}", reseau::encoder(f.nom.trim()));
+    if f.mdp != f.mdp2 {
+        return vers(&app, "/connexion", "erreur", "Les deux mots de passe ne sont pas identiques.", &retour_nom, "inscription");
+    }
+    let jeton_ancien = cookie(&headers, "wf_session");
+    let ancienne = app.reseau.session(&jeton_ancien).filter(|s| s.compte.starts_with("invite:"));
+    let sombre = ancienne.as_ref().map(|s| s.sombre).unwrap_or(false);
+    let ip = ip_client(&app, &headers, addr);
+    let (a, nom, mdp) = (app.clone(), f.nom.clone(), f.mdp);
+    let res = tokio::task::spawn_blocking(move || a.comptes.creer(&nom, &mdp, sombre, &ip))
+        .await
+        .unwrap_or_else(|_| Err("Erreur interne.".into()));
+    match res {
+        Ok(c) => {
+            let ident = c.identite();
+            println!("[auth] nouveau compte : {}", c.nom);
+            if let Some(inv) = ancienne {
+                reprendre_nation_invite(&app, &inv, &ident, &c.nom);
+                app.reseau.fermer(&jeton_ancien);
+            }
+            let jeton = app.reseau.ouvrir(&ident, &c.nom, "", c.sombre);
+            avec_session(&app, &headers, Redirect::to(&chemin(&app, "/jeu")).into_response(), &jeton)
+        }
+        Err(e) => vers(&app, "/connexion", "erreur", &e, &retour_nom, "inscription"),
+    }
+}
+
+async fn page_compte(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Response {
+    let Some(id) = authentifier(&app, &headers, addr).await else {
+        return Redirect::to(&url_entree(&app)).into_response();
+    };
+    let compte = id.compte.as_deref().and_then(|c| app.comptes.par_identite(c));
+    let Some(compte) = compte else {
+        // Invite : il cree son compte ; compte VEX (test) : rien a gerer ici.
+        let invite = id.compte.as_deref().map(|c| c.starts_with("invite:")).unwrap_or(false);
+        let cible = if invite && app.cfg.auth == "comptes" { format!("{}#inscription", chemin(&app, "/connexion")) } else { chemin(&app, "/jeu") };
+        return Redirect::to(&cible).into_response();
+    };
+    let cree = chrono::DateTime::from_timestamp(compte.cree, 0).map(|d| d.format("%d/%m/%Y").to_string()).unwrap_or_default();
+    let nation = {
+        let m = app.monde.lock().unwrap();
+        jeu::pays_du_joueur(&m, id.user_id).map(|pid| m.nom_pays(pid)).unwrap_or_else(|| "aucune pour l'instant".into())
+    };
+    gabarit_avec(&app, "compte.html", Some(&id), &[("__COMPTE_CREE__", cree), ("__NATION__", nation)])
+}
+
+#[derive(Deserialize)]
+struct FormMdp {
+    #[serde(default)]
+    ancien: String,
+    #[serde(default)]
+    nouveau: String,
+    #[serde(default)]
+    nouveau2: String,
+}
+
+async fn compte_mdp(
+    State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Form(f): Form<FormMdp>,
+) -> Response {
+    if !origine_ok(&app, &headers) {
+        return (StatusCode::FORBIDDEN, "Origine non autorisée").into_response();
+    }
+    let Some(id) = authentifier(&app, &headers, addr).await else {
+        return Redirect::to(&url_entree(&app)).into_response();
+    };
+    let Some(ident) = id.compte.clone().filter(|c| c.starts_with(comptes::PREFIXE)) else {
+        return Redirect::to(&chemin(&app, "/jeu")).into_response();
+    };
+    if f.nouveau != f.nouveau2 {
+        return vers(&app, "/compte", "erreur", "Les deux nouveaux mots de passe ne sont pas identiques.", "", "");
+    }
+    let ip = ip_client(&app, &headers, addr);
+    let (a, i2) = (app.clone(), ident.clone());
+    let res = tokio::task::spawn_blocking(move || a.comptes.changer_mdp(&i2, &f.ancien, &f.nouveau, &ip))
+        .await
+        .unwrap_or_else(|_| Err("Erreur interne.".into()));
+    match res {
+        Ok(()) => {
+            // Les autres appareils doivent se reconnecter avec le nouveau mot de passe.
+            app.reseau.fermer_compte(&ident, &cookie(&headers, "wf_session"));
+            println!("[auth] mot de passe change : {}", id.nom);
+            vers(&app, "/compte", "ok", "Mot de passe changé. Vos autres appareils ont été déconnectés.", "", "")
+        }
+        Err(e) => vers(&app, "/compte", "erreur", &e, "", ""),
+    }
+}
+
+#[derive(Deserialize)]
+struct FormSuppression {
+    #[serde(default)]
+    mdp: String,
+}
+
+async fn compte_supprimer(
+    State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Form(f): Form<FormSuppression>,
+) -> Response {
+    if !origine_ok(&app, &headers) {
+        return (StatusCode::FORBIDDEN, "Origine non autorisée").into_response();
+    }
+    let Some(id) = authentifier(&app, &headers, addr).await else {
+        return Redirect::to(&url_entree(&app)).into_response();
+    };
+    let Some(ident) = id.compte.clone().filter(|c| c.starts_with(comptes::PREFIXE)) else {
+        return Redirect::to(&chemin(&app, "/jeu")).into_response();
+    };
+    let ip = ip_client(&app, &headers, addr);
+    let (a, i2) = (app.clone(), ident.clone());
+    let res = tokio::task::spawn_blocking(move || a.comptes.supprimer(&i2, &f.mdp, &ip))
+        .await
+        .unwrap_or_else(|_| Err("Erreur interne.".into()));
+    match res {
+        Ok(()) => {
+            // La nation disparait avec le compte : sinon quiconque reprendrait
+            // le meme pseudo recupererait la nation.
+            {
+                let mut m = app.monde.lock().unwrap();
+                if let Some(pid) = jeu::pays_du_joueur(&m, id.user_id) {
+                    jeu::supprimer_pays(&mut m, pid);
+                }
+            }
+            app.reseau.fermer_compte(&ident, "");
+            println!("[auth] compte supprime : {}", id.nom);
+            let mut r = Redirect::to(&chemin(&app, "/")).into_response();
+            r.headers_mut().append(header::SET_COOKIE, "wf_session=; Path=/; Max-Age=0".parse().unwrap());
+            r
+        }
+        Err(e) => vers(&app, "/compte", "erreur", &e, "", "supprimer"),
+    }
+}
+
+#[derive(Deserialize)]
+struct ThemeParams {
+    #[serde(default)]
+    t: String,
+    #[serde(default)]
+    retour: String,
+}
+
+/// Theme clair / sombre (menu du profil). Hors VEX, c'est WFront qui le
+/// garde : dans la session et le compte (ou un cookie en mode dev).
+async fn changer_theme(State(app): State<Partage>, headers: HeaderMap, Query(q): Query<ThemeParams>) -> Response {
+    let sombre = q.t == "dark";
+    let page = match q.retour.as_str() {
+        "jeu" => "/jeu",
+        "compte" => "/compte",
+        "admin" => "/admin",
+        _ => "/",
+    };
+    let mut r = Redirect::to(&chemin(&app, page)).into_response();
+    if app.cfg.auth == "dev" {
+        r.headers_mut().append(
+            header::SET_COOKIE,
+            format!("wf_theme={}; Path=/; SameSite=Lax; Max-Age=2592000", if sombre { "dark" } else { "light" }).parse().unwrap(),
+        );
+    } else if app.cfg.sessions_wf() {
+        let jeton = cookie(&headers, "wf_session");
+        if let Some(s) = app.reseau.session(&jeton) {
+            app.reseau.changer_theme(&jeton, sombre);
+            app.comptes.changer_theme(&s.compte, sombre);
+        }
+    }
+    r
+}
+
+// ══════════════════════════════════════════════════════════════════
 // WebSocket
 // ══════════════════════════════════════════════════════════════════
 async fn ws(
@@ -1245,27 +1601,12 @@ async fn ws(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
 ) -> Response {
-    // Anti-CSWSH : si le navigateur envoie un Origin, son hôte doit correspondre
-    // à celui du site (bloque les connexions WebSocket depuis un autre site).
-    // Compatible reverse-proxy : on accepte Host, X-Forwarded-Host ou l'URL publique.
-    if let Some(orig) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
-        let hote_orig = orig.split("://").nth(1).unwrap_or("").trim_end_matches('/').to_ascii_lowercase();
-        let mut hotes_ok: Vec<String> = Vec::new();
-        for h in [header::HOST.as_str(), "x-forwarded-host"] {
-            if let Some(v) = headers.get(h).and_then(|v| v.to_str().ok()) {
-                hotes_ok.push(v.trim().trim_end_matches('/').to_ascii_lowercase());
-            }
-        }
-        if let Some(h) = app.cfg.url_publique.split("://").nth(1) {
-            if !h.is_empty() { hotes_ok.push(h.trim_end_matches('/').to_ascii_lowercase()); }
-        }
-        if !hote_orig.is_empty() && !hotes_ok.is_empty() && !hotes_ok.iter().any(|h| h == &hote_orig) {
-            return (StatusCode::FORBIDDEN, "Origine non autorisée").into_response();
-        }
+    if !origine_ok(&app, &headers) {
+        return (StatusCode::FORBIDDEN, "Origine non autorisée").into_response();
     }
     match authentifier(&app, &headers, addr).await {
         Some(id) => ws.on_upgrade(move |s| client(app, s, id)),
-        None => (StatusCode::UNAUTHORIZED, "Session VEX invalide ou expiree").into_response(),
+        None => (StatusCode::UNAUTHORIZED, "Session invalide ou expiree").into_response(),
     }
 }
 
@@ -1279,7 +1620,8 @@ async fn client(app: Partage, socket: WebSocket, id: Identite) {
 
     {
         let m = app.monde.lock().unwrap();
-        let _ = tx.try_send(vue::init(&m, &id.nom, admin, app.cfg.vitesse, &app.cfg.vex_url));
+        let vex_url = if app.cfg.mode_vex() { app.cfg.vex_url.as_str() } else { "" };
+        let _ = tx.try_send(vue::init(&m, &id.nom, admin, app.cfg.vitesse, vex_url));
         let bl = jeu::bilans(&m);
         let vis = vue::visions(&m, &bl);
         let publics = vue::publics(&m, &bl);
