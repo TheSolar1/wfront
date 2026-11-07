@@ -39,6 +39,14 @@
   </form>
   <script>
     if (document.getElementById('invite').dataset.actif !== '1') document.getElementById('invite').remove();
+    // Mode vex (meme serveur que VEX) : pas de choix de nœud, la connexion
+    // se fait sur la page de VEX ; ici seulement le formulaire invite.
+    else if ('__MODE__' === 'vex') {
+      document.getElementById('f').style.display = 'none';
+      var v = document.createElement('a'); v.className = 'wf-lien'; v.href = '__VEX_LOGIN__'; v.textContent = 'Plutôt se connecter avec VEX';
+      document.getElementById('invite').appendChild(v);
+      document.querySelector('#invite input').focus();
+    }
     // Arrivee par « Jouer sans compte » : seulement le formulaire invite.
     else if (location.hash === '#invite') {
       document.getElementById('f').style.display = 'none';
