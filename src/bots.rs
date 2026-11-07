@@ -19,8 +19,8 @@ use rand::Rng;
 use serde_json::json;
 use std::collections::{BTreeMap, HashMap};
 
-/// Identifiants des bots : negatifs, jamais en collision avec les comptes
-/// et les invites (>= 2^61).
+/// Identifiants des bots : bien en dessous des ids du mode dev
+/// (-1 a -1e9), des comptes VEX (positifs) et du mode reseau (>= 2^61).
 const BASE_ID: i64 = -2_000_000_000;
 /// Un bot reflechit toutes les N secondes de jeu.
 const REFLEXION_S: f64 = 6.0;

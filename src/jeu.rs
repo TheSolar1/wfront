@@ -1781,7 +1781,7 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
 }
 
 /// Retire une nation et rend toutes ses terres neutres (administration).
-pub fn supprimer_pays(m: &mut Monde, cible: u32) {
+fn supprimer_pays(m: &mut Monde, cible: u32) {
     for c in m.cases.iter_mut().filter(|c| c.proprio == Some(cible)) {
         c.proprio = None;
         if c.bat.is_some() {
@@ -2338,7 +2338,8 @@ pub struct Joueur<'a> {
     pub user_id: i64,
     pub nom: &'a str,
     pub admin: bool,
-    /// Administrateurs seulement : autorise la commande de test `dev_tout`.
+    /// Uniquement en mode "dev" (jamais avec l'authentification VEX) :
+    /// autorise la commande de test `dev_tout`.
     pub triche: bool,
 }
 

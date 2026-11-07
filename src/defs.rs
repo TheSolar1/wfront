@@ -566,7 +566,7 @@ pub const COULEURS_PAYS: &[&str] = &[
     "#6d4c41", "#3949ab", "#7cb342", "#f4511e", "#5e35b1", "#00897b", "#c0ca33", "#546e7a",
 ];
 
-/// Emblemes proposes (icones de static/img/solid).
+/// Emblemes proposes (icones du jeu d'icones VEX).
 pub const EMBLEMES: &[&str] = &[
     "star", "crown", "shield-halved", "dove", "sun", "moon", "fire-flame-curved", "bolt",
     "anchor", "tree", "mountain", "feather", "chess-knight", "chess-rook", "dragon", "crow",

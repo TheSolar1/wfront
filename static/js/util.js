@@ -5,7 +5,7 @@
 /** Racine publique de WFront ("/" ou "/wfront/" derriere un proxy). */
 export const BASE = location.pathname.replace(/[^/]*$/, '');
 
-/** Icone du jeu d'icones (static/img/solid), teintee par CSS (currentColor).
+/** Icone du jeu d'icones VEX (static/img/solid), teintee par CSS (currentColor).
  *  Chemin absolu obligatoire : une url() relative placee dans une variable
  *  CSS se resout par rapport a la feuille de style, pas a la page. */
 export function ico(nom, cls = '', style = '') {
