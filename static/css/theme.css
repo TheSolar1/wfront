@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════════════════════════
-   theme.css — Tokens de thème partagés VEX
+   theme.css — Tokens de thème de WFront (clair / sombre)
    À charger sur toutes les pages via <link rel="stylesheet" href="/static/css/theme.css">
    Le thème est piloté par l'attribut data-theme sur <html>, injecté
    côté serveur (function::get_theme_attr), jamais par du JS/localStorage.
@@ -17,8 +17,8 @@
   --text-m: #6b7280;
   --input: #ffffff;
 
-  --vex-green-1: #66bb6a;
-  --vex-green-2: #388e3c;
+  --vert-1: #66bb6a;
+  --vert-2: #388e3c;
   --accent: #4fa553;
   --alt: rgba(22,163,74,.10);
   --aglow: rgba(22,163,74,.22);
@@ -31,7 +31,7 @@
      fond blanc uni rendait illisibles le nom d'utilisateur, les icones
      et le fil d'ariane, tous blancs (voir .user-name-top-7844,
      .topbar-btn-svg-7844, .nav-bc-link-7844 plus bas). */
-  --nav-gradient: linear-gradient(135deg,var(--vex-green-1) 0%,var(--vex-green-2) 100%);
+  --nav-gradient: linear-gradient(135deg,var(--vert-1) 0%,var(--vert-2) 100%);
   --shadow: 0 1px 3px rgba(0,0,0,.06), 0 4px 14px rgba(0,0,0,.04);
   --radius: 12px;
 
@@ -41,7 +41,7 @@
 
   /* Filtre CSS pour teinter en vert accent une icône SVG monochrome
      (noire) chargée via <img> — utilisé par la nav (build_nav_html). */
-  /* Couleur unique des icones = VERT de VEX (demande utilisateur, 26/09).
+  /* Couleur unique des icones = vert de WFront (demande utilisateur, 26/09).
      --icon-filter = icones <img>, --icon-color = icones SVG en ligne. */
   --icon-filter: invert(35%) sepia(14%) saturate(1771%) hue-rotate(73deg) brightness(128%) contrast(89%);
   --icon-color: #3e8e41;
@@ -49,7 +49,7 @@
 }
 
 /* Theme sombre : noir neutre (l'ancien #1a1f2e/#1e2435 tirait sur le
-   bleu) et vert VEX #43a047 au lieu du #4ade80, trop lumineux. */
+   bleu) et vert #43a047 au lieu du #4ade80, trop lumineux. */
 [data-theme="dark"] {
   color-scheme: dark;
   --bg: #0a0a0a;
@@ -83,8 +83,7 @@
 }
 
 /* Theme "Automatique" : jetons sombres si l'appareil est en mode sombre.
-   (vex-ui.js remplace ensuite "auto" par "light"/"dark" pour que les
-   regles [data-theme="dark"] propres a chaque page s'appliquent aussi.) */
+*/
 @media (prefers-color-scheme: dark) {
   [data-theme="auto"] {
     color-scheme: dark;
@@ -123,7 +122,7 @@
    l'interface) : <span class="vi" style="--i:url(/static/img/solid/lock.svg)"></span> */
 .vi{display:inline-block;width:1em;height:1em;vertical-align:-.125em;flex-shrink:0;background:currentColor;-webkit-mask:var(--i) center/contain no-repeat;mask:var(--i) center/contain no-repeat}
 
-/* Cases a cocher / boutons radio / curseurs au vert VEX. */
+/* Cases a cocher / boutons radio / curseurs en vert. */
 :root { accent-color: var(--accent); }
 
 /* Regle des icones (toutes les pages) : gris du texte secondaire.
@@ -145,44 +144,6 @@ html[data-theme] body {
 }
 
 /* ── Classes utilitaires génériques réutilisables sur toutes les pages ── */
-.vex-card {
-  background: var(--surface);
-  border: 1px solid var(--panel-border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-}
-.vex-sidebar {
-  background: var(--sidebar-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 16px;
-  backdrop-filter: blur(10px);
-}
-.vex-sidebar-link {
-  color: var(--text);
-}
-.vex-sidebar-link:hover {
-  background: var(--sidebar-hover);
-  color: var(--accent);
-}
-.vex-sidebar-link.active {
-  background: var(--sidebar-active);
-  color: #fff;
-}
-.vex-text-dim { color: var(--text-dim); }
-.vex-input {
-  background: var(--input);
-  color: var(--text);
-  border: 1px solid var(--panel-border);
-}
-.vex-btn-primary {
-  background: var(--accent);
-  color: #fff;
-}
-.vex-btn-danger {
-  background: var(--danger);
-  color: #fff;
-}
-
 /* ══════════════════════════════════════════════════════════════════
    Nav globale (build_nav_html, function.rs) — barre du haut, popup
    applis, menu profil, panneau latéral, fil d'ariane.
@@ -192,7 +153,7 @@ html[data-theme] body {
    (<link rel="stylesheet" href="/static/css/theme.css">) sous peine
    d'une nav sans mise en forme.
    ══════════════════════════════════════════════════════════════════ */
-.top-nav-bar-haut7844 *,.apps-popup-7844 *,.profile-menu-7844 *,.nav-sidebar-7844 * { box-sizing:border-box; margin:0; padding:0; }
+.top-nav-bar-haut7844 *,.profile-menu-7844 *,.nav-sidebar-7844 * { box-sizing:border-box; margin:0; padding:0; }
 
 .top-nav-bar-haut7844 { position:fixed;top:0;left:0;right:0;height:60px; background:var(--nav-gradient); box-shadow:var(--shadow); display:flex;align-items:center;justify-content:space-between; padding:0 20px;z-index:1000; }
 .top-nav-left-7844,.top-nav-right-7844 { display:flex;align-items:center;gap:12px; }
@@ -207,13 +168,11 @@ html[data-theme] body {
 .user-info-top-7844 { display:flex;align-items:center;gap:12px;cursor:pointer; padding:6px 12px;border-radius:6px;transition:background .2s; text-decoration:none!important; }
 .user-info-top-7844:hover { background:rgba(0,0,0,0.18); }
 .user-name-top-7844 { font-size:14px;font-weight:600;color:#ffffff!important; max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; font-family:Arial,sans-serif; }
-.user-name-top-7844.fona { color:transparent!important;-webkit-background-clip:text;background-clip:text; background-image:url('/static/img/image2.png'),url('/static/img/image3.png'); background-size:100% 200%;background-position:100% 100%,100% 200%; background-repeat:no-repeat,no-repeat; animation:slideImages7844 6s linear infinite;font-weight:700; }
 @keyframes slideImages7844 { 0%,100% { background-position:100% 100%,100% 200%; } 50% { background-position:100% 0%,100% 100%; } }
 
 .user-icon-top-7844 { width:32px;height:32px;border-radius:50%; background:rgba(0,0,0,0.20);border:2px solid rgba(255,255,255,0.40); padding:6px;object-fit:contain; filter:brightness(0) invert(1); flex-shrink:0; }
 
 /* Popups / menus flottants — fond 100% opaque (var(--surface)) */
-.apps-popup-7844 { position:fixed;top:70px;left:20px;width:360px; background:var(--surface);border:1px solid var(--panel-border); border-radius:var(--radius);box-shadow:var(--shadow); padding:16px;display:none;z-index:1001;overflow:hidden; }
 .apps-grid-7844 { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
 .app-item-7844 { display:flex;flex-direction:column;align-items:center;justify-content:center; width:100%;padding:18px 8px 14px;min-height:88px; border-radius:var(--radius); background:var(--surface);border:1px solid var(--border); text-decoration:none!important; transition:background .15s; gap:9px; }
 .app-item-7844:hover { background:var(--sidebar-hover);text-decoration:none!important; }
@@ -273,7 +232,6 @@ body { padding-top:60px; }
   .nav-sidebar-7844.show { transform:translateX(0); }
   .nav-sidebar-7844.collapsed { transform:translateX(-100%); }
   body.nav-sidebar-open-7844 .nav-sidebar-content-push-7844 { margin-left:0; }
-  .apps-popup-7844 { left:10px;width:calc(100% - 20px); }
-  .profile-menu-7844 { right:10px;width:calc(100% - 20px); }
+    .profile-menu-7844 { right:10px;width:calc(100% - 20px); }
   .nav-bc-current-7844 { max-width:180px; }
 }

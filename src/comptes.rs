@@ -1,12 +1,12 @@
 // ══════════════════════════════════════════════════════════════════
 // comptes.rs — Comptes WFront (mode "comptes", celui de la sortie)
 //
-// Le jeu gere lui-meme ses joueurs, sans VEX : un pseudo unique et un
+// Le jeu gere lui-meme ses joueurs : un pseudo unique et un
 // mot de passe. Le mot de passe n'est jamais garde en clair : seul son
 // empreinte Argon2id (sel aleatoire) est ecrite dans data/comptes.json.
 //
 // L'identite d'un compte est « wf:<pseudo en minuscules> » : c'est elle
-// qui donne l'identifiant numerique de la nation (reseau::id_compte) et
+// qui donne l'identifiant numerique de la nation (sessions::id_compte) et
 // qu'on compare a la liste « admins » de config.json.
 // ══════════════════════════════════════════════════════════════════
 

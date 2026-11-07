@@ -1,9 +1,8 @@
 {
-  "_aide": "Copier en config.json. auth = \"comptes\" (production) : les joueurs creent un compte WFront (pseudo + mot de passe) ou jouent en invite. Les modes \"reseau\", \"vex\" et \"dev\" ne servent qu'aux tests entre developpeurs (voir README).",
+  "_aide": "Copier en config.json. Les joueurs creent un compte WFront (pseudo + mot de passe) ou jouent en invite. Toutes les donnees sont dans le dossier data/ (voir README).",
   "adresse": "0.0.0.0",
   "port": 8095,
   "url_publique": "https://jeu.exemple.org",
-  "auth": "comptes",
   "proxy_de_confiance": false,
   "carte_largeur": 84,
   "carte_hauteur": 52,

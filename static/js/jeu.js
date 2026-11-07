@@ -59,9 +59,8 @@ async function verifierSession() {
   try {
     const r = await fetch('jeu', { redirect: 'manual', cache: 'no-store' });
     if (r.type === 'opaqueredirect' || r.status === 302 || r.status === 303) {
-      const vex = corps.dataset.mode === 'vex';
       modale(`<div class="wf-modale-tete">${ico('user-clock')}<h2>Session expirée</h2></div>
-        <p>${vex ? 'Votre session VEX a expiré (elle dure une heure). Reconnectez-vous à VEX puis revenez ici' : 'Votre session a expiré ou a été fermée (par exemple après un changement de mot de passe). Reconnectez-vous'} : votre nation vous attend.</p>
+        <p>Votre session a expiré ou a été fermée (par exemple après un changement de mot de passe). Reconnectez-vous : votre nation vous attend.</p>
         <div class="wf-boutons fin"><a class="wf-btn" href="${esc(corps.dataset.connexion)}">${ico('right-to-bracket')} Se reconnecter</a></div>`, { fermable: false });
     }
   } catch { /* serveur injoignable : on reessaie */ }
@@ -1203,11 +1202,7 @@ function invite() {
   if (corps.dataset.invite !== '1' || document.getElementById('wf-invite')) return;
   const m = document.querySelector('#profile-menu');
   if (!m) return;
-  if (corps.dataset.mode === 'comptes') {
-    m.insertAdjacentHTML('afterbegin', `<a id="wf-invite" href="connexion#inscription" title="Votre nation passe sur votre compte : vous la retrouvez sur tous vos appareils."><img src="static/img/solid/user-plus.svg" class="pm-icon-svg-7844" alt="">Créer un compte</a>`);
-  } else {
-    m.insertAdjacentHTML('afterbegin', `<a id="wf-invite" href="${esc(corps.dataset.vexDirect)}" title="Votre nation passe sur votre compte VEX : vous la retrouvez partout."><img src="static/img/vex.svg" class="pm-icon-svg-7844" alt="">Se connecter avec VEX</a>`);
-  }
+  m.insertAdjacentHTML('afterbegin', `<a id="wf-invite" href="connexion#inscription" title="Votre nation passe sur votre compte : vous la retrouvez sur tous vos appareils."><img src="static/img/solid/user-plus.svg" class="pm-icon-svg-7844" alt="">Créer un compte</a>`);
 }
 
 function memoriserHud() {
@@ -1263,18 +1258,10 @@ setInterval(() => {
   if (S.pret) majAlertes();
 }, 1000);
 
-// Dev : le menu profil pointe vers la deconnexion locale, et
 // devTout() (console du navigateur) donne toutes les technologies et des
-// ressources pour tester la fin de partie. Refuse par le serveur hors mode dev.
-if (corps.dataset.mode === 'reseau') {
-  // Connexion reseau : se deconnecter de WFront (pas du nœud VEX).
-  document.querySelectorAll('#profile-menu a').forEach(a => { if (a.href.includes('logout')) a.href = 'deconnexion'; });
-}
-if (corps.dataset.mode === 'dev') {
-  document.querySelectorAll('#profile-menu a').forEach(a => { if (/logout|deconnexion/.test(a.getAttribute('href'))) a.href = 'dev/sortir'; });
-  // Seulement avec la cle d'administration (le serveur le verifie aussi).
-  window.devTout = () => S.joueur?.admin ? agir('dev_tout') : console.warn("devTout : clé d'administration requise (page /admin).");
-}
+// ressources pour tester la fin de partie. Reserve aux administrateurs
+// (le serveur le verifie aussi).
+window.devTout = () => S.joueur?.admin ? agir('dev_tout') : console.warn("devTout : réservé aux administrateurs (page /admin).");
 
 initRadial();
 connecter();

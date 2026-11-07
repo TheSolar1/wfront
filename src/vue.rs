@@ -111,7 +111,7 @@ fn hex_bits(v: &[bool]) -> String {
     s
 }
 
-pub fn init(m: &Monde, nom: &str, admin: bool, vitesse: f64, vex_url: &str) -> String {
+pub fn init(m: &Monde, nom: &str, admin: bool, vitesse: f64) -> String {
     let terrain: String = m.cases.iter().map(|c| std::char::from_digit(c.terrain as u32, 10).unwrap()).collect();
     let depot: String = m.cases.iter().map(|c| std::char::from_digit(c.depot as u32, 10).unwrap()).collect();
     let cotes: String = (0..m.cases.len()).map(|i| if m.est_cote(i) { '1' } else { '0' }).collect();
@@ -119,7 +119,6 @@ pub fn init(m: &Monde, nom: &str, admin: bool, vitesse: f64, vex_url: &str) -> S
         "t": "init",
         "joueur": { "nom": nom, "admin": admin },
         "vitesse": vitesse,
-        "vex_url": vex_url,
         "carte": { "largeur": m.largeur, "hauteur": m.hauteur, "terrain": terrain, "depot": depot, "cotes": cotes },
         "defs": {
             "ressources": RESSOURCES,

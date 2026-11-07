@@ -2,7 +2,7 @@
 // carte.js — Rendu 3D de la carte (Three.js)
 // Hexagones extrudes (InstancedMesh), frontieres aux couleurs des
 // nations, batiments / armees / missiles en sprites dessines a partir
-// des icones VEX, effets (explosions, frappe nucleaire), camera libre.
+// des icones du jeu, effets (explosions, frappe nucleaire), camera libre.
 // ══════════════════════════════════════════════════════════════════
 
 import * as THREE from '../vendor/three.module.min.js';

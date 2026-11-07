@@ -2338,8 +2338,7 @@ pub struct Joueur<'a> {
     pub user_id: i64,
     pub nom: &'a str,
     pub admin: bool,
-    /// Uniquement en mode "dev" (jamais avec l'authentification VEX) :
-    /// autorise la commande de test `dev_tout`.
+    /// Administrateurs seulement : autorise la commande de test `dev_tout`.
     pub triche: bool,
 }
 
