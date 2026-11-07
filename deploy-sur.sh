@@ -9,17 +9,24 @@
 #
 # PAS de cron, PAS de pull automatique : tu lances ce script toi-même.
 #
-#   cd ~/wfront
+#   cd ~/wfront                # (ou ~/worldfront : le nom du dossier
+#                              #  n'a pas d'importance)
 #   ./deploy-sur.sh            # montre les nouveautés puis demande confirmation
 #   ./deploy-sur.sh --oui      # enchaîne sans la question (si tu as déjà vu)
 #
-# Ancien nom : si le dossier s'appelle encore ~/worldfront, renomme-le
-# une fois (mv ~/worldfront ~/wfront). L'ancien process « worldfront »
-# est arrêté automatiquement à la bascule.
+# Ancien nom : le binaire s'appelait « worldfront ». S'il tourne encore,
+# il est arrêté à la bascule et remplacé par « wfront » ; en cas
+# d'échec, c'est lui qui est relancé.
 # ══════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-DIR="$HOME/wfront"
+# Tout le script est lu avant d'être exécuté (accolades + exit final) :
+# le « git pull » plus bas peut donc le modifier sans danger.
+{
+# Dossier du jeu = celui qui contient ce script, quel que soit son nom
+# (ou le dossier courant si le script est lancé depuis une copie ailleurs).
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$DIR/Cargo.toml" ] || DIR="$(pwd)"
 PORT=8095
 BRANCHE=main
 BIN=wfront
@@ -59,7 +66,10 @@ if [ "$AUTO_OUI" -ne 1 ]; then
 fi
 
 echo "── 2. Sauvegarde de l'état actuel ─────────────────────────"
-[ -f "$BIN" ] && cp -f "$BIN" "$SAUVE/$BIN.$HORO" && echo "  binaire → $SAUVE/$BIN.$HORO"
+# Binaire en place : « wfront », ou « worldfront » avant le renommage.
+EN_PLACE=""
+if [ -f "$BIN" ]; then EN_PLACE="$BIN"; elif [ -f "$ANCIEN_BIN" ]; then EN_PLACE="$ANCIEN_BIN"; fi
+[ -n "$EN_PLACE" ] && cp -f "$EN_PLACE" "$SAUVE/$EN_PLACE.$HORO" && echo "  binaire → $SAUVE/$EN_PLACE.$HORO"
 [ -f data/monde.json ] && cp -f data/monde.json "$SAUVE/monde.$HORO.json" && echo "  monde   → $SAUVE/monde.$HORO.json"
 echo "$LOCAL" > "$SAUVE/commit-avant.$HORO"
 
@@ -96,16 +106,18 @@ for _ in $(seq 1 10); do
 done
 if [ "$OK" = "1" ]; then
   echo "✅ WFront déployé et répond 200 sur le port $PORT."
-  echo "   (sauvegarde de l'ancien binaire : $SAUVE/$BIN.$HORO)"
+  [ -n "$EN_PLACE" ] && echo "   (sauvegarde de l'ancien binaire : $SAUVE/$EN_PLACE.$HORO)"
 else
   echo "❌ Le nouveau site ne répond pas. RETOUR ARRIÈRE automatique…"
   pkill -x "$BIN" 2>/dev/null || true
   for _ in $(seq 1 10); do pgrep -x "$BIN" >/dev/null || break; sleep 1; done
-  if [ -f "$SAUVE/$BIN.$HORO" ]; then
-    cp -f "$SAUVE/$BIN.$HORO" "./$BIN"
-    setsid nohup "./$BIN" > "$DIR/$BIN.out" 2>&1 < /dev/null &
+  if [ -n "$EN_PLACE" ] && [ -f "$SAUVE/$EN_PLACE.$HORO" ]; then
+    cp -f "$SAUVE/$EN_PLACE.$HORO" "./$EN_PLACE"
+    setsid nohup "./$EN_PLACE" > "$DIR/$EN_PLACE.out" 2>&1 < /dev/null &
     git reset --hard "$LOCAL" >/dev/null 2>&1 || true
     echo "   Ancien binaire et ancien code restaurés."
   fi
   exit 1
 fi
+exit 0
+}
