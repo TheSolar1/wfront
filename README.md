@@ -26,12 +26,13 @@ Computer-controlled nations can fill the game (`"bots"` in `config.json`, 0 for 
 
 ## Real countries (world map)
 
-On the world map, every **real country** exists: the 194 independent states plus Taiwan, Palestine, Kosovo and Western Sahara (198 in total). Overseas territories belong to the country that governs them (French Guiana, Réunion, New Caledonia → France; Greenland → Denmark; Puerto Rico → United States; Falklands → United Kingdom…). Even micro-states and small island nations get at least one hex.
+On the world map, the **real countries** are playable: the independent states plus Taiwan, Palestine, Kosovo and Western Sahara, as long as they cover at least **10 hexes** (`MIN_CASES` in `monde.rs`; about 130 countries at 500 wide). Smaller countries (micro-states, small islands, and at this size also Belgium, the Netherlands, Switzerland…) are not playable: their land is free land that neighbours can annex. Overseas territories belong to the country that governs them (French Guiana, Réunion, New Caledonia → France; Greenland → Denmark; Puerto Rico → United States; Falklands → United Kingdom…).
 
 - When joining, a player **chooses a country**: they get its whole territory (overseas included) and their capital is placed at the real capital. A country already led by another player cannot be taken.
 - **No computer nations**: the world is played between players only, as a persistent server over weeks.
 - If a country is wiped out, its player can take another free country (or the free part of a country).
 - On the map, thin lines show the real borders; hovering a hex shows its real country and whether it is free.
+- **Getting started**: after choosing a country, a step-by-step tutorial shows the interface (resources, building, troops, menu). An **objectives** card on the map states the goal (become the world's first power in the overall ranking) and the next step to take (build, research, expand, recruit, find an ally, reach the top 10). The tutorial can be replayed from the Guide.
 
 Country borders and names come from Natural Earth and the `world-countries` package; capitals are listed in `outils/carte-monde/capitales.js`.
 

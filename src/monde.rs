@@ -494,6 +494,9 @@ struct DecoupageReel {
     capitales: Vec<usize>,
 }
 
+/// Taille minimale (en cases) d'un vrai pays pour etre jouable.
+pub const MIN_CASES: usize = 10;
+
 fn hauteur_monde_reel(largeur: usize) -> usize {
     let c = monde_reel();
     ((largeur as f64 * c.hauteur as f64 / c.largeur as f64 / 0.866).round() as usize).max(10)
@@ -579,49 +582,17 @@ fn decouper_monde_reel(largeur: usize, hauteur: usize) -> DecoupageReel {
         let col = (u * lw - 0.5 - if row % 2 == 1 { 0.5 } else { 0.0 }).round().clamp(0.0, (largeur - 1) as f64) as usize;
         row * largeur + col
     };
-    // Chaque vrai pays a au moins une case : les micro-Etats et les petites
-    // iles recoivent la case de leur capitale (prise sur un grand voisin,
-    // ou gagnee sur la mer).
+    // Les pays trop petits pour etre joues (moins de MIN_CASES cases :
+    // micro-Etats, petites iles…) ne sont pas jouables : leurs terres
+    // deviennent des terres libres, que leurs voisins peuvent conquerir.
     let mut taille = vec![0usize; n_pays + 1];
     for &r in &regions {
         taille[r as usize] += 1;
     }
-    for k in 1..=n_pays {
-        if taille[k] > 0 {
-            continue;
+    for r in regions.iter_mut() {
+        if *r != 0 && taille[*r as usize] < MIN_CASES {
+            *r = 0;
         }
-        let [u, v] = pays_reels()[k - 1].capitale;
-        let c0 = case_de(u, v);
-        // La case de la capitale, ou la plus proche qui n'est pas la seule
-        // case d'un autre pays.
-        let libre = |i: usize| regions[i] == 0 || taille[regions[i] as usize] > 1;
-        let mut cible = c0;
-        if !libre(c0) {
-            let mut file = vec![c0];
-            let mut vu = std::collections::HashSet::from([c0]);
-            let mut q = 0;
-            while q < file.len() {
-                let i = file[q];
-                q += 1;
-                if libre(i) {
-                    cible = i;
-                    break;
-                }
-                for v in voisins(i) {
-                    if vu.insert(v) {
-                        file.push(v);
-                    }
-                }
-            }
-        }
-        if regions[cible] != 0 {
-            taille[regions[cible] as usize] -= 1;
-        }
-        if terrains[cible] == T_OCEAN {
-            terrains[cible] = T_PLAINE;
-        }
-        regions[cible] = k as u8;
-        taille[k] += 1;
     }
     // Capitales : la case de la vraie capitale, ou la case du pays la plus
     // proche.
@@ -632,6 +603,9 @@ fn decouper_monde_reel(largeur: usize, hauteur: usize) -> DecoupageReel {
         (ax - bx).hypot(ay - by)
     };
     for k in 1..=n_pays {
+        if taille[k] < MIN_CASES {
+            continue; // pays non jouable
+        }
         let [u, v] = pays_reels()[k - 1].capitale;
         let c0 = case_de(u, v);
         capitales[k] = if regions[c0] as usize == k {
@@ -781,9 +755,14 @@ impl Monde {
         }
     }
 
-    /// Vrai pays d'une case (0 = aucun).
+    /// Vrai pays d'une case (0 = aucun : mer ou terre libre).
     pub fn region(&self, i: usize) -> u8 {
         self.regions.get(i).copied().unwrap_or(0)
+    }
+
+    /// Le vrai pays k peut-il etre choisi (assez grand pour etre joue) ?
+    pub fn pays_reel_jouable(&self, k: u8) -> bool {
+        self.capitales_reelles.get(k as usize).map(|&c| c < self.cases.len()).unwrap_or(false)
     }
 
     /// Fin de la generation, commune aux deux cartes : mer cotiere,
@@ -942,12 +921,20 @@ mod tests_monde_reel {
         for &r in &m.regions {
             taille[r as usize] += 1;
         }
+        let jouables = (1..=n).filter(|&k| m.pays_reel_jouable(k as u8)).count();
+        assert!((110..160).contains(&jouables), "{jouables} pays jouables");
         for k in 1..=n {
-            assert!(taille[k] >= 1, "{} n'a aucune case", pays_reels()[k - 1].nom);
-            let c = m.capitales_reelles[k];
-            assert_eq!(m.region(c) as usize, k, "capitale de {}", pays_reels()[k - 1].nom);
-            assert!(est_terre(m.cases[c].terrain));
+            if m.pays_reel_jouable(k as u8) {
+                assert!(taille[k] >= MIN_CASES, "{} : {} cases", pays_reels()[k - 1].nom, taille[k]);
+                let c = m.capitales_reelles[k];
+                assert_eq!(m.region(c) as usize, k, "capitale de {}", pays_reels()[k - 1].nom);
+                assert!(est_terre(m.cases[c].terrain));
+            } else {
+                assert_eq!(taille[k], 0, "{} non jouable mais present", pays_reels()[k - 1].nom);
+            }
         }
+        // Micro-Etats : terres libres.
+        assert!(!m.pays_reel_jouable(index_pays("MC")) && !m.pays_reel_jouable(index_pays("LU")));
         // Grands pays bien plus grands que les petits.
         assert!(taille[index_pays("RU") as usize] > 20 * taille[index_pays("FR") as usize]);
         assert!(taille[index_pays("FR") as usize] > 15);
@@ -967,8 +954,8 @@ mod tests_monde_reel {
     #[test]
     fn un_joueur_prend_un_vrai_pays_libre() {
         use crate::jeu::{commande, Joueur, Regles};
-        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 300 };
-        let mut m = Monde::generer_monde_reel(300, 9);
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 500 };
+        let mut m = Monde::generer_monde_reel(500, 9);
         let fr = index_pays("FR");
         let ja = Joueur { user_id: 1, nom: "Alice", admin: false, triche: false };
         let jb = Joueur { user_id: 2, nom: "Bob", admin: false, triche: false };
@@ -985,6 +972,8 @@ mod tests_monde_reel {
         // Deja pris.
         let e = commande(&mut m, &jb, &cmd(fr), &regles).unwrap_err();
         assert!(e.contains("Alice"), "{e}");
+        // Un micro-Etat n'est pas jouable.
+        assert!(commande(&mut m, &jb, &cmd(index_pays("LU")), &regles).is_err(), "Luxembourg");
         commande(&mut m, &jb, &cmd(index_pays("DE")), &regles).unwrap();
         assert_eq!(m.pays.values().find(|p| p.user_id == 2).unwrap().nom, "Allemagne");
     }
@@ -998,3 +987,4 @@ mod tests_monde_reel {
         }
     }
 }
+

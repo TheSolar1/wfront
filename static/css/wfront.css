@@ -864,3 +864,49 @@ body[data-mode="dev"] .wf-apps-vex, body[data-mode="dev"] .wf-lien-vex { display
 .wf-pays-choix[hidden] { display: none; }
 .wf-pays-choisi { margin: 0; font-size: 13.5px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
 .wf-pays-choisi .ico { color: var(--accent); }
+
+/* ── Objectifs (le but du jeu, pas a pas) ───────────────────────── */
+.wf-objectifs { position: absolute; top: 62px; left: 12px; z-index: 6; width: min(330px, calc(100% - 24px));
+  background: var(--surface); border: 1px solid var(--panel-border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+.wf-objectifs[hidden] { display: none; }
+.wf-obj-tete { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; }
+.wf-obj-tete > .ico:first-child { width: 22px; height: 22px; color: var(--accent); flex: none; }
+.wf-obj-tete div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.wf-obj-tete b { font-size: 13.5px; line-height: 1.25; }
+.wf-obj-tete small { color: var(--text-dim); font-size: 12px; }
+.wf-obj-fleche { width: 14px; height: 14px; color: var(--text-dim); flex: none; }
+.wf-obj-corps { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.wf-objectifs.reduit .wf-obj-corps { display: none; }
+.wf-obj-actuel { display: flex; gap: 10px; background: var(--alt); border-radius: 10px; padding: 10px; }
+.wf-obj-actuel > .ico { width: 20px; height: 20px; color: var(--accent); flex: none; margin-top: 2px; }
+.wf-obj-actuel b { font-size: 13.5px; }
+.wf-obj-actuel p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--text); }
+.wf-obj-liste { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.wf-obj-liste li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-dim); }
+.wf-obj-liste li .ico { width: 14px; height: 14px; }
+.wf-obj-liste li.fait { color: var(--accent); text-decoration: line-through; }
+.wf-obj-liste li.actuel { color: var(--text); font-weight: 700; }
+.wf-obj-liste li.actuel .ico { color: var(--accent); }
+.wf-objectifs .wf-lien { align-self: flex-start; display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.wf-objectifs .wf-lien .ico { width: 14px; height: 14px; }
+
+/* ── Tutoriel ───────────────────────────────────────────────────── */
+.wf-tuto { position: fixed; inset: 0; z-index: 90; }
+.wf-tuto[hidden] { display: none; }
+.wf-tuto-voile { position: absolute; inset: 0; background: rgba(0,0,0,.55); }
+.wf-tuto-trou { position: absolute; border-radius: 12px; box-shadow: 0 0 0 9999px rgba(0,0,0,.55); outline: 3px solid var(--accent); pointer-events: none; transition: all .25s ease; }
+.wf-tuto-bulle { position: absolute; background: var(--surface); color: var(--text); border: 1px solid var(--panel-border); border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.35); padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; transition: left .25s ease, top .25s ease; }
+.wf-tuto-tete { display: flex; align-items: center; gap: 10px; }
+.wf-tuto-tete .ico { width: 24px; height: 24px; color: var(--accent); flex: none; }
+.wf-tuto-tete b { flex: 1; font-size: 16px; line-height: 1.25; }
+.wf-tuto-tete span { color: var(--text-dim); font-size: 12px; }
+.wf-tuto-bulle p { margin: 0; font-size: 14px; line-height: 1.55; }
+.wf-tuto-boutons { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.wf-tuto-boutons span { display: flex; gap: 8px; }
+
+/* ── Guide : le but du jeu ──────────────────────────────────────── */
+.wf-guide-but { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; background: var(--alt); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+.wf-guide-but > .ico { width: 26px; height: 26px; color: var(--accent); flex: none; }
+.wf-guide-but > div { flex: 1; min-width: 200px; }
+.wf-guide-but p { margin: 4px 0 0; }
