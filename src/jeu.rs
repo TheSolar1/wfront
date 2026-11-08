@@ -163,7 +163,9 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
 
         // ── Production (par minute) ──
         // Le territoire rapporte aussi : 0,15 credit par minute et par case.
-        let mut cr = 40.0 * b.n("capitale") + 6.0 * b.n("ville") * ratio + 3.0 * b.n("usine") * ratio + p.pop * 0.18 + 0.15 * b.cases as f64;
+        // Le petrole des puits est vendu : +25 credits par minute et par niveau.
+        let mut cr = 40.0 * b.n("capitale") + 6.0 * b.n("ville") * ratio + 3.0 * b.n("usine") * ratio + p.pop * 0.18 + 0.15 * b.cases as f64
+            + 25.0 * b.n("puits_petrole") * ratio;
         let mut mult_cr = 1.0 + 0.08 * b.n("banque") * ratio;
         mult_cr += 0.05 * p.niv("fiscalite");
         if p.a("eco_etat_providence") { mult_cr += 0.10; }
@@ -178,7 +180,7 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         let extraction = if p.a("ind_extraction") { 1.25 } else { 1.0 };
         let car = b.carrieres;
         // Production par minute et par niveau (relevee le 2026-10-05).
-        let me = (15.0 * b.n("capitale") + (25.0 * b.n("mine") + 10.0 * car[0] + 8.0 * b.n("puits_petrole")) * ratio) * extraction;
+        let me = (15.0 * b.n("capitale") + (25.0 * b.n("mine") + 10.0 * car[0]) * ratio) * extraction;
         let le = (2.0 * b.n("foreuse") + 1.0 * car[3]) * ratio;
         let ur = (8.0 * b.n("mine_uranium") + 4.0 * car[2]) * ratio;
         let tr = (8.0 * b.n("extracteur_tr") + 4.0 * car[1]) * ratio;

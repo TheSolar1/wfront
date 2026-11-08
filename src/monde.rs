@@ -6,7 +6,7 @@
 
 use crate::defs::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct Case {
@@ -494,8 +494,87 @@ struct DecoupageReel {
     capitales: Vec<usize>,
 }
 
+/// Ressources reelles d'un pays (src/ressources_pays.json) : niveau 0 a 3
+/// pour le petrole, le minerai commun, le minerai radioactif et le
+/// minerai rare.
+pub fn ressources_pays(code: &str) -> [u8; 4] {
+    static TABLE: std::sync::OnceLock<HashMap<String, [u8; 4]>> = std::sync::OnceLock::new();
+    let t = TABLE.get_or_init(|| {
+        let brut: HashMap<String, serde_json::Value> = serde_json::from_str(include_str!("ressources_pays.json")).expect("ressources_pays.json invalide");
+        brut.into_iter()
+            .filter(|(_, v)| v.is_object())
+            .map(|(k, v)| {
+                let n = |c: &str| v.get(c).and_then(|x| x.as_u64()).unwrap_or(0).min(3) as u8;
+                (k, [n("petrole"), n("commun"), n("radioactif"), n("rare")])
+            })
+            .collect()
+    });
+    t.get(code).copied().unwrap_or([0, 1, 0, 0])
+}
+
+/// Gisements de la carte du monde : places pays par pays d'apres ses
+/// vraies ressources (petrole en Arabie saoudite, uranium au Kazakhstan…),
+/// sur les terrains qui leur conviennent, regroupes en bassins. Les
+/// crateres de meteorite (deja places) sont gardes.
+fn placer_gisements_reels(cases: &mut [Case], regions: &[u8], largeur: usize, graine: u64) {
+    const DEPOTS_REELS: [u8; 4] = [D_PETROLE, D_METAL, D_URANIUM, D_TERRES_RARES];
+    // Nombre de gisements = COEF[niveau] x racine(cases du pays) : un petit
+    // pays riche en petrole (Emirats, Koweit) en a beaucoup pour sa taille,
+    // sans que les geants (Russie, Canada) n'en aient des centaines.
+    const COEF: [f64; 4] = [0.0, 0.25, 0.6, 1.2];
+    let bruit = Bruit { graine: graine.wrapping_add(31_337) };
+    for c in cases.iter_mut() {
+        if c.depot != D_METEORITE {
+            c.depot = D_AUCUN;
+        }
+    }
+    let mut par_pays: Vec<Vec<usize>> = vec![Vec::new(); pays_reels().len() + 1];
+    for (i, &r) in regions.iter().enumerate() {
+        if r != 0 && est_terre(cases[i].terrain) {
+            par_pays[r as usize].push(i);
+        }
+    }
+    for (k, liste) in par_pays.iter().enumerate().skip(1) {
+        if liste.is_empty() {
+            continue;
+        }
+        let niveaux = ressources_pays(&pays_reels()[k - 1].code);
+        for (r, &depot) in DEPOTS_REELS.iter().enumerate() {
+            let niv = niveaux[r] as usize;
+            if niv == 0 {
+                continue;
+            }
+            let voulus = ((COEF[niv] * (liste.len() as f64).sqrt()).round() as usize).max(1);
+            let preference = |t: u8| -> f64 {
+                match (r, t) {
+                    (0, T_DESERT) => 3.0, (0, T_PLAINE | T_TOUNDRA) => 2.0, (0, T_MONTAGNE) => 0.0,
+                    (1, T_COLLINE) => 3.0, (1, T_MONTAGNE | T_DESERT) => 2.0,
+                    (2, T_MONTAGNE) => 3.0, (2, T_COLLINE | T_DESERT | T_TOUNDRA) => 2.0,
+                    (3, T_COLLINE) => 3.0, (3, T_FORET | T_MONTAGNE) => 2.0,
+                    _ => 1.0,
+                }
+            };
+            let mut candidats: Vec<(f64, usize)> = liste
+                .iter()
+                .filter(|&&i| cases[i].depot == D_AUCUN)
+                .map(|&i| {
+                    let (x, y) = ((i % largeur) as f64, (i / largeur) as f64);
+                    // Bassins : un bruit lent regroupe les gisements.
+                    let bassin = bruit.fbm(x / 6.0 + r as f64 * 17.0, y / 6.0 + r as f64 * 5.0, 3);
+                    let de = bruit.hash(i as i64, r as i64 + 1000);
+                    (preference(cases[i].terrain) * 0.6 + bassin * 3.0 + de * 0.6, i)
+                })
+                .collect();
+            candidats.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            for &(_, i) in candidats.iter().take(voulus) {
+                cases[i].depot = depot;
+            }
+        }
+    }
+}
+
 /// Taille minimale (en cases) d'un vrai pays pour etre jouable.
-pub const MIN_CASES: usize = 10;
+pub const MIN_CASES: usize = 30;
 
 fn hauteur_monde_reel(largeur: usize) -> usize {
     let c = monde_reel();
@@ -592,6 +671,30 @@ fn decouper_monde_reel(largeur: usize, hauteur: usize) -> DecoupageReel {
     for r in regions.iter_mut() {
         if *r != 0 && taille[*r as usize] < MIN_CASES {
             *r = 0;
+        }
+    }
+    // Plus aucune terre sans pays : chaque terre libre (micro-Etat retire,
+    // ile isolee…) revient au pays jouable le plus proche (parcours en
+    // largeur depuis toutes les terres des pays, a travers la mer aussi).
+    {
+        let mut proche = regions.clone();
+        let mut file: std::collections::VecDeque<usize> = (0..proche.len()).filter(|&i| proche[i] != 0).collect();
+        while let Some(i) = file.pop_front() {
+            for v in voisins(i) {
+                if proche[v] == 0 {
+                    proche[v] = proche[i];
+                    file.push_back(v);
+                }
+            }
+        }
+        for i in 0..regions.len() {
+            if terrains[i] != T_OCEAN && regions[i] == 0 {
+                regions[i] = proche[i];
+            }
+        }
+        taille = vec![0usize; n_pays + 1];
+        for &r in &regions {
+            taille[r as usize] += 1;
         }
     }
     // Capitales : la case de la vraie capitale, ou la case du pays la plus
@@ -734,6 +837,7 @@ impl Monde {
         }
         let mut m = Monde::depuis_terrains(largeur, hauteur, graine, cases);
         m.monde_reel = true;
+        placer_gisements_reels(&mut m.cases, &d.regions, largeur, graine);
         // Pas d'ordinateur : le monde se joue entre joueurs.
         m.bots_admin = Some(0);
         m.regions = d.regions;
@@ -912,7 +1016,7 @@ mod tests_monde_reel {
 
     #[test]
     fn chaque_vrai_pays_a_sa_place() {
-        let m = Monde::generer_monde_reel(500, 3);
+        let m = Monde::generer_monde_reel(708, 3);
         assert!(m.monde_reel);
         assert_eq!(m.bots_admin, Some(0), "pas d'ordinateur sur la carte du monde");
         let n = pays_reels().len();
@@ -922,7 +1026,10 @@ mod tests_monde_reel {
             taille[r as usize] += 1;
         }
         let jouables = (1..=n).filter(|&k| m.pays_reel_jouable(k as u8)).count();
-        assert!((110..160).contains(&jouables), "{jouables} pays jouables");
+        assert!((90..140).contains(&jouables), "{jouables} pays jouables");
+        // Plus aucune terre sans pays.
+        let orphelines = (0..m.cases.len()).filter(|&i| est_terre(m.cases[i].terrain) && m.region(i) == 0).count();
+        assert_eq!(orphelines, 0, "terres sans pays");
         for k in 1..=n {
             if m.pays_reel_jouable(k as u8) {
                 assert!(taille[k] >= MIN_CASES, "{} : {} cases", pays_reels()[k - 1].nom, taille[k]);
@@ -933,8 +1040,16 @@ mod tests_monde_reel {
                 assert_eq!(taille[k], 0, "{} non jouable mais present", pays_reels()[k - 1].nom);
             }
         }
-        // Micro-Etats : terres libres.
+        // Micro-Etats : non jouables, leurs terres vont au voisin le plus proche.
         assert!(!m.pays_reel_jouable(index_pays("MC")) && !m.pays_reel_jouable(index_pays("LU")));
+        // Vraies ressources : petrole saoudien, pas de petrole francais,
+        // uranium kazakh.
+        let gis = |code: &str, d: u8| (0..m.cases.len()).filter(|&i| m.region(i) == index_pays(code) && m.cases[i].depot == d).count();
+        assert!(gis("SA", D_PETROLE) >= 20, "petrole saoudien : {}", gis("SA", D_PETROLE));
+        assert!(gis("AE", D_PETROLE) >= 5, "petrole des Emirats : {}", gis("AE", D_PETROLE));
+        assert_eq!(gis("FR", D_PETROLE), 0, "pas de petrole en France");
+        assert!(gis("KZ", D_URANIUM) >= 20, "uranium kazakh");
+        assert!(gis("RU", D_PETROLE) > gis("NO", D_PETROLE));
         // Grands pays bien plus grands que les petits.
         assert!(taille[index_pays("RU") as usize] > 20 * taille[index_pays("FR") as usize]);
         assert!(taille[index_pays("FR") as usize] > 15);
@@ -954,8 +1069,8 @@ mod tests_monde_reel {
     #[test]
     fn un_joueur_prend_un_vrai_pays_libre() {
         use crate::jeu::{commande, Joueur, Regles};
-        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 500 };
-        let mut m = Monde::generer_monde_reel(500, 9);
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 708 };
+        let mut m = Monde::generer_monde_reel(708, 9);
         let fr = index_pays("FR");
         let ja = Joueur { user_id: 1, nom: "Alice", admin: false, triche: false };
         let jb = Joueur { user_id: 2, nom: "Bob", admin: false, triche: false };
@@ -988,3 +1103,30 @@ mod tests_monde_reel {
     }
 }
 
+
+#[cfg(test)]
+mod statistiques_monde_reel {
+    /// `cargo test statistiques -- --ignored --nocapture` : pays jouables,
+    /// leur taille et leurs gisements sur la carte du monde.
+    #[test]
+    #[ignore]
+    fn statistiques() {
+        use crate::defs::*;
+        let m = super::Monde::generer_monde_reel(708, 1);
+        let n = super::pays_reels().len();
+        let mut t = vec![(0usize, [0usize; 4]); n + 1];
+        for (i, c) in m.cases.iter().enumerate() {
+            let k = m.region(i) as usize;
+            t[k].0 += 1;
+            if let Some(g) = [D_PETROLE, D_METAL, D_URANIUM, D_TERRES_RARES].iter().position(|&d| d == c.depot) {
+                t[k].1[g] += 1;
+            }
+        }
+        let mut v: Vec<_> = (1..=n).filter(|&k| m.pays_reel_jouable(k as u8)).map(|k| (t[k].0, super::pays_reels()[k - 1].nom.clone(), t[k].1)).collect();
+        v.sort();
+        println!("{} x {} = {} cases, {} pays jouables", m.largeur, m.hauteur, m.cases.len(), v.len());
+        for (c, nom, g) in &v {
+            println!("{:>5} cases  petrole {:>3}  commun {:>3}  radioactif {:>3}  rare {:>3}  {}", c, g[0], g[1], g[2], g[3], nom);
+        }
+    }
+}

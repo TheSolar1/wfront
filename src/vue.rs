@@ -117,12 +117,18 @@ pub fn init(m: &Monde, nom: &str, admin: bool, vitesse: f64, vex_url: &str) -> S
     let cotes: String = (0..m.cases.len()).map(|i| if m.est_cote(i) { '1' } else { '0' }).collect();
     let monde_reel = if m.monde_reel {
         use base64::Engine as _;
+        // Gisements de chaque vrai pays (petrole, commun, radioactif, rare).
+        let mut gis = vec![[0u32; 4]; crate::monde::pays_reels().len() + 1];
+        for (i, c) in m.cases.iter().enumerate() {
+            let k = match c.depot { D_PETROLE => 0, D_METAL => 1, D_URANIUM => 2, D_TERRES_RARES => 3, _ => continue };
+            gis[m.region(i) as usize][k] += 1;
+        }
         // Seulement les pays jouables (assez grands).
         let pays: Vec<Value> = crate::monde::pays_reels()
             .iter()
             .enumerate()
             .filter(|(k, _)| m.pays_reel_jouable(*k as u8 + 1))
-            .map(|(k, p)| json!({ "k": k + 1, "code": p.code, "nom": p.nom, "capitale": m.capitales_reelles.get(k + 1) }))
+            .map(|(k, p)| json!({ "k": k + 1, "code": p.code, "nom": p.nom, "capitale": m.capitales_reelles.get(k + 1), "gisements": gis[k + 1] }))
             .collect();
         json!({ "pays": pays, "regions": base64::engine::general_purpose::STANDARD.encode(&m.regions) })
     } else {

@@ -102,7 +102,7 @@ pub struct DepotDef {
 
 pub const DEPOTS: [DepotDef; 7] = [
     DepotDef { id: D_AUCUN, nom: "Aucun", icone: "", couleur: "" },
-    DepotDef { id: D_PETROLE, nom: "Ancien gisement (épuisé)", icone: "mountain", couleur: "#64748b" },
+    DepotDef { id: D_PETROLE, nom: "Gisement de pétrole", icone: "oil-well", couleur: "#334155" },
     DepotDef { id: D_METAL, nom: "Filon de minerai commun", icone: "mountain", couleur: "#94a3b8" },
     DepotDef { id: D_URANIUM, nom: "Gisement de minerai radioactif", icone: "radiation", couleur: "#22c55e" },
     DepotDef { id: D_TERRES_RARES, nom: "Gisement de minerai rare", icone: "gem", couleur: "#a855f7" },
@@ -162,9 +162,9 @@ pub const BATIMENTS: &[BatDef] = &[
     BatDef { id: "mine", nom: "Mine commune", icone: "person-digging", categorie: "Production",
         desc: "Extrait du minerai commun d'un filon (+25/min par niveau).",
         cout: r(160.0, 0.0, 20.0, 0.0, 0.0, 0.0), temps: 30.0, tech: "", depot: D_METAL, cote: false, elec: -2.0, constructible: true, produit: "" },
-    BatDef { id: "puits_petrole", nom: "Ancien puits", icone: "oil-well", categorie: "Production",
-        desc: "Vestige d'avant les minerais : rapporte un peu de minerai commun (+4/min par niveau). Ne se construit plus.",
-        cout: r(180.0, 0.0, 60.0, 0.0, 0.0, 0.0), temps: 35.0, tech: "", depot: D_PETROLE, cote: false, elec: -2.0, constructible: false, produit: "" },
+    BatDef { id: "puits_petrole", nom: "Puits de pétrole", icone: "oil-well", categorie: "Production",
+        desc: "Se construit sur un gisement de pétrole. Le pétrole extrait est vendu : +25 crédits/min par niveau.",
+        cout: r(300.0, 0.0, 90.0, 0.0, 0.0, 0.0), temps: 40.0, tech: "", depot: D_PETROLE, cote: false, elec: -2.0, constructible: true, produit: "" },
     BatDef { id: "mine_uranium", nom: "Mine radioactive", icone: "radiation", categorie: "Production",
         desc: "Extrait du minerai radioactif (+8/min par niveau) : uranium, thorium, plutonium… Indispensable au nucléaire.",
         cout: r(500.0, 0.0, 180.0, 40.0, 0.0, 0.0), temps: 70.0, tech: "", depot: D_URANIUM, cote: false, elec: -4.0, constructible: true, produit: "" },

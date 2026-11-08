@@ -142,7 +142,7 @@ impl Default for Config {
             admins: Vec::new(),
             invites: true,
             carte: "monde".into(),
-            largeur_monde: 500,
+            largeur_monde: 708,
             carte_largeur: 384,
             carte_hauteur: 240,
             graine: 0,
@@ -293,7 +293,7 @@ fn nouvelle_carte(cfg: &Config, graine: u64) -> monde::Monde {
     if cfg.carte == "aleatoire" {
         monde::Monde::generer(cfg.carte_largeur.clamp(30, 600), cfg.carte_hauteur.clamp(20, 400), graine)
     } else {
-        monde::Monde::generer_monde_reel(cfg.largeur_monde.clamp(60, 800), graine)
+        monde::Monde::generer_monde_reel(cfg.largeur_monde.clamp(60, 1000), graine)
     }
 }
 
@@ -354,7 +354,7 @@ async fn main() {
         protection_s: (cfg.protection_heures * 3600.0) as i64,
         vitesse: cfg.vitesse.clamp(0.1, 100.0),
         monde_reel: cfg.carte != "aleatoire",
-        largeur_monde: cfg.largeur_monde.clamp(60, 800),
+        largeur_monde: cfg.largeur_monde.clamp(60, 1000),
     };
     let app: Partage = Arc::new(App {
         cfg: cfg.clone(),
