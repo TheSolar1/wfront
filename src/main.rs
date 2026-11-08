@@ -404,6 +404,8 @@ async fn main() {
         .route("/api/statut", get(api_statut))
         .route("/api/permissions", get(api_permissions))
         .route("/admin/maj", get(admin_maj_etat).post(admin_maj_lancer))
+        .route("/api/admin", get(api_admin_aide))
+        .route("/api/admin/{action}", post(api_admin))
         .route("/admin", get(page_admin))
         .route("/admin/defi", get(admin_defi))
         .route("/admin/prouver", post(admin_prouver))
@@ -690,6 +692,16 @@ async fn identifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Opt
             compte: Some(s.compte),
         });
     }
+    // Cle API VEX : meme compte, memes droits (admin selon la liste
+    // « admins » ou les permissions wfront.* donnees dans VEX).
+    if let Some(cle) = bearer_vex(headers) {
+        let pool = app.db.clone()?;
+        let chemin_cfg = (!app.cfg.vex_db_fichier.is_empty()).then(|| app.racine.join(&app.cfg.vex_db_fichier).with_file_name("config.json"));
+        return tokio::task::spawn_blocking(move || verifier_cle_vex(&pool, &cle, chemin_cfg.as_deref()))
+            .await
+            .ok()
+            .flatten();
+    }
     let jeton = cookie(headers, "connexion_cookie");
     let vex = match app.db.clone() {
         Some(pool) if !jeton.is_empty() => {
@@ -707,6 +719,133 @@ async fn identifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Opt
     // mode vex, le mode invite n'etait jamais lu -- seul le mode reseau le
     // gerait. Sans session VEX valide, on accepte une session invite.
     vex.or_else(|| identite_invite(app, headers))
+}
+
+/// "Authorization: Bearer vex_..." (cle API creee dans VEX > Compte > Securite).
+fn bearer_vex(headers: &HeaderMap) -> Option<String> {
+    let v = headers.get(header::AUTHORIZATION)?.to_str().ok()?.strip_prefix("Bearer ")?.trim().to_string();
+    (v.starts_with("vex_") && v.len() == 44).then_some(v)
+}
+
+/// Verifie une cle API VEX dans la base de VEX (table api_cles : hash
+/// SHA-256 de "vex-api:" + cle, comme profil_api.rs de VEX). Refusee si
+/// revoquee, ou si le plan du compte n'a plus « Acces API » (sauf fondateur).
+fn verifier_cle_vex(pool: &mysql::Pool, cle: &str, cfg_vex: Option<&Path>) -> Option<Identite> {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"vex-api:");
+    h.update(cle.as_bytes());
+    let hash = format!("{:x}", h.finalize());
+    let mut conn = pool.get_conn().ok()?;
+    let uid: i64 = conn
+        .exec_first("SELECT user_id FROM api_cles WHERE cle_hash = ? AND revoque = 0 LIMIT 1", (&hash,))
+        .ok()??;
+    let (nom, email, privilege, vip): (String, String, Option<i64>, Option<String>) = conn
+        .exec_first("SELECT nom, email, privilege, vip FROM login WHERE id = ? LIMIT 1", (uid,))
+        .ok()??;
+    let privilege = privilege.unwrap_or(10);
+    if privilege != 1 {
+        let cfg: Value = cfg_vex.and_then(|c| std::fs::read_to_string(c).ok()).and_then(|t| serde_json::from_str(&t).ok())?;
+        let vip = vip.unwrap_or_default();
+        let v = vip.trim();
+        let plan = if v.is_empty() || v == "0" || v.eq_ignore_ascii_case("free") {
+            "free".to_string()
+        } else if v.chars().all(|c| c.is_ascii_digit()) {
+            "vip".to_string()
+        } else {
+            v.to_string()
+        };
+        let restreint = cfg.pointer("/plans/enforce_plan_restrictions").and_then(|x| x.as_bool()).unwrap_or(true);
+        let plans = cfg.pointer("/plans/available_plans").and_then(|x| x.as_array()).cloned().unwrap_or_default();
+        let trouve = |id: &str| plans.iter().find(|p| p.get("id").and_then(|x| x.as_str()) == Some(id)).cloned();
+        let acces = trouve(&plan)
+            .or_else(|| trouve("free"))
+            .and_then(|p| p.pointer("/features/api_access").and_then(|x| x.as_bool()))
+            .unwrap_or(false);
+        if restreint && !acces {
+            return None;
+        }
+    }
+    let _ = conn.exec_drop("UPDATE api_cles SET derniere_utilisation = NOW() WHERE cle_hash = ?", (&hash,));
+    Some(Identite {
+        user_id: uid,
+        nom,
+        privilege: 10,
+        rang_vex: privilege,
+        sombre: false,
+        noeud: None,
+        compte: Some(email),
+    })
+}
+
+/// Outils d'administration du jeu exposes en HTTP : nom de route -> commande
+/// du jeu (memes regles que les boutons du panneau admin).
+const ACTIONS_ADMIN: &[(&str, &str, &str)] = &[
+    ("nouvelle_carte", "admin_nouvelle_carte", "Nouvelle carte : efface le monde (irréversible)."),
+    ("paix", "admin_paix_mondiale", "Paix mondiale : arrête toutes les guerres."),
+    ("bots", "admin_bots", "Nombre de bots : {\"nb\": 0..16}."),
+    ("annonce", "admin_annonce", "Annonce mondiale : {\"texte\": \"...\"} (300 caractères max)."),
+    ("donner", "admin_donner", "Donner : {\"pays\": id, \"res\": [..], \"troupes\": n, \"elements\": n}."),
+    ("protection", "admin_protection", "Protection : {\"pays\": id, \"minutes\": n}."),
+    ("supprimer", "admin_supprimer_pays", "Supprimer une nation : {\"pays\": id}."),
+];
+
+/// GET /api/admin : liste des routes d'administration.
+async fn api_admin_aide() -> Json<Value> {
+    Json(json!({
+        "auth": "Authorization: Bearer vex_... (cle API VEX d'un compte administrateur du jeu)",
+        "routes": ACTIONS_ADMIN.iter().map(|(r, _, d)| json!({"route": format!("POST /api/admin/{}", r), "description": d})).collect::<Vec<_>>(),
+        "mise_a_jour": ["GET /admin/maj?verifier=1", "POST /admin/maj"],
+    }))
+}
+
+/// Corps JSON, ou formulaire (les nombres en texte deviennent des nombres).
+fn corps_commande(octets: &[u8]) -> Value {
+    if let Ok(v) = serde_json::from_slice::<Value>(octets) {
+        if v.is_object() {
+            return v;
+        }
+    }
+    let mut m = serde_json::Map::new();
+    for paire in String::from_utf8_lossy(octets).split('&') {
+        if let Some((k, v)) = paire.split_once('=') {
+            let v = decoder_url(v);
+            let val = v.parse::<i64>().map(Value::from).or_else(|_| v.parse::<f64>().map(Value::from)).unwrap_or(Value::from(v));
+            m.insert(decoder_url(k), val);
+        }
+    }
+    Value::Object(m)
+}
+
+/// POST /api/admin/<action> : execute l'outil comme le bouton du panneau.
+async fn api_admin(
+    State(app): State<Partage>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    axum::extract::Path(action): axum::extract::Path<String>,
+    octets: axum::body::Bytes,
+) -> Response {
+    let Some(id) = authentifier(&app, &headers, addr).await else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"ok": false, "msg": "Clé API ou session requise."}))).into_response();
+    };
+    if id.privilege > app.cfg.admin_privilege_max {
+        return (StatusCode::FORBIDDEN, Json(json!({"ok": false, "msg": "Réservé aux administrateurs du jeu (permission « Administrer le jeu »)."}))).into_response();
+    }
+    let Some((_, commande, _)) = ACTIONS_ADMIN.iter().find(|(r, _, _)| *r == action) else {
+        return (StatusCode::NOT_FOUND, Json(json!({"ok": false, "msg": "Action inconnue (voir GET /api/admin)."}))).into_response();
+    };
+    let mut cmd = corps_commande(&octets);
+    cmd["action"] = json!(commande);
+    let res = {
+        let mut m = app.monde.lock().unwrap();
+        let joueur = jeu::Joueur { user_id: id.user_id, nom: &id.nom, admin: true, triche: false };
+        jeu::commande(&mut m, &joueur, &cmd, &app.regles)
+    };
+    println!("[api admin] {} par {} : {}", commande, id.nom, if res.is_ok() { "ok" } else { "refus" });
+    match res {
+        Ok(msg) => Json(json!({"ok": true, "msg": msg})).into_response(),
+        Err(msg) => (StatusCode::BAD_REQUEST, Json(json!({"ok": false, "msg": msg}))).into_response(),
+    }
 }
 
 /// Session « Jouer sans compte » (cookie wf_session, compte « invite:... »).
