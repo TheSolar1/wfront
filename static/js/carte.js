@@ -149,20 +149,24 @@ export class Carte {
 
     // Mer translucide au niveau 0 : les fonds marins restent visibles.
     this.eau = new THREE.Mesh(
-      new THREE.PlaneGeometry(this.largeurMonde * 5, this.hauteurMonde * 5),
+      new THREE.PlaneGeometry(this.largeurMonde * 8, this.hauteurMonde * 8),
       new THREE.MeshPhongMaterial({ color: sombre ? 0x15466e : 0x2d7db5, transparent: true, opacity: 0.74, shininess: 60, specular: 0x6f93a8, depthWrite: false })
     );
+    this.eauPres = new THREE.Color(sombre ? 0x15466e : 0x2d7db5);
+    this.eauLoin = new THREE.Color(sombre ? 0x0f3554 : 0x1f5f8f);
     this.eau.rotation.x = -Math.PI / 2;
     this.eau.position.set(this.largeurMonde / 2, 0, this.hauteurMonde / 2);
     this.eau.renderOrder = 1;
     this.eau.receiveShadow = true;
     this.scene.add(this.eau);
+    // Fond marin au-dela de la carte : meme couleur, meme profondeur et meme
+    // eclairage que l'ocean de la carte, pour qu'aucun bord ne se voie.
     const abysses = new THREE.Mesh(
-      new THREE.PlaneGeometry(this.largeurMonde * 5, this.hauteurMonde * 5),
-      new THREE.MeshLambertMaterial({ color: sombre ? 0x071624 : 0x15415f })
+      new THREE.PlaneGeometry(this.largeurMonde * 8, this.hauteurMonde * 8),
+      new THREE.MeshStandardMaterial({ color: sombre ? '#0b2236' : '#1f4f73', roughness: 0.92, metalness: 0 })
     );
     abysses.rotation.x = -Math.PI / 2;
-    abysses.position.set(this.largeurMonde / 2, -1.5, this.hauteurMonde / 2);
+    abysses.position.set(this.largeurMonde / 2, -1.25, this.hauteurMonde / 2);
     this.scene.add(abysses);
 
     this.cam = { x: this.largeurMonde / 2, z: this.hauteurMonde / 2, d: 70, lacet: 0, tangage: 0.9 };
@@ -1628,8 +1632,13 @@ if (vHaut > -0.05) {
       this.camera.near = near; this.camera.far = far; this.camera.updateProjectionMatrix();
     }
     // Reflet du soleil sur la mer : agreable de pres, eblouissant de loin.
+    // De loin, la mer devient plus profonde et presque opaque (elle cache le
+    // fond) ; de pres, elle reste transparente sur les hauts-fonds.
     const reflet = Math.max(0, Math.min(1, 1 - (c.d - 60) / 140));
+    const loin = 1 - reflet;
     this.eau.material.specular.setRGB(0.44 * reflet, 0.58 * reflet, 0.66 * reflet);
+    this.eau.material.opacity = 0.74 + 0.2 * loin;
+    this.eau.material.color.copy(this.eauPres).lerp(this.eauLoin, loin);
     // Brouillard d'horizon proportionnel au recul (vue du monde entier).
     if (this.scene.fog) { this.scene.fog.near = Math.max(120, c.d * 1.4); this.scene.fog.far = Math.max(280, c.d * 3); }
 

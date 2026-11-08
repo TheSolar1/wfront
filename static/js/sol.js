@@ -152,10 +152,16 @@ export class Sol {
 
   /** Maillage du sol sur un rectangle : hauteurs, normales (par differences,
    *  sans couture entre tuiles), couleurs, numero de case. Tableaux bruts. */
-  maillage(x0, z0, l, p, pas) {
+  maillage(x0, z0, l, p, pas, lisse = false) {
     const nx = Math.ceil(l / pas) + 1, nz = Math.ceil(p / pas) + 1, nv = nx * nz;
     const H = new Float32Array((nx + 2) * (nz + 2));
-    for (let j = -1; j <= nz; j++) for (let i = -1; i <= nx; i++) H[(j + 1) * (nx + 2) + (i + 1)] = this.altitude(x0 + i * pas, z0 + j * pas);
+    // Lisse (carte lointaine) : moyenne de 5 points autour du sommet, pour
+    // eviter le mouchete de cretes et de neige quand les sommets sont espaces.
+    const dq = pas * 0.35;
+    const alt = lisse
+      ? (x, z) => (2 * this.altitude(x, z) + this.altitude(x - dq, z - dq) + this.altitude(x + dq, z - dq) + this.altitude(x - dq, z + dq) + this.altitude(x + dq, z + dq)) / 6
+      : (x, z) => this.altitude(x, z);
+    for (let j = -1; j <= nz; j++) for (let i = -1; i <= nx; i++) H[(j + 1) * (nx + 2) + (i + 1)] = alt(x0 + i * pas, z0 + j * pas);
     const pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), cas = new Float32Array(nv), col = new Float32Array(nv * 3);
     for (let j = 0; j < nz; j++) {
       for (let i = 0; i < nx; i++) {
@@ -179,7 +185,7 @@ export class Sol {
 
   /** Carte lointaine : le monde entier, allege. */
   maillageLoin(pas) {
-    return this.maillage(-LX * 1.5, -LZ * 1.5, this.largeurMonde + LX * 3, this.hauteurMonde + LZ * 3, pas);
+    return this.maillage(-LX * 1.5, -LZ * 1.5, this.largeurMonde + LX * 3, this.hauteurMonde + LZ * 3, pas, true);
   }
 
   /** Tuile detaillee (tx, tz) : sol, grille des cases, arbres. */
