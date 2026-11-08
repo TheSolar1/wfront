@@ -1,8 +1,8 @@
 // ══════════════════════════════════════════════════════════════════
-// util.js — petits outils partages par l'interface WorldFront
+// util.js — petits outils partages par l'interface WFront
 // ══════════════════════════════════════════════════════════════════
 
-/** Racine publique de WorldFront ("/" ou "/worldfront/" derriere un proxy). */
+/** Racine publique de WFront ("/" ou "/wfront/" derriere un proxy). */
 export const BASE = location.pathname.replace(/[^/]*$/, '');
 
 /** Icone du jeu d'icones VEX (static/img/solid), teintee par CSS (currentColor).

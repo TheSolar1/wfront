@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ══════════════════════════════════════════════════════════════════
-# deploy-sur.sh — Déploiement MANUEL et sûr de WorldFront sur le Pi.
+# deploy-sur.sh — Déploiement MANUEL et sûr de WFront sur le Pi.
 #
 # Pensé pour le cas « 2 collaborateurs sur GitHub » : on NE déploie
 # JAMAIS automatiquement. On regarde d'abord qui a poussé quoi, on
@@ -9,16 +9,29 @@
 #
 # PAS de cron, PAS de pull automatique : tu lances ce script toi-même.
 #
-#   cd ~/worldfront
+#   cd ~/wfront                # (ou ~/worldfront : le nom du dossier
+#                              #  n'a pas d'importance)
 #   ./deploy-sur.sh            # montre les nouveautés puis demande confirmation
 #   ./deploy-sur.sh --oui      # enchaîne sans la question (si tu as déjà vu)
+#
+# Ancien nom : le binaire s'appelait « worldfront ». S'il tourne encore,
+# il est arrêté à la bascule et remplacé par « wfront » ; en cas
+# d'échec, c'est lui qui est relancé.
 # ══════════════════════════════════════════════════════════════════
 set -euo pipefail
 
-DIR="$HOME/worldfront"
+# Tout le script est lu avant d'être exécuté (accolades + exit final) :
+# le « git pull » plus bas peut donc le modifier sans danger.
+{
+# Dossier du jeu = celui qui contient ce script, quel que soit son nom
+# (ou le dossier courant si le script est lancé depuis une copie ailleurs).
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[ -f "$DIR/Cargo.toml" ] || DIR="$(pwd)"
 PORT=8095
 BRANCHE=main
-BIN=worldfront
+BIN=wfront
+# Nom du binaire avant le renommage WorldFront -> WFront (arrêté à la bascule).
+ANCIEN_BIN=worldfront
 SAUVE="$DIR/.sauvegardes"
 HORO=$(date +%Y%m%d-%H%M%S)
 AUTO_OUI=0
@@ -53,7 +66,10 @@ if [ "$AUTO_OUI" -ne 1 ]; then
 fi
 
 echo "── 2. Sauvegarde de l'état actuel ─────────────────────────"
-[ -f "$BIN" ] && cp -f "$BIN" "$SAUVE/$BIN.$HORO" && echo "  binaire → $SAUVE/$BIN.$HORO"
+# Binaire en place : « wfront », ou « worldfront » avant le renommage.
+EN_PLACE=""
+if [ -f "$BIN" ]; then EN_PLACE="$BIN"; elif [ -f "$ANCIEN_BIN" ]; then EN_PLACE="$ANCIEN_BIN"; fi
+[ -n "$EN_PLACE" ] && cp -f "$EN_PLACE" "$SAUVE/$EN_PLACE.$HORO" && echo "  binaire → $SAUVE/$EN_PLACE.$HORO"
 [ -f data/monde.json ] && cp -f data/monde.json "$SAUVE/monde.$HORO.json" && echo "  monde   → $SAUVE/monde.$HORO.json"
 echo "$LOCAL" > "$SAUVE/commit-avant.$HORO"
 
@@ -76,7 +92,8 @@ echo "── 5. Bascule du binaire ───────────────
 # Évite le piège « Text file busy » : on arrête l'ancien process,
 # on attend sa sortie, puis on remplace le binaire.
 pkill -x "$BIN" 2>/dev/null || true
-for _ in $(seq 1 10); do pgrep -x "$BIN" >/dev/null || break; sleep 1; done
+pkill -x "$ANCIEN_BIN" 2>/dev/null || true
+for _ in $(seq 1 10); do pgrep -x "$BIN" >/dev/null || pgrep -x "$ANCIEN_BIN" >/dev/null || break; sleep 1; done
 cp -f target/release/"$BIN" "./$BIN"
 setsid nohup "./$BIN" > "$DIR/$BIN.out" 2>&1 < /dev/null &
 
@@ -88,17 +105,19 @@ for _ in $(seq 1 10); do
   sleep 1
 done
 if [ "$OK" = "1" ]; then
-  echo "✅ WorldFront déployé et répond 200 sur le port $PORT."
-  echo "   (sauvegarde de l'ancien binaire : $SAUVE/$BIN.$HORO)"
+  echo "✅ WFront déployé et répond 200 sur le port $PORT."
+  [ -n "$EN_PLACE" ] && echo "   (sauvegarde de l'ancien binaire : $SAUVE/$EN_PLACE.$HORO)"
 else
   echo "❌ Le nouveau site ne répond pas. RETOUR ARRIÈRE automatique…"
   pkill -x "$BIN" 2>/dev/null || true
   for _ in $(seq 1 10); do pgrep -x "$BIN" >/dev/null || break; sleep 1; done
-  if [ -f "$SAUVE/$BIN.$HORO" ]; then
-    cp -f "$SAUVE/$BIN.$HORO" "./$BIN"
-    setsid nohup "./$BIN" > "$DIR/$BIN.out" 2>&1 < /dev/null &
+  if [ -n "$EN_PLACE" ] && [ -f "$SAUVE/$EN_PLACE.$HORO" ]; then
+    cp -f "$SAUVE/$EN_PLACE.$HORO" "./$EN_PLACE"
+    setsid nohup "./$EN_PLACE" > "$DIR/$EN_PLACE.out" 2>&1 < /dev/null &
     git reset --hard "$LOCAL" >/dev/null 2>&1 || true
     echo "   Ancien binaire et ancien code restaurés."
   fi
   exit 1
 fi
+exit 0
+}

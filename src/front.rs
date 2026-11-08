@@ -320,7 +320,7 @@ mod tests {
 
     fn monde_deux_pays() -> (Monde, u32, u32, Regles) {
         let mut m = Monde::generer(60, 40, 7);
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false, largeur_monde: 500 };
         let ja = Joueur { user_id: 1, nom: "A", admin: false, triche: false };
         let jb = Joueur { user_id: 2, nom: "B", admin: false, triche: false };
         jeu::commande(&mut m, &ja, &json!({"action": "rejoindre", "nom": "Alpha", "couleur": "#ef4444", "spe": "militaire"}), &regles).unwrap();

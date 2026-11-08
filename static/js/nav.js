@@ -1,7 +1,7 @@
 // ══════════════════════════════════════════════════════════════════
 // nav.js — Comportement de la barre de navigation VEX (grille
 // d'applications, menu profil), repris a l'identique de
-// build_nav_html() cote VEX pour que WorldFront s'y fonde.
+// build_nav_html() cote VEX pour que WFront s'y fonde.
 // ══════════════════════════════════════════════════════════════════
 (function () {
   var appsBtn = document.getElementById('apps-btn-nav');

@@ -1,5 +1,5 @@
 // ══════════════════════════════════════════════════════════════════
-// jeu.js — Client WorldFront
+// jeu.js — Client WFront
 // Connexion WebSocket, etat local, barre de ressources, inspecteur de
 // case, ordres militaires, panneaux, notifications.
 // ══════════════════════════════════════════════════════════════════
@@ -31,7 +31,7 @@ const attente = new Map();
 
 function connecter() {
   // Chemin relatif a la page : fonctionne a la racine comme derriere
-  // un prefixe de reverse proxy (ex. https://vex.exemple/worldfront/).
+  // un prefixe de reverse proxy (ex. https://vex.exemple/wfront/).
   const base = location.pathname.replace(/[^/]*$/, '');
   const url = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + base + 'ws';
   ws = new WebSocket(url);
@@ -105,6 +105,13 @@ function recevoirInit(m) {
     S.carte.cotes = m.carte.cotes;
     S.carte.vitesseJeu = S.vitesse;
     dejaInit = true;
+  }
+  // Carte du monde : vrais pays jouables (index k -> S.reel.pays[k - 1]).
+  S.reel = null;
+  if (m.monde_reel && S.carte.regions) {
+    const taille = new Array(m.monde_reel.pays.length + 1).fill(0);
+    for (const r of S.carte.regions) taille[r]++;
+    S.reel = { pays: m.monde_reel.pays.map(p => ({ ...p, cases: taille[p.k] })), regions: S.carte.regions };
   }
   $('#wf-chargement').classList.add('fini');
   construireMenu();
@@ -488,8 +495,11 @@ function survolCarte(i, e) {
     const a = S.armees.find(x => x.id === S.ordre.armee);
     if (a) dist = ` · ${S.g.distance(a.case, i)} cases`;
   }
+  const reel = S.reel && S.reel.regions[i] ? S.reel.pays[S.reel.regions[i] - 1] : null;
+  const chef = reel ? dirigeant(reel.k) : null;
   t.innerHTML = `<b>${esc(nomCase(S, i))}</b>${dist}
     ${p ? `<div>${drapeau(p, 16)} ${esc(p.nom)}</div>` : ''}
+    ${reel && (!p || p.pays_reel !== reel.k) ? `<div>${ico('map-location-dot')} ${esc(reel.nom)}${chef ? '' : ' · libre'}</div>` : ''}
     ${b ? `<div>${ico(S.defs.batiments.find(x => x.id === b)?.icone)} ${esc(S.defs.batiments.find(x => x.id === b)?.nom)} ${S.carte.niv[i]}</div>` : ''}
     ${d ? `<div>${ico(S.defs.depots[d].icone)} ${esc(S.defs.depots[d].nom)}</div>` : ''}
     ${S.carte.irr[i] ? `<div class="neg">${ico('radiation')} Zone irradiée</div>` : ''}
@@ -911,7 +921,51 @@ function confirmer(titre, texte, bouton, ok, danger = false) {
     <button class="wf-btn ${danger ? 'danger' : ''}" data-act="modale_ok">${esc(bouton)}</button></div>`);
 }
 
+/** Vrai pays k : la nation (encore en vie) qui le dirige, s'il y en a une. */
+function dirigeant(k) {
+  for (const p of S.pays?.values() || []) if (p.pays_reel === k && !p.elimine) return p;
+  return null;
+}
+
+/** Carte du monde : choix du vrai pays a diriger (fondation ou refondation). */
+function ouvrirChoixPays(refonder = false) {
+  const d = S.defs;
+  const couleur = d.couleurs[Math.floor(Math.random() * d.couleurs.length)];
+  const liste = [...S.reel.pays].sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
+  const libres = liste.filter(p => !dirigeant(p.k)).length;
+  modale(`<div class="wf-modale-tete">${ico('earth-europe')}<div><h2>${refonder ? 'Reprendre un pays' : 'Choisissez votre pays'}</h2><p>Vous dirigez un vrai pays et tout son territoire, outre-mer compris. Un pays déjà dirigé par un joueur ne peut pas être pris. ${libres} pays libres sur ${liste.length}.</p></div></div>
+    <div class="wf-form">
+      <input id="f-recherche" placeholder="Rechercher un pays (ex. : France, Japon…)" autocomplete="off">
+      <div class="wf-pays-liste" id="f-liste">${liste.map(p => {
+        const chef = dirigeant(p.k);
+        return `<button class="wf-pays-choix ${chef ? 'pris' : ''}" data-act="choisir_pays" data-k="${p.k}" data-nom="${esc(p.nom.toLowerCase())}" ${chef ? 'disabled' : ''}>
+          <b>${esc(p.nom)}</b><small>${chef ? `Dirigé par ${esc(chef.joueur)}` : `${p.cases} case${p.cases > 1 ? 's' : ''}`}</small></button>`;
+      }).join('')}</div>
+      <input type="hidden" id="f-pays" value="">
+      <p class="wf-pays-choisi" id="f-choisi">Aucun pays choisi.</p>
+      ${refonder ? '' : `<label>Devise <small>(facultatif)</small><input id="f-devise" maxlength="80" placeholder="Ex. : Liberté, égalité, fraternité"></label>
+      <label>Couleur</label>
+      <div class="wf-palette">${d.couleurs.map(c => `<button class="wf-pastille ${c === couleur ? 'actif' : ''}" style="--c:${c}" data-act="choisir" data-groupe="f-couleur" data-val="${c}"></button>`).join('')}
+        <input type="color" id="f-couleur" value="${couleur}"></div>
+      <label>Emblème</label>
+      <div class="wf-emblemes">${d.emblemes.map((e, k) => `<button class="wf-embleme ${k === 0 ? 'actif' : ''}" data-act="choisir" data-groupe="f-embleme" data-val="${e}">${ico(e)}</button>`).join('')}</div>
+      <input type="hidden" id="f-embleme" value="${d.emblemes[0]}">
+      <label>Spécialisation nationale</label>
+      <div class="wf-spes">${d.specialisations.map((s, k) => `<button class="wf-spe ${k === 0 ? 'actif' : ''}" data-act="choisir" data-groupe="f-spe" data-val="${s.id}">${ico(s.icone)}<b>${esc(s.nom)}</b><small>${esc(s.desc)}</small></button>`).join('')}</div>
+      <input type="hidden" id="f-spe" value="${d.specialisations[0].id}">`}
+    </div>
+    <div class="wf-boutons fin">${refonder ? '<button class="wf-btn secondaire" data-act="fermer_modale">Plus tard</button>' : `<button class="wf-btn secondaire" data-act="observer">${ico('eye')} Observer d'abord</button>`}
+    <button class="wf-btn" data-act="${refonder ? 'refonder' : 'rejoindre'}">${ico('flag')} Prendre ce pays</button></div>`, { large: true });
+  $('#f-recherche').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    document.querySelectorAll('.wf-pays-choix').forEach(b => {
+      b.hidden = !!q && !b.dataset.nom.normalize('NFD').replace(/[\u0300-\u036f]/g, '').includes(q);
+    });
+  });
+}
+
 function ouvrirFondation() {
+  if (S.reel) return ouvrirChoixPays(false);
   const d = S.defs;
   const couleur = d.couleurs[Math.floor(Math.random() * d.couleurs.length)];
   modale(`<div class="wf-modale-tete">${ico('flag')}<div><h2>Fonder votre nation</h2><p>Choisissez l'identité du pays que vous allez diriger. Sa capitale apparaîtra sur des terres libres.</p></div></div>
@@ -933,6 +987,11 @@ function ouvrirFondation() {
 }
 
 function ouvrirAneantie() {
+  if (S.reel) {
+    modale(`<div class="wf-modale-tete">${ico('skull')}<div><h2>Votre pays a été anéanti</h2><p>Son dernier territoire est tombé. Vous pouvez reprendre un pays libre : vos technologies sont perdues.</p></div></div>
+      <div class="wf-boutons fin"><button class="wf-btn secondaire" data-act="fermer_modale">Plus tard</button><button class="wf-btn" data-act="choisir_reprise">${ico('earth-europe')} Choisir un pays</button></div>`);
+    return;
+  }
   modale(`<div class="wf-modale-tete">${ico('skull')}<div><h2>Votre nation a été anéantie</h2><p>Sa dernière province est tombée. Vous pouvez la refonder sur des terres libres : vos technologies sont perdues, mais pas votre nom.</p></div></div>
     <div class="wf-boutons fin"><button class="wf-btn secondaire" data-act="fermer_modale">Plus tard</button><button class="wf-btn" data-act="refonder">${ico('seedling')} Refonder</button></div>`);
 }
@@ -967,10 +1026,24 @@ const ACTIONS = {
     if (i) i.value = d.val;
   },
   rejoindre: async () => {
-    const r = await agir('rejoindre', { nom: val('f-nom'), devise: val('f-devise'), couleur: val('f-couleur'), embleme: val('f-embleme'), spe: val('f-spe') });
+    if (S.reel && !val('f-pays')) { toast('Choisissez d\'abord un pays dans la liste.', 'err'); return; }
+    const r = await agir('rejoindre', { nom: val('f-nom'), devise: val('f-devise'), couleur: val('f-couleur'), embleme: val('f-embleme'), spe: val('f-spe'), pays_reel: +val('f-pays') || undefined });
     if (r.ok) { fermerModale(); setTimeout(() => S.moi && S.carte.centrerSur(S.moi.capitale, 24), 300); }
   },
-  refonder: async () => { const r = await agir('refonder'); if (r.ok) { fermerModale(); setTimeout(() => S.moi && S.carte.centrerSur(S.moi.capitale, 24), 300); } },
+  refonder: async () => {
+    if (S.reel && !val('f-pays')) { toast('Choisissez d\'abord un pays dans la liste.', 'err'); return; }
+    const r = await agir('refonder', S.reel ? { pays_reel: +val('f-pays') } : {});
+    if (r.ok) { fermerModale(); setTimeout(() => S.moi && S.carte.centrerSur(S.moi.capitale, 24), 300); }
+  },
+  choisir_reprise: () => ouvrirChoixPays(true),
+  choisir_pays: (d, el) => {
+    document.querySelectorAll('.wf-pays-choix.actif').forEach(x => x.classList.remove('actif'));
+    el.classList.add('actif');
+    $('#f-pays').value = d.k;
+    const p = S.reel.pays[d.k - 1];
+    $('#f-choisi').innerHTML = `${ico('flag')} <b>${esc(p.nom)}</b> — ${p.cases} case${p.cases > 1 ? 's' : ''}, capitale et tout le territoire.`;
+    if (p.capitale != null) S.carte.centrerSur(p.capitale, 40);
+  },
   profil: () => agir('profil', { devise: val('profil-devise'), couleur: val('profil-couleur'), embleme: val('profil-embleme') }),
 
   construire: d => agir('construire', { case: +d.case, bat: d.bat }),
@@ -1276,8 +1349,10 @@ document.querySelectorAll('[data-mode-carte]').forEach(b => b.addEventListener('
   document.querySelectorAll('[data-mode-carte]').forEach(x => x.classList.toggle('actif', x === b));
   S.carte?.setMode(b.dataset.modeCarte);
 }));
-$('#wf-recentrer').addEventListener('click', () => { if (S.moi) S.carte.centrerSur(S.moi.capitale, 30); else S.carte.centrerSur(Math.floor(S.g.n / 2), 70); });
-$('#wf-vue-globale').addEventListener('click', () => S.carte.centrerSur(Math.floor(S.g.n / 2) + Math.floor(S.g.l / 2), 95));
+// Case au centre de la carte (ligne du milieu, colonne du milieu).
+const caseCentre = () => Math.floor(S.g.h / 2) * S.g.l + Math.floor(S.g.l / 2);
+$('#wf-recentrer').addEventListener('click', () => { if (S.moi) S.carte.centrerSur(S.moi.capitale, 30); else S.carte.centrerSur(caseCentre(), 70); });
+$('#wf-vue-globale').addEventListener('click', () => S.carte.centrerSur(caseCentre(), S.carte.dMax * 0.9));
 
 // Horloge + rafraichissement leger (comptes a rebours)
 setInterval(() => {
@@ -1289,7 +1364,7 @@ setInterval(() => {
 // devTout() (console du navigateur) donne toutes les technologies et des
 // ressources pour tester la fin de partie. Refuse par le serveur hors mode dev.
 if (corps.dataset.mode === 'reseau') {
-  // Connexion reseau : se deconnecter de WorldFront (pas du nœud VEX).
+  // Connexion reseau : se deconnecter de WFront (pas du nœud VEX).
   document.querySelectorAll('#profile-menu a').forEach(a => { if (a.href.includes('logout')) a.href = 'deconnexion'; });
 }
 if (corps.dataset.mode === 'dev') {

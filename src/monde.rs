@@ -99,6 +99,9 @@ pub struct Pays {
     pub stock: crate::fabrication::Stock,
     #[serde(default)]
     pub fabrications: Vec<crate::fabrication::Fabrication>,
+    /// Carte du monde : index du vrai pays dirige (pays_reels(), 0 = aucun).
+    #[serde(default)]
+    pub pays_reel: u8,
 }
 
 impl Pays {
@@ -309,6 +312,17 @@ pub struct Monde {
     pub cours: BTreeMap<String, f64>,
     #[serde(skip)]
     pub effets: Vec<Effet>,
+    /// Carte du monde reel (vrais pays jouables).
+    #[serde(default)]
+    pub monde_reel: bool,
+    /// Carte du monde : vrai pays de chaque case (index de pays_reels(),
+    /// 0 = mer). Recalcule au chargement, jamais sauvegarde.
+    #[serde(skip)]
+    pub regions: Vec<u8>,
+    /// Carte du monde : case de la capitale de chaque vrai pays (index 0
+    /// inutilise).
+    #[serde(skip)]
+    pub capitales_reelles: Vec<usize>,
 }
 
 // ── Geometrie hexagonale ──────────────────────────────────────────
@@ -430,6 +444,208 @@ impl Monde {
 }
 
 // ── Generation de la carte ────────────────────────────────────────
+/// Carte du monde reel (src/monde_reel.bin), decodee une fois.
+struct CarteReelle {
+    largeur: usize,
+    hauteur: usize,
+    terrains: Vec<u8>,
+    /// Index du vrai pays (pays_reels()), 0 = aucun.
+    pays: Vec<u8>,
+}
+
+fn monde_reel() -> &'static CarteReelle {
+    static CARTE: std::sync::OnceLock<CarteReelle> = std::sync::OnceLock::new();
+    CARTE.get_or_init(|| {
+        let b: &[u8] = include_bytes!("monde_reel.bin");
+        assert!(b.len() > 12 && &b[..8] == b"WFMONDE2", "monde_reel.bin invalide");
+        let w = b[8] as usize | (b[9] as usize) << 8;
+        let h = b[10] as usize | (b[11] as usize) << 8;
+        let mut v = Vec::with_capacity(2 * w * h);
+        for p in b[12..].chunks_exact(2) {
+            v.extend(std::iter::repeat(p[1]).take(p[0] as usize));
+        }
+        v.resize(2 * w * h, 0);
+        let pays = v.split_off(w * h);
+        CarteReelle { largeur: w, hauteur: h, terrains: v, pays }
+    })
+}
+
+/// Un vrai pays jouable (src/pays_reels.json, fabrique par outils/carte-monde).
+#[derive(Deserialize, Serialize, Clone)]
+pub struct PaysReel {
+    pub code: String,
+    pub nom: String,
+    /// Capitale en coordonnees normalisees de la carte (0..1).
+    pub capitale: [f64; 2],
+}
+
+/// Les vrais pays ; l'index 0 de la carte (mer) n'a pas d'entree :
+/// le pays d'index k est pays_reels()[k - 1].
+pub fn pays_reels() -> &'static [PaysReel] {
+    static LISTE: std::sync::OnceLock<Vec<PaysReel>> = std::sync::OnceLock::new();
+    LISTE.get_or_init(|| serde_json::from_str(include_str!("pays_reels.json")).expect("pays_reels.json invalide"))
+}
+
+/// Pays, terrain et capitales de la carte du monde a une taille donnee.
+/// Deterministe : le meme calcul sert a la generation et au chargement.
+struct DecoupageReel {
+    terrains: Vec<u8>,
+    regions: Vec<u8>,
+    capitales: Vec<usize>,
+}
+
+fn hauteur_monde_reel(largeur: usize) -> usize {
+    let c = monde_reel();
+    ((largeur as f64 * c.hauteur as f64 / c.largeur as f64 / 0.866).round() as usize).max(10)
+}
+
+fn decouper_monde_reel(largeur: usize, hauteur: usize) -> DecoupageReel {
+    let c = monde_reel();
+    let (rw, rh) = (c.largeur, c.hauteur);
+    let (lw, lh) = (largeur as f64 + 0.5, (hauteur - 1) as f64 * 0.866 + 1.0);
+    let point = |u: f64, v: f64| -> usize {
+        let col = ((u * rw as f64) as isize).clamp(0, rw as isize - 1) as usize;
+        let row = ((v * rh as f64) as isize).clamp(0, rh as isize - 1) as usize;
+        row * rw + col
+    };
+    let n_pays = pays_reels().len();
+    let mut terrains = vec![T_OCEAN; largeur * hauteur];
+    let mut regions = vec![0u8; largeur * hauteur];
+    for y in 0..hauteur {
+        for x in 0..largeur {
+            let px = x as f64 + if y % 2 == 1 { 0.5 } else { 0.0 };
+            let py = y as f64 * 0.866;
+            // Echantillons repartis sur l'hexagone : terre si au moins
+            // 40 % de l'hexagone est emerge ; terrain le plus present
+            // (les chaines de montagnes, fines, comptent davantage) ; pays
+            // le plus present.
+            let mut compte = [0usize; 8];
+            let mut votes: Vec<(u8, usize)> = Vec::new();
+            const N: usize = 5;
+            for i in 0..N {
+                for j in 0..N {
+                    let ox = (i as f64 + 0.5) / N as f64 - 0.5;
+                    let oy = ((j as f64 + 0.5) / N as f64 - 0.5) * 0.866;
+                    let k = point((px + 0.5 + ox) / lw, (py + 0.5 + oy) / lh);
+                    let t = (c.terrains[k] as usize).min(7);
+                    compte[t] += 1;
+                    if t >= 2 && c.pays[k] != 0 {
+                        match votes.iter_mut().find(|v| v.0 == c.pays[k]) {
+                            Some(v) => v.1 += 1,
+                            None => votes.push((c.pays[k], 1)),
+                        }
+                    }
+                }
+            }
+            let terre: usize = compte[2..].iter().sum();
+            let i = y * largeur + x;
+            if terre * 10 < N * N * 4 {
+                continue;
+            }
+            terrains[i] = if compte[T_MONTAGNE as usize] * 10 >= terre * 3 {
+                T_MONTAGNE
+            } else {
+                (2..8).max_by_key(|&t| compte[t]).unwrap_or(2) as u8
+            };
+            regions[i] = votes.iter().max_by_key(|v| v.1).map(|v| v.0).unwrap_or(0);
+        }
+    }
+    let voisins = |i: usize| -> Vec<usize> {
+        let (x, y) = ((i % largeur) as i64, (i / largeur) as i64);
+        let d: [(i64, i64); 6] = if y % 2 == 0 {
+            [(1, 0), (0, -1), (-1, -1), (-1, 0), (-1, 1), (0, 1)]
+        } else {
+            [(1, 0), (1, -1), (0, -1), (-1, 0), (0, 1), (1, 1)]
+        };
+        d.iter()
+            .filter_map(|(dx, dy)| {
+                let (nx, ny) = (x + dx, y + dy);
+                (nx >= 0 && ny >= 0 && nx < largeur as i64 && ny < hauteur as i64).then(|| ny as usize * largeur + nx as usize)
+            })
+            .collect()
+    };
+    // Terre sans pays (rare, sur les cotes) : pays d'une case voisine.
+    for _ in 0..4 {
+        for i in 0..regions.len() {
+            if terrains[i] != T_OCEAN && regions[i] == 0 {
+                if let Some(v) = voisins(i).into_iter().find(|&v| regions[v] != 0) {
+                    regions[i] = regions[v];
+                }
+            }
+        }
+    }
+    let case_de = |u: f64, v: f64| -> usize {
+        let row = ((v * lh - 0.5) / 0.866).round().clamp(0.0, (hauteur - 1) as f64) as usize;
+        let col = (u * lw - 0.5 - if row % 2 == 1 { 0.5 } else { 0.0 }).round().clamp(0.0, (largeur - 1) as f64) as usize;
+        row * largeur + col
+    };
+    // Chaque vrai pays a au moins une case : les micro-Etats et les petites
+    // iles recoivent la case de leur capitale (prise sur un grand voisin,
+    // ou gagnee sur la mer).
+    let mut taille = vec![0usize; n_pays + 1];
+    for &r in &regions {
+        taille[r as usize] += 1;
+    }
+    for k in 1..=n_pays {
+        if taille[k] > 0 {
+            continue;
+        }
+        let [u, v] = pays_reels()[k - 1].capitale;
+        let c0 = case_de(u, v);
+        // La case de la capitale, ou la plus proche qui n'est pas la seule
+        // case d'un autre pays.
+        let libre = |i: usize| regions[i] == 0 || taille[regions[i] as usize] > 1;
+        let mut cible = c0;
+        if !libre(c0) {
+            let mut file = vec![c0];
+            let mut vu = std::collections::HashSet::from([c0]);
+            let mut q = 0;
+            while q < file.len() {
+                let i = file[q];
+                q += 1;
+                if libre(i) {
+                    cible = i;
+                    break;
+                }
+                for v in voisins(i) {
+                    if vu.insert(v) {
+                        file.push(v);
+                    }
+                }
+            }
+        }
+        if regions[cible] != 0 {
+            taille[regions[cible] as usize] -= 1;
+        }
+        if terrains[cible] == T_OCEAN {
+            terrains[cible] = T_PLAINE;
+        }
+        regions[cible] = k as u8;
+        taille[k] += 1;
+    }
+    // Capitales : la case de la vraie capitale, ou la case du pays la plus
+    // proche.
+    let mut capitales = vec![usize::MAX; n_pays + 1];
+    let dist = |a: usize, b: usize| -> f64 {
+        let (ax, ay) = ((a % largeur) as f64 + if (a / largeur) % 2 == 1 { 0.5 } else { 0.0 }, (a / largeur) as f64 * 0.866);
+        let (bx, by) = ((b % largeur) as f64 + if (b / largeur) % 2 == 1 { 0.5 } else { 0.0 }, (b / largeur) as f64 * 0.866);
+        (ax - bx).hypot(ay - by)
+    };
+    for k in 1..=n_pays {
+        let [u, v] = pays_reels()[k - 1].capitale;
+        let c0 = case_de(u, v);
+        capitales[k] = if regions[c0] as usize == k {
+            c0
+        } else {
+            (0..regions.len())
+                .filter(|&i| regions[i] as usize == k)
+                .min_by(|&a, &b| dist(a, c0).partial_cmp(&dist(b, c0)).unwrap_or(std::cmp::Ordering::Equal))
+                .unwrap_or(usize::MAX)
+        };
+    }
+    DecoupageReel { terrains, regions, capitales }
+}
+
 struct Bruit {
     graine: u64,
 }
@@ -475,7 +691,6 @@ impl Monde {
     pub fn generer(largeur: usize, hauteur: usize, graine: u64) -> Monde {
         let alt = Bruit { graine };
         let hum = Bruit { graine: graine.wrapping_add(7_919) };
-        let res = Bruit { graine: graine.wrapping_add(104_729) };
         let tord = Bruit { graine: graine.wrapping_add(15_485_863) };
 
         // Chaque graine tire aussi la « forme » du monde : taille des
@@ -529,7 +744,52 @@ impl Monde {
                 cases[y * largeur + x].terrain = terrain;
             }
         }
+        Monde::depuis_terrains(largeur, hauteur, graine, cases)
+    }
 
+    /// Carte du monde reel (src/monde_reel.bin, fabrique par
+    /// outils/carte-monde) : vrais continents en projection Equal Earth,
+    /// surfaces respectees. La hauteur se deduit de la largeur pour garder
+    /// les vraies proportions. La graine ne change que les gisements.
+    pub fn generer_monde_reel(largeur: usize, graine: u64) -> Monde {
+        let hauteur = hauteur_monde_reel(largeur);
+        let d = decouper_monde_reel(largeur, hauteur);
+        let mut cases = vec![Case::default(); largeur * hauteur];
+        for (c, &t) in cases.iter_mut().zip(&d.terrains) {
+            c.terrain = t;
+        }
+        let mut m = Monde::depuis_terrains(largeur, hauteur, graine, cases);
+        m.monde_reel = true;
+        // Pas d'ordinateur : le monde se joue entre joueurs.
+        m.bots_admin = Some(0);
+        m.regions = d.regions;
+        m.capitales_reelles = d.capitales;
+        m
+    }
+
+    /// Apres le chargement d'une sauvegarde : recalcule les vrais pays de
+    /// chaque case (ils ne sont pas sauvegardes).
+    pub fn preparer_regions(&mut self) {
+        if self.monde_reel && self.hauteur == hauteur_monde_reel(self.largeur) {
+            let d = decouper_monde_reel(self.largeur, self.hauteur);
+            self.regions = d.regions;
+            self.capitales_reelles = d.capitales;
+        } else {
+            self.monde_reel = false;
+            self.regions.clear();
+            self.capitales_reelles.clear();
+        }
+    }
+
+    /// Vrai pays d'une case (0 = aucun).
+    pub fn region(&self, i: usize) -> u8 {
+        self.regions.get(i).copied().unwrap_or(0)
+    }
+
+    /// Fin de la generation, commune aux deux cartes : mer cotiere,
+    /// gisements, crateres.
+    fn depuis_terrains(largeur: usize, hauteur: usize, graine: u64, cases: Vec<Case>) -> Monde {
+        let res = Bruit { graine: graine.wrapping_add(104_729) };
         let mut monde = Monde {
             largeur,
             hauteur,
@@ -556,6 +816,9 @@ impl Monde {
             bots_admin: None,
             cours: BTreeMap::new(),
             effets: Vec::new(),
+            monde_reel: false,
+            regions: Vec::new(),
+            capitales_reelles: Vec::new(),
         };
 
         // La mer cotiere est la mer qui touche une terre ; le reste
@@ -615,5 +878,123 @@ impl Monde {
         }
 
         monde
+    }
+}
+
+#[cfg(test)]
+mod tests_monde_reel {
+    use super::*;
+
+    /// Case la plus proche d'un point (longitude, latitude), via la meme
+    /// projection Equal Earth que outils/carte-monde.
+    fn case_de(m: &Monde, lon: f64, lat: f64) -> usize {
+        let (a1, a2, a3, a4, mm) = (1.340264, -0.081106, 0.000893, 0.003796, 3f64.sqrt() / 2.0);
+        let proj = |lon: f64, lat: f64| {
+            let t = (mm * lat.to_radians().sin()).asin();
+            let (t2, t6) = (t * t, t.powi(6));
+            let x = lon.to_radians() * t.cos() / (mm * (a1 + 3.0 * a2 * t2 + t6 * (7.0 * a3 + 9.0 * a4 * t2)));
+            (x, t * (a1 + a2 * t2 + t6 * (a3 + a4 * t2)))
+        };
+        let xmax = proj(180.0, 0.0).0;
+        let (yn, ys) = (proj(0.0, 83.0).1, proj(0.0, -56.0).1);
+        let (lp, hp) = (2.0 * xmax * 1.04, (yn - ys) + 0.04 * 2.0 * xmax);
+        let (x, y) = proj(lon, lat);
+        let u = (x + xmax * 1.04) / lp;
+        let v = (yn + 0.04 * xmax - y) / hp;
+        let py = v * ((m.hauteur - 1) as f64 * 0.866 + 1.0) - 0.5;
+        let row = (py / 0.866).round().clamp(0.0, (m.hauteur - 1) as f64) as usize;
+        let px = u * (m.largeur as f64 + 0.5) - 0.5 - if row % 2 == 1 { 0.5 } else { 0.0 };
+        row * m.largeur + px.round().clamp(0.0, (m.largeur - 1) as f64) as usize
+    }
+
+    #[test]
+    fn la_carte_du_monde_est_reconnaissable() {
+        let m = Monde::generer_monde_reel(256, 42);
+        assert_eq!(m.largeur, 256);
+        // Vraies proportions : environ 2,2 fois plus large que haute.
+        let ratio = m.largeur as f64 / (m.hauteur as f64 * 0.866);
+        assert!((2.0..2.5).contains(&ratio), "proportions {} x {}", m.largeur, m.hauteur);
+        let terres = m.cases.iter().filter(|c| est_terre(c.terrain)).count() as f64 / m.cases.len() as f64;
+        assert!((0.15..0.32).contains(&terres), "part de terres {terres}");
+        let t = |lon, lat| m.cases[case_de(&m, lon, lat)].terrain;
+        assert_eq!(t(10.0, 23.0), T_DESERT, "Sahara");
+        assert_eq!(t(-62.0, -5.0), T_FORET, "Amazonie");
+        assert_eq!(t(86.0, 28.0), T_MONTAGNE, "Himalaya");
+        assert!(!est_terre(t(-40.0, 30.0)), "Atlantique");
+        assert!(!est_terre(t(-150.0, 0.0)), "Pacifique");
+        assert!(est_terre(t(2.5, 47.0)), "France");
+        assert!(est_terre(t(134.0, -25.0)), "Australie");
+        assert!(est_terre(t(-100.0, 40.0)), "Etats-Unis");
+    }
+
+    fn index_pays(code: &str) -> u8 {
+        pays_reels().iter().position(|p| p.code == code).unwrap() as u8 + 1
+    }
+
+    #[test]
+    fn chaque_vrai_pays_a_sa_place() {
+        let m = Monde::generer_monde_reel(500, 3);
+        assert!(m.monde_reel);
+        assert_eq!(m.bots_admin, Some(0), "pas d'ordinateur sur la carte du monde");
+        let n = pays_reels().len();
+        assert!(n >= 195, "{n} pays");
+        let mut taille = vec![0usize; n + 1];
+        for &r in &m.regions {
+            taille[r as usize] += 1;
+        }
+        for k in 1..=n {
+            assert!(taille[k] >= 1, "{} n'a aucune case", pays_reels()[k - 1].nom);
+            let c = m.capitales_reelles[k];
+            assert_eq!(m.region(c) as usize, k, "capitale de {}", pays_reels()[k - 1].nom);
+            assert!(est_terre(m.cases[c].terrain));
+        }
+        // Grands pays bien plus grands que les petits.
+        assert!(taille[index_pays("RU") as usize] > 20 * taille[index_pays("FR") as usize]);
+        assert!(taille[index_pays("FR") as usize] > 15);
+        // Outre-mer : le Groenland est danois, la Guyane francaise.
+        assert_eq!(m.region(case_de(&m, -42.0, 72.0)), index_pays("DK"), "Groenland");
+        assert_eq!(m.region(case_de(&m, -53.0, 4.0)), index_pays("FR"), "Guyane");
+        assert_eq!(m.region(case_de(&m, 2.5, 47.0)), index_pays("FR"), "France");
+        assert_eq!(m.region(case_de(&m, -100.0, 40.0)), index_pays("US"), "Etats-Unis");
+        // Recalcul identique apres chargement.
+        let mut m2: Monde = serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+        assert!(m2.regions.is_empty());
+        m2.preparer_regions();
+        assert_eq!(m2.regions, m.regions);
+        assert_eq!(m2.capitales_reelles, m.capitales_reelles);
+    }
+
+    #[test]
+    fn un_joueur_prend_un_vrai_pays_libre() {
+        use crate::jeu::{commande, Joueur, Regles};
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 300 };
+        let mut m = Monde::generer_monde_reel(300, 9);
+        let fr = index_pays("FR");
+        let ja = Joueur { user_id: 1, nom: "Alice", admin: false, triche: false };
+        let jb = Joueur { user_id: 2, nom: "Bob", admin: false, triche: false };
+        let cmd = |k: u8| serde_json::json!({"action": "rejoindre", "pays_reel": k, "couleur": "#ef4444", "spe": "militaire"});
+        assert!(commande(&mut m, &ja, &serde_json::json!({"action": "rejoindre", "couleur": "#ef4444", "spe": "militaire"}), &regles).is_err(), "pays obligatoire");
+        commande(&mut m, &ja, &cmd(fr), &regles).unwrap();
+        let p = m.pays.values().find(|p| p.user_id == 1).unwrap();
+        assert_eq!(p.nom, "France");
+        assert_eq!(p.pays_reel, fr);
+        assert_eq!(p.capitale, m.capitales_reelles[fr as usize]);
+        let a_elle = m.cases.iter().enumerate().filter(|(_, c)| c.proprio == Some(p.id)).count();
+        let total = m.regions.iter().filter(|&&r| r == fr).count();
+        assert_eq!(a_elle, total, "toute la France, outre-mer compris");
+        // Deja pris.
+        let e = commande(&mut m, &jb, &cmd(fr), &regles).unwrap_err();
+        assert!(e.contains("Alice"), "{e}");
+        commande(&mut m, &jb, &cmd(index_pays("DE")), &regles).unwrap();
+        assert_eq!(m.pays.values().find(|p| p.user_id == 2).unwrap().nom, "Allemagne");
+    }
+
+    #[test]
+    fn la_taille_suit_la_largeur() {
+        for l in [60, 128, 300] {
+            let m = Monde::generer_monde_reel(l, 1);
+            assert_eq!(m.cases.len(), m.largeur * m.hauteur);
+            assert!(m.cases.iter().filter(|c| est_terre(c.terrain)).count() > l * 2);
+        }
     }
 }
