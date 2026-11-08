@@ -9,8 +9,9 @@
 //    plus grande que le Groenland, comme en vrai), formes peu deformees.
 //    Latitudes gardees : 56° S (Terre de Feu) a 83° N ; l'Antarctique
 //    est retire.
-// 3. Terrains : chaines de montagnes, deserts, forets et toundra places
-//    a la main d'apres la geographie reelle (approximation de jeu).
+// 3. Relief reel (altitude NASA, donnees/altitude-nasa.png) : montagnes la
+//    ou la pente est forte, collines sur les plateaux et terrains vallonnes.
+//    Deserts, forets et toundra places a la main d'apres le climat reel.
 //
 // 4. Pays reels (Natural Earth, countries-50m) : l'outre-mer est rattache
 //    au pays qui le dirige (voir SOUVERAIN) ; capitales dans capitales.js,
@@ -162,6 +163,38 @@ const terre = (m, lon, lat) => {
   return m[l * ML + c] === 1;
 };
 
+// ── Altitude reelle (NASA, domaine public) ──────────────────────────
+// donnees/altitude-nasa.png : relief terrestre de la NASA (Blue Marble
+// topography, 2048 x 1024, equirectangulaire), repris du paquet npm
+// three-globe (MIT). Niveau de gris ~ altitude : environ 24 m par niveau
+// (Tibet ~200 = 4 800 m, Denver ~68 = 1 600 m).
+const { PNG } = require('pngjs');
+const ALT = (() => {
+  const png = PNG.sync.read(fs.readFileSync(path.join(__dirname, 'donnees', 'altitude-nasa.png')));
+  const a = new Float32Array(png.width * png.height);
+  for (let i = 0; i < a.length; i++) a[i] = png.data[i * 4] * 24;
+  return { l: png.width, h: png.height, a };
+})();
+/** Altitude (m) en un point, interpolee. */
+function altitude(lon, lat) {
+  const x = ((lon + 180) / 360 * ALT.l - 0.5 + ALT.l) % ALT.l, y = Math.max(0, Math.min(ALT.h - 1.001, (90 - lat) / 180 * ALT.h - 0.5));
+  const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0, x1 = (x0 + 1) % ALT.l;
+  const g = (xx, yy) => ALT.a[yy * ALT.l + xx];
+  return (g(x0, y0) * (1 - fx) + g(x1, y0) * fx) * (1 - fy) + (g(x0, y0 + 1) * (1 - fx) + g(x1, y0 + 1) * fx) * fy;
+}
+/** Relief local (m) : ecart entre le point le plus haut et le plus bas
+ *  dans un rayon d'environ 40 km. Fort = pentes raides (vraie montagne). */
+function relief(lon, lat) {
+  const d = 0.36, k = 1 / Math.max(0.2, Math.cos(lat * RAD));
+  let min = Infinity, max = -Infinity;
+  for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [0.7, 0.7], [-0.7, 0.7], [0.7, -0.7], [-0.7, -0.7]]) {
+    const e = altitude(lon + dx * d * k, lat + dy * d);
+    if (e < min) min = e;
+    if (e > max) max = e;
+  }
+  return max - min;
+}
+
 // ── Bruit (frontieres naturelles entre les zones) ───────────────────
 function hash(x, y, s) {
   let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263) ^ Math.imul(s, 2246822519);
@@ -177,67 +210,6 @@ function bruit(x, y, s) {
 const fbm = (x, y, s) => (bruit(x, y, s) + 0.5 * bruit(x * 2.1, y * 2.1, s + 1) + 0.25 * bruit(x * 4.3, y * 4.3, s + 2)) / 1.75;
 
 // ── Geographie (approximative, a l'echelle d'un jeu) ────────────────
-// Chaines : [epaisseur en degres, [lon, lat], ...]. Le cœur est montagneux,
-// la bordure (2,2 x) en collines.
-const CHAINES = [
-  [2.2, [73, 35.5], [78, 32.5], [84, 28.8], [88, 27.9], [92, 27.8], [95.5, 28.8]],          // Himalaya
-  [1.8, [67, 35], [71, 36.5], [75, 36.2], [75, 39], [72, 39]],                               // Hindou Kouch, Karakoram, Pamir
-  [1.5, [69, 42], [76, 42], [82, 43], [88, 43.3], [94, 43]],                                 // Tian Shan
-  [1.3, [84, 50], [88, 49], [92, 48], [97, 46.5]],                                           // Altai
-  [1.2, [96, 52], [101, 51.5], [106, 50.5]],                                                 // Saian
-  [1.5, [45, 36.5], [47.5, 34], [51, 31], [54, 29], [57, 27.5]],                             // Zagros
-  [0.9, [48, 37], [51, 36.3], [55, 36.8], [59, 37]],                                         // Elbourz, Kopet-Dag
-  [1.0, [37.5, 44.5], [41, 43.3], [45, 42.5], [49, 41]],                                     // Caucase
-  [1.1, [5.5, 44.3], [7, 45.8], [9, 46.4], [11.5, 46.9], [14.5, 47.2]],                      // Alpes
-  [0.6, [-1.8, 43], [0.5, 42.7], [3, 42.5]],                                                 // Pyrenees
-  [0.7, [-8, 42.5], [-5, 40.5], [-3.5, 37.2]],                                               // Meseta, Sierra Nevada
-  [0.8, [14.5, 45.5], [17, 44], [19.5, 42.5], [21.5, 41], [22, 39.5]],                       // Dinarides, Pinde
-  [0.8, [18, 49.3], [22, 49], [25, 47.6], [25.5, 45.5], [22.5, 45]],                         // Carpates
-  [0.7, [9.5, 44.3], [12.5, 43], [15, 41], [16, 39]],                                        // Apennins
-  [1.2, [5.5, 59], [8.5, 61.5], [12.5, 64.5], [16.5, 67.5], [20, 69.3]],                     // Alpes scandinaves
-  [1.0, [59, 51], [59, 56], [59.5, 61], [61, 65], [65, 68]],                                 // Oural
-  [1.3, [-9, 30.8], [-6, 32.2], [-2, 33.8], [2, 35], [6, 35.6], [9, 36.2]],                   // Atlas
-  [1.0, [36, 0.5], [35.5, -4], [34.5, -8.5]],                                                // Rift est-africain
-  [0.9, [27.5, -30.5], [29.5, -28.5], [31, -25.5]],                                          // Drakensberg
-  [3.0, [-152, 62.5], [-142, 61.5], [-133, 59.5], [-125, 55], [-118, 50], [-113, 46.5], [-110, 43.5], [-107.5, 39.5], [-106, 35.5]], // Rocheuses
-  [1.0, [-121.5, 49], [-121.5, 45], [-120.5, 40.5], [-118.5, 36.5]],                          // Cascades, Sierra Nevada
-  [1.5, [-109, 29], [-105, 25], [-102, 21.5], [-98, 18.5], [-95.5, 17]],                     // Sierra Madre
-  [1.0, [-91.5, 15.5], [-87, 14], [-84.5, 11], [-83, 9]],                                    // Amerique centrale
-  [2.0, [-73, 10.5], [-76, 6], [-77.5, 2], [-78.5, -2], [-77, -8], [-74, -13], [-70.5, -16.5], [-68, -20], [-67.5, -24], [-69.5, -28], [-70, -33], [-71, -38], [-72, -44], [-73, -49], [-72, -52.5]], // Andes
-  [1.1, [-85, 34], [-82, 36.5], [-79, 39.5], [-76, 41.5], [-73.5, 43.5], [-70, 45.5]],       // Appalaches
-  [1.1, [145.5, -16], [147, -21], [149.5, -26.5], [150.5, -31.5], [148.5, -36], [146.5, -37.5]], // Cordillere australienne
-  [0.8, [167.5, -45.5], [170.5, -43.5], [172.5, -41.5]],                                     // Alpes neo-zelandaises
-  [1.0, [136.5, 35], [138, 36.5], [140, 38.5], [141, 41]],                                   // Alpes japonaises
-  [1.6, [127, 66.5], [130, 63], [137, 62.5], [145, 63.5], [155, 63], [163, 63]],             // Verkhoiansk, Tcherski, Kolyma
-  [1.0, [157, 52.5], [159.5, 56], [161, 59]],                                                // Kamtchatka
-  [1.0, [-161, 68], [-152, 68.3], [-143, 68.8]],                                             // Chaine de Brooks
-  [0.9, [-66, 58], [-63, 55], [-61, 52]],                                                    // Labrador
-  [1.0, [99, 25], [99, 20], [98.5, 15]],                                                     // Monts Shan, Arakan
-  [1.0, [103, 30], [102.5, 26.5]],                                                           // Hengduan
-  [0.8, [100.5, 5], [102, 2.5]],                                                             // Malaisie
-];
-// Plateaux et massifs : [lon, lat, rayon lon, rayon lat, terrain].
-const MASSIFS = [
-  [88, 33.5, 13, 4.5, MONTAGNE],   // Tibet
-  [39, 10, 4.5, 5, MONTAGNE],      // Hauts plateaux ethiopiens
-  [35, 39, 7, 2.3, COLLINE],       // Anatolie
-  [56, 32.5, 9, 4, COLLINE],       // Plateau iranien
-  [69, 34, 4, 3, MONTAGNE],        // Afghanistan
-  [-45, -17, 7, 7, COLLINE],       // Plateau bresilien
-  [-104, 40, 6, 9, COLLINE],       // Grandes Plaines hautes / Colorado
-  [-113, 38, 5, 5, COLLINE],       // Grand Bassin
-  [100, 46, 9, 3, COLLINE],        // Mongolie
-  [78, 18, 5, 6, COLLINE],         // Deccan
-  [-102, 23, 4, 4, COLLINE],       // Plateau mexicain
-  [-67, -21, 3, 4, MONTAGNE],      // Altiplano
-  [126, 41, 4, 3, COLLINE],        // Coree du Nord, Mandchourie
-  [107, 27, 5, 3, COLLINE],        // Yunnan-Guizhou
-  [18, -21, 5, 5, COLLINE],        // Plateau namibien
-  [29, -13, 6, 4, COLLINE],        // Plateau d'Afrique australe
-  [22, 6, 7, 3, COLLINE],          // Dorsale centrafricaine
-  [-3, 54.8, 1.5, 2.5, COLLINE],   // Ecosse, nord de l'Angleterre
-  [134, 48, 4, 3, COLLINE],        // Sikhote-Aline
-];
 // Deserts : [lon, lat, rayon lon, rayon lat].
 const DESERTS = [
   [10, 23, 23, 8.5],   // Sahara
@@ -287,23 +259,6 @@ function dans(e, lon, lat, marge = 0) {
   const dx = (lon - e[0]) / (e[2] * (1 + marge)), dy = (lat - e[1]) / (e[3] * (1 + marge));
   return dx * dx + dy * dy < 1;
 }
-function distSegment(px, py, ax, ay, bx, by) {
-  const k = Math.cos(py * RAD); // degres de longitude plus courts vers les poles
-  const vx = (bx - ax) * k, vy = by - ay, wx = (px - ax) * k, wy = py - ay;
-  const t = Math.max(0, Math.min(1, (wx * vx + wy * vy) / (vx * vx + vy * vy || 1)));
-  return Math.hypot(wx - t * vx, wy - t * vy);
-}
-function relief(lon, lat) {
-  let best = Infinity;
-  for (const [ep, ...pts] of CHAINES) {
-    for (let i = 0; i + 1 < pts.length; i++) {
-      const d = distSegment(lon, lat, pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1]) / ep;
-      if (d < best) best = d;
-    }
-  }
-  return best; // < 1 : cœur montagneux ; < 2,2 : collines
-}
-
 function terrainDe(m, lon0, lat0) {
   if (!terre(m, lon0, lat0)) return OCEAN;
   // Coordonnees deformees : les zones ont des contours naturels, pas des
@@ -312,12 +267,15 @@ function terrainDe(m, lon0, lat0) {
   const lat = lat0 + 5 * (fbm(lon0 / 9 + 50, lat0 / 9 + 30, 13) - 0.5);
   const n = fbm(lon / 4, lat / 4, 1) - 0.5;   // frontieres irregulieres
   const n2 = fbm(lon / 2.5, lat / 2.5, 7);
-  const d = relief(lon, lat) * (1 + 0.5 * n);
-  if (d < 1) return MONTAGNE;
-  for (const ms of MASSIFS) {
-    if (dans(ms, lon, lat, n * 0.4)) return ms[4] === MONTAGNE && n2 < 0.35 ? COLLINE : ms[4];
+  // Relief reel : montagne = pente forte (on ne peut pas y construire) ;
+  // collines = terrain eleve ou vallonne mais praticable (Tibet, Altiplano,
+  // Massif central…).
+  const e = altitude(lon0, lat0), r = relief(lon0, lat0);
+  const gro0 = lon0 > -75 && lon0 < -10 && lat0 > 59.5;
+  if (!gro0) {
+    if (r >= 1000 || (r >= 650 && e >= 1800)) return MONTAGNE;
+    if (e >= 1100 || r >= 420) return COLLINE;
   }
-  if (d < 2.2) return COLLINE;
   // Groenland, grand nord, sud de la Patagonie
   const gro = lon0 > -75 && lon0 < -10 && lat0 > 59.5;
   if (gro || lat0 > 66 + 4 * n || lat0 < -52) return TOUNDRA;

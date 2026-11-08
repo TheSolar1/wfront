@@ -215,6 +215,8 @@ function debloque(S, id) {
 }
 
 function raisonBatiment(S, d, i) {
+  // Montagne (terrain 5) : pente trop forte pour bâtir.
+  if (S.carte.terrain[i] === 5) return 'Impossible en montagne (pente trop forte)';
   if (d.tech && !aTech(S, d.tech)) return 'Technologie : ' + nomTech(S, d.tech);
   if (d.depot && S.carte.depot[i] !== d.depot) return 'Nécessite : ' + S.defs.depots[d.depot].nom.toLowerCase();
   if (d.cote && S.carte.cotes[i] !== '1') return 'Uniquement sur une côte';
@@ -424,6 +426,10 @@ export function menuDiplomatie(S, p) {
 /** Bâtiments constructibles ici, avec leur coût : un clic sur « Bâtir » suffit. */
 function menuConstruire(S, i) {
   const m = S.moi;
+  if (S.carte.terrain[i] === 5) {
+    return `<div class="wf-menu-bloc"><div class="wf-menu-titre">${ico('mountain')} Montagne</div>
+      <p class="wf-note">La pente est trop forte pour construire ici. Les collines et les plateaux, eux, sont constructibles.</p></div>`;
+  }
   const possibles = S.defs.batiments.filter(d => d.constructible && !raisonBatiment(S, d, i));
   // Les bâtiments qui exploitent le gisement de la case d'abord.
   possibles.sort((a, b) => (b.depot ? 1 : 0) - (a.depot ? 1 : 0));

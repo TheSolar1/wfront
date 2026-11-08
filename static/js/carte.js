@@ -33,6 +33,17 @@ const LZ = 1.5 * R;                // pas vertical
 const ALT = [-1.25, -0.38, 0.2, 0.3, 0.85, 1.9, 0.24, 0.33, -2.6];
 const RUG = [0.05, 0.04, 0.06, 0.12, 0.42, 1.2, 0.09, 0.12, 0];
 const BIOMES = ['#1f4f73', '#3f86a8', '#8db35a', '#4f7f3a', '#9c9a5e', '#8a8378', '#dcc684', '#b3bdb0', '#07030c'];
+// Nuances reelles de chaque terrain (melangees par plusieurs bruits) : un
+// meme terrain n'a jamais deux fois la meme couleur, rien ne se repete.
+const NUANCES = [
+  null, null,
+  ['#7da24c', '#94ad57', '#6b9444', '#a7b467', '#86a952'],          // plaine : herbe grasse, seche, prairie
+  ['#3c6a31', '#4a7a39', '#33592b', '#56813f', '#2f5528'],          // foret
+  ['#8d975a', '#9f9a66', '#7e8a52', '#a8a374', '#8a8c5e'],          // collines
+  ['#7b7166', '#8b8277', '#6d655c', '#958d83', '#80776b'],          // montagnes (roche)
+  ['#dcc684', '#d1b26c', '#e6d3a0', '#c9a764', '#e0c98c'],          // desert : sable, regs
+  ['#a9b5a2', '#93a08a', '#bcc5b5', '#8a9682', '#c8cfc2'],          // toundra : lichens, mousses
+];
 const T_NEANT = 8;
 const DIRS_COINS = [[0, 1], [5, 0], [4, 5], [3, 4], [2, 3], [1, 2]]; // voisin k -> coins de l'arete
 
@@ -245,12 +256,36 @@ export class Carte {
 
   /** Couleur de base d'un sommet du relief : biome, plages, neige, roche en
    *  pente, fonds marins (ecrite dans vBase). */
+  /** Terrain vu sous un point du sol, avec des frontieres naturelles (le
+   *  point est deplace par un bruit) au lieu des bords des hexagones. */
+  terrainNaturel(x, z, ci) {
+    const t0 = ci >= 0 ? this.terrain[ci] : 0;
+    if (t0 <= 1 || t0 === T_NEANT) return t0;
+    const dx = (fbm(x * 0.55 + 11.3, z * 0.55 - 4.1, 3) - 0.5) * 1.5, dz = (fbm(x * 0.55 - 7.7, z * 0.55 + 19.2, 3) - 0.5) * 1.5;
+    const cj = this.hexDepuis(x + dx, z + dz);
+    const t = cj >= 0 ? this.terrain[cj] : t0;
+    return t <= 1 || t === T_NEANT ? t0 : t;
+  }
+
+  /** Couleur de terrain : melange de nuances par des bruits a plusieurs echelles. */
+  nuance(t, x, z, c) {
+    const N = this.palette.nuances[t];
+    if (!N) return c.copy(this.palette.pal[t]);
+    const a = fbm(x * 0.07 + t * 13.1, z * 0.07 - t * 5.3, 3);          // grandes regions (seches, humides)
+    const b = fbm(x * 0.45 - t * 3.7, z * 0.45 + t * 9.9, 3);           // champs, bosquets, dunes
+    const f = Math.min(N.length - 1.001, Math.max(0, a * 1.6 - 0.3) * (N.length - 1));
+    const i = Math.floor(f);
+    c.copy(N[i]).lerp(N[i + 1], f - i);
+    c.lerp(N[(i + 2) % N.length], Math.max(0, b - 0.55) * 0.9);
+    return c;
+  }
+
   couleurSommet(k, pos, nor) {
     const P = this.palette, c = this._c ??= new THREE.Color();
     const h = pos[3 * k + 1], ci = this.vCase[k];
-    const t = ci >= 0 ? this.terrain[ci] : 0;
+    const t = this.terrainNaturel(pos[3 * k], pos[3 * k + 2], ci);
     const pente = 1 - nor[3 * k + 1];
-    c.copy(P.pal[t]);
+    this.nuance(t, pos[3 * k], pos[3 * k + 2], c);
     if (t === T_NEANT) {
       // Gouffre : noir violace, un peu plus clair sur les bords.
       c.setRGB(0.03, 0.01, 0.05).lerp(P.roche, Math.max(0, Math.min(0.25, (h + 0.6) * 0.2)));
@@ -260,8 +295,10 @@ export class Carte {
       if (h < 0.16) c.lerp(P.sable, (0.16 - h) / 0.16 * 0.85);
       if (pente > 0.18) c.lerp(P.roche, Math.min(0.8, (pente - 0.18) * 3));
       if (h > 1.75) c.lerp(P.neige, Math.min(1, (h - 1.75) / 0.45));
-      const v = (fbm(pos[3 * k] * 2.1, pos[3 * k + 2] * 2.1, 2) - 0.5) * 0.14;
-      c.offsetHSL(0, 0, v);
+      // Grain fin (cailloux, touffes) et legere variation de teinte.
+      const v = (fbm(pos[3 * k] * 2.3, pos[3 * k + 2] * 2.3, 2) - 0.5) * 0.1 + (bruit(pos[3 * k] * 7.1, pos[3 * k + 2] * 7.1) - 0.5) * 0.04;
+      const ht = (fbm(pos[3 * k] * 0.2 + 40, pos[3 * k + 2] * 0.2, 2) - 0.5) * 0.025;
+      c.offsetHSL(ht, 0, v);
     }
     this.vBase[3 * k] = c.r; this.vBase[3 * k + 1] = c.g; this.vBase[3 * k + 2] = c.b;
   }
@@ -281,8 +318,12 @@ export class Carte {
     for (const i of zone) { const [x, z] = this.pos(i); this.hCase[i] = Math.max(0.05, this.altitude(x, z)); }
     if (this.arbresCases) {
       const vide = new THREE.Matrix4().makeScale(0, 0, 0);
-      this.arbresCases.forEach((c, k) => { if (zone.has(c)) this.arbres.setMatrixAt(k, vide); });
-      this.arbres.instanceMatrix.needsUpdate = true;
+      this.arbresCases.forEach((c, k) => {
+        if (!zone.has(c)) return;
+        const [type, idx] = this.arbresRef[k];
+        this.arbresMeshes[type].setMatrixAt(idx, vide);
+        this.arbresMeshes[type].instanceMatrix.needsUpdate = true;
+      });
     }
     this.deformation = { ks, de, vers, zone, t0: performance.now() + delai, duree: 1800 };
   }
@@ -314,7 +355,10 @@ export class Carte {
     }
 
     // ── Maillage continu du relief ──
-    const pas = 0.3;
+    // Pas de 0,3 ; plus large sur les tres grandes cartes, pour rester sous
+    // ~3 millions de sommets (memoire et fluidite).
+    const surface = (this.largeurMonde + LX * 3) * (this.hauteurMonde + LZ * 3);
+    const pas = Math.max(0.3, Math.sqrt(surface / (MOBILE ? 1.2e6 : 3e6)));
     const x0 = -LX * 1.5, z0 = -LZ * 1.5;
     const nx = Math.ceil((this.largeurMonde + LX * 3) / pas) + 1;
     const nz = Math.ceil((this.hauteurMonde + LZ * 3) / pas) + 1;
@@ -350,6 +394,7 @@ export class Carte {
     const tmp = new THREE.Color();
     this.palette = {
       pal: BIOMES.map(h => new THREE.Color(h)),
+      nuances: NUANCES.map(l => l && l.map(h => new THREE.Color(h))),
       sable: new THREE.Color('#d6c794'), roche: new THREE.Color('#7b7166'), neige: new THREE.Color('#f4f6f9'),
       fond: new THREE.Color(sombre ? '#0b2236' : '#1f4f73'), hautFond: new THREE.Color('#5f9fae'),
     };
@@ -359,34 +404,78 @@ export class Carte {
     this.relief.castShadow = this.relief.receiveShadow = true;
     this.scene.add(this.relief);
 
-    // ── Arbres (forets, toundra, quelques-uns en plaine) ──
+    // ── Arbres (forets, toundra, quelques-uns en plaine et collines) ──
+    // Deux vrais modeles : conifere a etages (nord, toundra, montagne) et
+    // feuillu a couronne ronde ; taille, teinte et orientation variees.
     const hasard = mulberry(this.g.l * 1000 + this.g.h);
     const places = [];
     for (let i = 0; i < n; i++) {
       const t = this.terrain[i];
-      let nb = t === 3 ? 7 : t === 7 ? 2 : t === 2 && hasard() < 0.25 ? 1 : t === 4 && hasard() < 0.4 ? 1 : 0;
+      let nb = t === 3 ? 9 : t === 7 ? 2 : t === 2 && hasard() < 0.3 ? 2 : t === 4 && hasard() < 0.45 ? 2 : 0;
       if (MOBILE) nb = Math.ceil(nb / 2.5); // moins d'arbres sur mobile
       const [cx, cz] = this.pos(i);
+      const nord = Math.floor(i / this.g.l) / this.g.h; // 0 = haut de la carte (nord)
       for (let k = 0; k < nb; k++) {
-        const a = hasard() * Math.PI * 2, r = Math.sqrt(hasard()) * 0.72;
+        const a = hasard() * Math.PI * 2, r = Math.sqrt(hasard()) * 0.78;
         const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
         const h = this.altitude(x, z);
-        if (h > 0.08 && h < 1.6) places.push([x, h, z, 0.75 + hasard() * 0.6, t, i]);
+        // Coniferes : toundra, grand nord, altitude ; sinon surtout des feuillus.
+        const conif = t === 7 || nord < 0.28 || h > 1.0 || (t === 3 && hasard() < 0.25);
+        if (h > 0.08 && h < 1.6) places.push([x, h, z, 0.6 + hasard() * 0.65, conif ? 0 : 1, i, hasard() * Math.PI * 2]);
       }
     }
-    const cone = new THREE.ConeGeometry(0.14, 0.46, 6);
-    cone.translate(0, 0.25, 0);
-    this.arbres = new THREE.InstancedMesh(cone, new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true }), places.length);
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), v = new THREE.Vector3();
-    places.forEach(([x, h, z, e, t], k) => {
-      m.compose(v.set(x, h - 0.03, z), q, s.set(e, e * (t === 7 ? 1.3 : 1), e));
-      this.arbres.setMatrixAt(k, m);
-      tmp.set(t === 7 ? '#2f5d4a' : '#2e6b2f').offsetHSL(0, 0, (hasard() - 0.5) * 0.12);
-      this.arbres.setColorAt(k, tmp);
+    // Geometries : troncs bruns, feuillage blanc (teinte donnee par instance).
+    const assembler = parts => {
+      let n2 = 0;
+      const geos = parts.map(([g, coul]) => { const ng = g.toNonIndexed(); n2 += ng.attributes.position.count; return [ng, new THREE.Color(coul)]; });
+      const posA = new Float32Array(n2 * 3), norA = new Float32Array(n2 * 3), colA = new Float32Array(n2 * 3);
+      let o = 0;
+      for (const [g, c] of geos) {
+        g.computeVertexNormals();
+        posA.set(g.attributes.position.array, o * 3); norA.set(g.attributes.normal.array, o * 3);
+        for (let v = 0; v < g.attributes.position.count; v++) colA.set([c.r, c.g, c.b], (o + v) * 3);
+        o += g.attributes.position.count;
+      }
+      const out = new THREE.BufferGeometry();
+      out.setAttribute('position', new THREE.BufferAttribute(posA, 3));
+      out.setAttribute('normal', new THREE.BufferAttribute(norA, 3));
+      out.setAttribute('color', new THREE.BufferAttribute(colA, 3));
+      return out;
+    };
+    const trn = (rb, rh, hh) => { const g = new THREE.CylinderGeometry(rh, rb, hh, 5); g.translate(0, hh / 2, 0); return g; };
+    const cn = (r, hh, y) => { const g = new THREE.ConeGeometry(r, hh, 7); g.translate(0, y + hh / 2, 0); return g; };
+    const coniferGeo = assembler([[trn(0.03, 0.022, 0.12), '#d9b48a'], [cn(0.17, 0.26, 0.08), '#ffffff'], [cn(0.13, 0.22, 0.2), '#f2f2f2'], [cn(0.085, 0.18, 0.31), '#e6e6e6']]);
+    const couronne = new THREE.IcosahedronGeometry(0.15, 1);
+    { const pp = couronne.attributes.position; for (let v = 0; v < pp.count; v++) { const f = 0.85 + 0.3 * bruit(pp.getX(v) * 9 + 3, pp.getZ(v) * 9 + pp.getY(v) * 5); pp.setXYZ(v, pp.getX(v) * f, pp.getY(v) * f * 0.85, pp.getZ(v) * f); } couronne.translate(0, 0.27, 0); }
+    const petite = new THREE.IcosahedronGeometry(0.09, 0); petite.translate(0.07, 0.35, -0.04);
+    const feuilluGeo = assembler([[trn(0.032, 0.022, 0.2), '#d9b48a'], [couronne, '#ffffff'], [petite, '#eeeeee']]);
+    const matArbre = new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true, vertexColors: true });
+    const parType = [[], []];
+    places.forEach((p, k) => parType[p[4]].push(k));
+    this.arbresMeshes = [new THREE.InstancedMesh(coniferGeo, matArbre, Math.max(1, parType[0].length)), new THREE.InstancedMesh(feuilluGeo, matArbre, Math.max(1, parType[1].length))];
+    this.arbresMeshes.forEach((m, j2) => { m.count = parType[j2].length; });
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), v = new THREE.Vector3(), axe = new THREE.Vector3(0, 1, 0);
+    // arbresCases[k] : case de l'arbre k ; arbresRef[k] : [modele, index].
+    this.arbresRef = [];
+    const compteurs = [0, 0];
+    places.forEach(([x, h, z, e, type, , rot], k) => {
+      const mesh = this.arbresMeshes[type], idx = compteurs[type]++;
+      m.compose(v.set(x, h - 0.03, z), q.setFromAxisAngle(axe, rot), s.set(e, e * (type === 0 ? 1.15 : 1), e));
+      mesh.setMatrixAt(idx, m);
+      if (type === 0) tmp.set(this.terrain[places[k][5]] === 7 ? '#2f5a46' : '#2b5a32');
+      else tmp.set(['#3f7a35', '#4f8a3b', '#5d8f3a', '#466f2e', '#6b8f3c'][Math.floor(hasard() * 5)]);
+      tmp.offsetHSL((hasard() - 0.5) * 0.03, 0, (hasard() - 0.5) * 0.1);
+      mesh.setColorAt(idx, tmp);
+      this.arbresRef.push([type, idx]);
     });
-    this.arbres.castShadow = true;
-    this.scene.add(this.arbres);
+    for (const mesh of this.arbresMeshes) { mesh.castShadow = true; mesh.receiveShadow = true; this.scene.add(mesh); }
+    // Compatibilite : this.arbres = le premier modele (utilise ailleurs pour needsUpdate).
+    this.arbres = this.arbresMeshes[0];
     this.arbresCases = places.map(p => p[5]);
+    // Arbres de chaque case : on les retire quand un batiment y est construit.
+    this.arbresParCase = new Map();
+    this.arbresCases.forEach((c, k) => { if (!this.arbresParCase.has(c)) this.arbresParCase.set(c, []); this.arbresParCase.get(c).push(k); });
+    this.matricesArbres = places.map(() => null);
     this.construireGrille();
 
     // Contour de survol / selection : anneau hexagonal epais, toujours visible.
@@ -419,7 +508,7 @@ export class Carte {
     }
     const gl = new THREE.BufferGeometry();
     gl.setAttribute('position', new THREE.Float32BufferAttribute(lignes, 3));
-    this.grille = new THREE.LineSegments(gl, new THREE.LineBasicMaterial({ color: sombre ? 0xffffff : 0x1c2a1c, transparent: true, opacity: sombre ? 0.08 : 0.1, depthWrite: false }));
+    this.grille = new THREE.LineSegments(gl, new THREE.LineBasicMaterial({ color: sombre ? 0xffffff : 0x1c2a1c, transparent: true, opacity: sombre ? 0.05 : 0.06, depthWrite: false }));
     this.scene.add(this.grille);
   }
 
@@ -759,7 +848,26 @@ export class Carte {
     this.labelsSales = true;
   }
 
+  /** Montre ou cache les arbres d'une case (une foret laisse la place au batiment). */
+  arbresVisibles(i, visibles) {
+    const ks = this.arbresParCase?.get(i);
+    if (!ks) return;
+    const vide = new THREE.Matrix4().makeScale(0, 0, 0), m = new THREE.Matrix4();
+    for (const k of ks) {
+      const [type, idx] = this.arbresRef[k], mesh = this.arbresMeshes[type];
+      if (!visibles) {
+        if (!this.matricesArbres[k]) { mesh.getMatrixAt(idx, m); this.matricesArbres[k] = m.clone(); }
+        mesh.setMatrixAt(idx, vide);
+      } else if (this.matricesArbres[k]) {
+        mesh.setMatrixAt(idx, this.matricesArbres[k]);
+        this.matricesArbres[k] = null;
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+  }
+
   majBatiment(i) {
+    this.arbresVisibles(i, !this.bat[i]);
     const ancien = this.spritesBat.get(i);
     if (ancien) {
       this.groupes.bats.remove(ancien);
@@ -774,7 +882,8 @@ export class Carte {
     const groupe = new THREE.Group();
     const modele = new THREE.Mesh(geometrieBatiment(b, couleur), materielBatiments);
     modele.castShadow = true;
-    const echelle = (b === 'capitale' ? 1.25 : 1) * (0.9 + 0.05 * Math.min(niv, 8));
+    // Modeles detailles et plus petits que la case ; ils grandissent un peu avec le niveau.
+    const echelle = (b === 'capitale' ? 1.2 : 1) * (0.92 + 0.04 * Math.min(niv, 8));
     modele.scale.setScalar(echelle);
     // Orientation variée mais stable d'une case à l'autre.
     modele.rotation.y = ((i * 7919) % 6) * Math.PI / 3 + 0.3;
@@ -1513,6 +1622,8 @@ export class Carte {
     const cp = Math.cos(c.tangage), sp = Math.sin(c.tangage);
     this.camera.position.set(c.x + Math.sin(c.lacet) * cp * c.d, sp * c.d, c.z + Math.cos(c.lacet) * cp * c.d);
     this.camera.lookAt(c.x, 0, c.z);
+    // Grille des cases : discrete de pres, invisible de loin.
+    if (this.grille) { this.grille.visible = c.d < 60; this.grille.material.opacity = (this.theme === 'dark' ? 0.05 : 0.06) * Math.min(1, (60 - c.d) / 25); }
     // Brouillard d'horizon proportionnel au recul (vue du monde entier).
     if (this.scene.fog) { this.scene.fog.near = Math.max(120, c.d * 1.4); this.scene.fog.far = Math.max(280, c.d * 3); }
 
