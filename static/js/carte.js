@@ -8,11 +8,11 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { Grille, melanger, BASE } from './util.js';
 import { geometrieBatiment, materielBatiments } from './modeles.js';
+import { Sol, R, LX, LZ, T_NEANT, bruit, fbm, mulberry } from './sol.js';
 
 // Téléphone / tablette : écran tactile ou petit écran -> rendu allégé.
 const MOBILE = matchMedia('(pointer: coarse)').matches || window.innerWidth < 760;
 
-const R = 1;                       // rayon d'un hexagone
 // Sensibilite de la camera (plus petit = plus lent). glisser = 1 : la
 // carte suit exactement la souris.
 const SENSI = {
@@ -25,26 +25,6 @@ const SENSI = {
   rotationClavier: 0.7,    // E / R (avant : 1.2)
   zoomClavier: 0.6,        // + / - (avant : 1)
 };
-const LX = Math.sqrt(3) * R;       // pas horizontal
-const LZ = 1.5 * R;                // pas vertical
-// Altitude de base et rugosite par terrain (ocean, mer, plaine, foret,
-// collines, montagnes, desert, toundra) + couleur de biome.
-// Index 8 : neant (carte detruite par un trou noir), un gouffre noir.
-const ALT = [-1.25, -0.38, 0.2, 0.3, 0.85, 1.9, 0.24, 0.33, -2.6];
-const RUG = [0.05, 0.04, 0.06, 0.12, 0.42, 1.2, 0.09, 0.12, 0];
-const BIOMES = ['#1f4f73', '#3f86a8', '#8db35a', '#4f7f3a', '#9c9a5e', '#8a8378', '#dcc684', '#b3bdb0', '#07030c'];
-// Nuances reelles de chaque terrain (melangees par plusieurs bruits) : un
-// meme terrain n'a jamais deux fois la meme couleur, rien ne se repete.
-const NUANCES = [
-  null, null,
-  ['#7da24c', '#94ad57', '#6b9444', '#a7b467', '#86a952'],          // plaine : herbe grasse, seche, prairie
-  ['#3c6a31', '#4a7a39', '#33592b', '#56813f', '#2f5528'],          // foret
-  ['#8d975a', '#9f9a66', '#7e8a52', '#a8a374', '#8a8c5e'],          // collines
-  ['#7b7166', '#8b8277', '#6d655c', '#958d83', '#80776b'],          // montagnes (roche)
-  ['#dcc684', '#d1b26c', '#e6d3a0', '#c9a764', '#e0c98c'],          // desert : sable, regs
-  ['#a9b5a2', '#93a08a', '#bcc5b5', '#8a9682', '#c8cfc2'],          // toundra : lichens, mousses
-];
-const T_NEANT = 8;
 const DIRS_COINS = [[0, 1], [5, 0], [4, 5], [3, 4], [2, 3], [1, 2]]; // voisin k -> coins de l'arete
 
 // ── Icones SVG -> images blanches pour les textures ──────────────
@@ -74,26 +54,6 @@ function iconeSync(nom) {
 }
 
 // ── Bruit (relief) ───────────────────────────────────────────────
-function hash2(x, y) {
-  let h = Math.imul(x | 0, 374761393) ^ Math.imul(y | 0, 668265263);
-  h = Math.imul(h ^ (h >>> 13), 1274126177);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967295;
-}
-function bruit(x, y) {
-  const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
-  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
-  const a = hash2(x0, y0), b = hash2(x0 + 1, y0), c = hash2(x0, y0 + 1), d = hash2(x0 + 1, y0 + 1);
-  return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
-}
-function fbm(x, y, o) {
-  let v = 0, amp = 0.5, f = 1, t = 0;
-  for (let i = 0; i < o; i++) { v += bruit(x * f, y * f) * amp; t += amp; amp *= 0.5; f *= 2.03; }
-  return v / t;
-}
-function mulberry(a) {
-  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
-}
-
 export class Carte {
   constructor(el, init, rappels) {
     this.el = el;
@@ -156,10 +116,14 @@ export class Carte {
   // ── Scene ────────────────────────────────────────────────────────
   initScene() {
     // Sur mobile : pas de lissage, résolution limitée, ombres simples.
-    this.renderer = new THREE.WebGLRenderer({ antialias: !MOBILE, powerPreference: MOBILE ? 'default' : 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, MOBILE ? 1.25 : 2));
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = MOBILE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
+    this.renderer = new THREE.WebGLRenderer({ antialias: !MOBILE, powerPreference: 'high-performance' });
+    // Resolution : ajustee en direct pour tenir au moins 30 images/s.
+    this.ratioMax = Math.min(window.devicePixelRatio, MOBILE ? 1 : 1.5);
+    this.ratio = this.ratioMax;
+    this.renderer.setPixelRatio(this.ratio);
+    // Pas d'ombres sur mobile ; sur ordinateur, seulement autour de la vue.
+    this.renderer.shadowMap.enabled = !MOBILE;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.el.appendChild(this.renderer.domElement);
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.3, 1400);
@@ -175,10 +139,10 @@ export class Carte {
     const soleil = new THREE.DirectionalLight(sombre ? 0xdfe6ff : 0xfff1dc, sombre ? 1.15 : 1.7);
     soleil.position.set(this.largeurMonde / 2 - 70, 75, this.hauteurMonde / 2 - 45);
     soleil.target.position.set(this.largeurMonde / 2, 0, this.hauteurMonde / 2);
-    soleil.castShadow = true;
-    soleil.shadow.mapSize.set(MOBILE ? 1024 : 4096, MOBILE ? 1024 : 4096);
-    const demi = Math.max(this.largeurMonde, this.hauteurMonde) * 0.62;
-    Object.assign(soleil.shadow.camera, { left: -demi, right: demi, top: demi, bottom: -demi, near: 10, far: 320 });
+    soleil.castShadow = !MOBILE;
+    soleil.shadow.mapSize.set(2048, 2048);
+    Object.assign(soleil.shadow.camera, { left: -60, right: 60, top: 60, bottom: -60, near: 10, far: 320 });
+    this.soleil = soleil;
     soleil.shadow.bias = -0.0006;
     soleil.shadow.normalBias = 0.05;
     this.scene.add(soleil, soleil.target);
@@ -203,7 +167,11 @@ export class Carte {
 
     this.cam = { x: this.largeurMonde / 2, z: this.hauteurMonde / 2, d: 70, lacet: 0, tangage: 0.9 };
     // Recul maximal : assez pour voir toute la carte du monde d'un coup.
-    this.dMax = Math.min(320, Math.max(110, this.largeurMonde * 0.75));
+    this.dMax = Math.max(110, this.largeurMonde * 0.62);
+    this.camera.far = Math.max(1400, this.dMax * 3.2);
+    this.camera.updateProjectionMatrix();
+    // En dessous de ce recul : sol detaille, arbres, grille.
+    this.D_DETAIL = 75;
     this.redimensionner();
     new ResizeObserver(() => this.redimensionner()).observe(this.el);
 
@@ -230,204 +198,179 @@ export class Carte {
 
   /** Altitude du sol au centre d'une case (jamais sous l'eau pour les sprites). */
   haut(i) {
-    return this.hCase[i];
+    let h = this.hCase[i];
+    if (h !== h) { const [x, z] = this.pos(i); h = this.hCase[i] = Math.max(0.05, this.altitude(x, z)); } // calcul a la demande
+    return h;
   }
 
-  /** Altitude du terrain en un point : moyenne lissee des cases voisines
-   *  + cretes (montagnes) et ondulations (plaines). */
+  /** Altitude du terrain en un point (calcul partage avec sol-worker.js). */
   altitude(x, z) {
-    const i0 = this.hexDepuis(x, z);
-    if (i0 < 0) return ALT[0];
-    let sw = 0, sa = 0, sr = 0;
-    const cand = this.g.voisins(i0);
-    cand.push(i0);
-    for (const i of cand) {
-      if (i < 0) continue;
-      const [cx, cz] = this.pos(i);
-      const w = Math.exp(-((x - cx) ** 2 + (z - cz) ** 2) / 0.85);
-      const t = this.terrain[i];
-      sw += w; sa += w * ALT[t]; sr += w * RUG[t];
-    }
-    const base = sa / sw, rug = sr / sw;
-    const crete = 1 - Math.abs(2 * fbm(x * 0.5, z * 0.5, 4) - 1);
-    const onde = fbm(x * 0.9 + 100, z * 0.9 + 100, 3) - 0.5;
-    return base + rug * (crete * crete * 1.4 - 0.4) + onde * 0.14;
-  }
-
-  /** Couleur de base d'un sommet du relief : biome, plages, neige, roche en
-   *  pente, fonds marins (ecrite dans vBase). */
-  /** Terrain vu sous un point du sol, avec des frontieres naturelles (le
-   *  point est deplace par un bruit) au lieu des bords des hexagones. */
-  terrainNaturel(x, z, ci) {
-    const t0 = ci >= 0 ? this.terrain[ci] : 0;
-    if (t0 <= 1 || t0 === T_NEANT) return t0;
-    const dx = (fbm(x * 0.55 + 11.3, z * 0.55 - 4.1, 3) - 0.5) * 1.5, dz = (fbm(x * 0.55 - 7.7, z * 0.55 + 19.2, 3) - 0.5) * 1.5;
-    const cj = this.hexDepuis(x + dx, z + dz);
-    const t = cj >= 0 ? this.terrain[cj] : t0;
-    return t <= 1 || t === T_NEANT ? t0 : t;
-  }
-
-  /** Couleur de terrain : melange de nuances par des bruits a plusieurs echelles. */
-  nuance(t, x, z, c) {
-    const N = this.palette.nuances[t];
-    if (!N) return c.copy(this.palette.pal[t]);
-    const a = fbm(x * 0.07 + t * 13.1, z * 0.07 - t * 5.3, 3);          // grandes regions (seches, humides)
-    const b = fbm(x * 0.45 - t * 3.7, z * 0.45 + t * 9.9, 3);           // champs, bosquets, dunes
-    const f = Math.min(N.length - 1.001, Math.max(0, a * 1.6 - 0.3) * (N.length - 1));
-    const i = Math.floor(f);
-    c.copy(N[i]).lerp(N[i + 1], f - i);
-    c.lerp(N[(i + 2) % N.length], Math.max(0, b - 0.55) * 0.9);
-    return c;
-  }
-
-  couleurSommet(k, pos, nor) {
-    const P = this.palette, c = this._c ??= new THREE.Color();
-    const h = pos[3 * k + 1], ci = this.vCase[k];
-    const t = this.terrainNaturel(pos[3 * k], pos[3 * k + 2], ci);
-    const pente = 1 - nor[3 * k + 1];
-    this.nuance(t, pos[3 * k], pos[3 * k + 2], c);
-    if (t === T_NEANT) {
-      // Gouffre : noir violace, un peu plus clair sur les bords.
-      c.setRGB(0.03, 0.01, 0.05).lerp(P.roche, Math.max(0, Math.min(0.25, (h + 0.6) * 0.2)));
-    } else if (h < 0) {
-      c.copy(P.hautFond).lerp(P.fond, Math.min(1, -h / 1.2));
-    } else {
-      if (h < 0.16) c.lerp(P.sable, (0.16 - h) / 0.16 * 0.85);
-      if (pente > 0.18) c.lerp(P.roche, Math.min(0.8, (pente - 0.18) * 3));
-      if (h > 1.75) c.lerp(P.neige, Math.min(1, (h - 1.75) / 0.45));
-      // Grain fin (cailloux, touffes) et legere variation de teinte.
-      const v = (fbm(pos[3 * k] * 2.3, pos[3 * k + 2] * 2.3, 2) - 0.5) * 0.1 + (bruit(pos[3 * k] * 7.1, pos[3 * k + 2] * 7.1) - 0.5) * 0.04;
-      const ht = (fbm(pos[3 * k] * 0.2 + 40, pos[3 * k + 2] * 0.2, 2) - 0.5) * 0.025;
-      c.offsetHSL(ht, 0, v);
-    }
-    this.vBase[3 * k] = c.r; this.vBase[3 * k + 1] = c.g; this.vBase[3 * k + 2] = c.b;
+    return this.sol.altitude(x, z);
   }
 
   /** Des cases ont change de terrain (cratere d'antimatiere) : le relief
-   *  s'enfonce en direct autour d'elles, les arbres disparaissent. */
+   *  s'enfonce autour d'elles (carte lointaine recalculee, tuiles refaites). */
   reformer(cases, delai = 0) {
-    if (this.deformation) this.finirDeformation(1);
-    const zone = new Set(cases);
-    for (const i of cases) for (const v of this.g.voisins(i)) if (v >= 0) zone.add(v);
-    const arr = this.relief.geometry.getAttribute('position').array;
-    const ks = [], de = [], vers = [];
-    for (let k = 0; k < this.vCase.length; k++) {
-      if (!zone.has(this.vCase[k])) continue;
-      ks.push(k); de.push(arr[3 * k + 1]); vers.push(this.altitude(arr[3 * k], arr[3 * k + 2]));
-    }
-    for (const i of zone) { const [x, z] = this.pos(i); this.hCase[i] = Math.max(0.05, this.altitude(x, z)); }
-    if (this.arbresCases) {
-      const vide = new THREE.Matrix4().makeScale(0, 0, 0);
-      this.arbresCases.forEach((c, k) => {
-        if (!zone.has(c)) return;
-        const [type, idx] = this.arbresRef[k];
-        this.arbresMeshes[type].setMatrixAt(idx, vide);
-        this.arbresMeshes[type].instanceMatrix.needsUpdate = true;
-      });
-    }
-    this.deformation = { ks, de, vers, zone, t0: performance.now() + delai, duree: 1800 };
-  }
-
-  finirDeformation(k) {
-    const d = this.deformation;
-    const geo = this.relief.geometry, pos = geo.getAttribute('position');
-    const e = 1 - Math.pow(1 - k, 3);
-    d.ks.forEach((kk, j) => { pos.array[3 * kk + 1] = d.de[j] + (d.vers[j] - d.de[j]) * e; });
-    pos.needsUpdate = true;
-    if (k < 1) return;
-    geo.computeVertexNormals();
-    const nor = geo.getAttribute('normal').array;
-    for (const kk of d.ks) this.couleurSommet(kk, pos.array, nor);
-    this.construireGrille();
-    for (const i of d.zone) if (this.bat[i]) this.majBatiment(i);
-    this.couleursSales = true;
-    this.bordSale = true;
-    this.deformation = null;
+    setTimeout(() => {
+      const zone = new Set(cases);
+      for (const i of cases) for (const v of this.g.voisins(i)) if (v >= 0) zone.add(v);
+      for (const i of zone) this.hCase[i] = NaN;
+      const touchees = new Set();
+      for (const i of zone) { const [x, z] = this.pos(i); touchees.add(this.cleTuile(x, z)); }
+      for (const c of touchees) this.jeterTuile(c);
+      const modifs = cases.map(i => [i, this.terrain[i]]);
+      if (this.travailleur) this.travailleur.postMessage({ t: 'terrain', cases: modifs, pasLoin: this.pasLoin });
+      else this.poserLoin(this.sol.maillageLoin(this.pasLoin));
+      for (const i of zone) if (this.bat[i]) this.majBatiment(i);
+      this.couleursSales = true;
+      this.bordSale = true;
+    }, delai);
   }
 
   initTerrain() {
-    const sombre = this.theme === 'dark';
     const n = this.g.n;
-    this.hCase = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const [x, z] = this.pos(i);
-      this.hCase[i] = Math.max(0.05, this.altitude(x, z));
-    }
+    const sombre = this.theme === 'dark';
+    // Calcul du sol (relief, couleurs) : partage avec le travailleur.
+    this.sol = new Sol(this.terrain, this.g.l, this.g.h, sombre, MOBILE);
+    // Altitude des cases : calculee a la demande (voir haut()).
+    this.hCase = new Float32Array(n).fill(NaN);
 
-    // ── Maillage continu du relief ──
-    // Pas de 0,3 ; plus large sur les tres grandes cartes, pour rester sous
-    // ~3 millions de sommets (memoire et fluidite).
-    const surface = (this.largeurMonde + LX * 3) * (this.hauteurMonde + LZ * 3);
-    const pas = Math.max(0.3, Math.sqrt(surface / (MOBILE ? 1.2e6 : 3e6)));
-    const x0 = -LX * 1.5, z0 = -LZ * 1.5;
-    const nx = Math.ceil((this.largeurMonde + LX * 3) / pas) + 1;
-    const nz = Math.ceil((this.hauteurMonde + LZ * 3) / pas) + 1;
-    const nv = nx * nz;
-    const pos = new Float32Array(nv * 3);
-    this.vCase = new Int32Array(nv);
-    for (let j = 0; j < nz; j++) {
-      for (let i = 0; i < nx; i++) {
-        const k = j * nx + i, x = x0 + i * pas, z = z0 + j * pas;
-        pos[3 * k] = x;
-        pos[3 * k + 1] = this.altitude(x, z);
-        pos[3 * k + 2] = z;
-        this.vCase[k] = this.hexDepuis(x, z);
-      }
-    }
-    const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
-    let p = 0;
-    for (let j = 0; j < nz - 1; j++) {
-      for (let i = 0; i < nx - 1; i++) {
-        const k = j * nx + i;
-        idx[p++] = k; idx[p++] = k + nx; idx[p++] = k + 1;
-        idx[p++] = k + 1; idx[p++] = k + nx; idx[p++] = k + nx + 1;
-      }
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setIndex(new THREE.BufferAttribute(idx, 1));
-    geo.computeVertexNormals();
-
-    // Couleurs de base : biome, plages, neige, roche en pente, fonds marins.
-    const nor = geo.getAttribute('normal').array;
-    this.vBase = new Float32Array(nv * 3);
-    const tmp = new THREE.Color();
-    this.palette = {
-      pal: BIOMES.map(h => new THREE.Color(h)),
-      nuances: NUANCES.map(l => l && l.map(h => new THREE.Color(h))),
-      sable: new THREE.Color('#d6c794'), roche: new THREE.Color('#7b7166'), neige: new THREE.Color('#f4f6f9'),
-      fond: new THREE.Color(sombre ? '#0b2236' : '#1f4f73'), hautFond: new THREE.Color('#5f9fae'),
+    // ── Teintes par case (pays, ressources, brouillard), lues par la carte
+    // graphique : une petite image (4 octets par case) au lieu de recolorer
+    // des millions de sommets a chaque message du serveur.
+    const lt = 1024, ht = Math.ceil(n / lt);
+    this.teintes = new THREE.DataTexture(new Uint8Array(lt * ht * 4), lt, ht, THREE.RGBAFormat, THREE.UnsignedByteType);
+    this.teintes.magFilter = this.teintes.minFilter = THREE.NearestFilter;
+    this.teintes.needsUpdate = true;
+    const [vr, vg, vb] = sombre ? [0.06, 0.08, 0.1] : [0.86, 0.89, 0.92];
+    const uniformes = { tCases: { value: this.teintes }, uVoile: { value: new THREE.Vector3(vr, vg, vb) } };
+    this.matSol = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
+    this.matSol.onBeforeCompile = sh => {
+      Object.assign(sh.uniforms, uniformes);
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', `#include <common>
+attribute float aCase;
+uniform sampler2D tCases;
+varying vec4 vTeinte;
+varying float vBrume;
+varying float vHaut;`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+vHaut = position.y; vTeinte = vec4(0.0); vBrume = 0.0;
+if (aCase >= 0.0) {
+  int ci = int(aCase + 0.5);
+  vec4 t = texelFetch(tCases, ivec2(ci % 1024, ci / 1024), 0);
+  float v = floor(t.a * 255.0 + 0.5);
+  vBrume = v >= 128.0 ? 1.0 : 0.0;
+  vTeinte = vec4(t.rgb, mod(v, 128.0) / 127.0);
+}`);
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', `#include <common>
+uniform vec3 uVoile;
+varying vec4 vTeinte;
+varying float vBrume;
+varying float vHaut;`)
+        .replace('#include <color_fragment>', `#include <color_fragment>
+if (vHaut > -0.05) {
+  diffuseColor.rgb = mix(diffuseColor.rgb, vTeinte.rgb, vTeinte.a);
+  if (vBrume > 0.5) {
+    float l = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+    diffuseColor.rgb = mix(mix(diffuseColor.rgb, vec3(l), 0.9), uVoile, 0.9);
+  }
+} else if (vBrume > 0.5) {
+  diffuseColor.rgb = mix(diffuseColor.rgb, uVoile, 0.85);
+}`);
     };
-    for (let k = 0; k < nv; k++) this.couleurSommet(k, pos, nor);
-    geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(this.vBase), 3));
-    this.relief = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 }));
-    this.relief.castShadow = this.relief.receiveShadow = true;
-    this.scene.add(this.relief);
+    this.matSol.customProgramCacheKey = () => 'sol-wfront';
+    // Carte lointaine : meme rendu, legerement en retrait, pour que les
+    // tuiles detaillees passent toujours devant la ou elles existent.
+    this.matLoin = this.matSol.clone();
+    Object.assign(this.matLoin, { polygonOffset: true, polygonOffsetFactor: 3, polygonOffsetUnits: 3 });
+    this.matLoin.onBeforeCompile = this.matSol.onBeforeCompile;
+    this.matLoin.customProgramCacheKey = () => 'sol-wfront';
 
-    // ── Arbres (forets, toundra, quelques-uns en plaine et collines) ──
-    // Deux vrais modeles : conifere a etages (nord, toundra, montagne) et
-    // feuillu a couronne ronde ; taille, teinte et orientation variees.
-    const hasard = mulberry(this.g.l * 1000 + this.g.h);
-    const places = [];
-    for (let i = 0; i < n; i++) {
-      const t = this.terrain[i];
-      let nb = t === 3 ? 9 : t === 7 ? 2 : t === 2 && hasard() < 0.3 ? 2 : t === 4 && hasard() < 0.45 ? 2 : 0;
-      if (MOBILE) nb = Math.ceil(nb / 2.5); // moins d'arbres sur mobile
-      const [cx, cz] = this.pos(i);
-      const nord = Math.floor(i / this.g.l) / this.g.h; // 0 = haut de la carte (nord)
-      for (let k = 0; k < nb; k++) {
-        const a = hasard() * Math.PI * 2, r = Math.sqrt(hasard()) * 0.78;
-        const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
-        const h = this.altitude(x, z);
-        // Coniferes : toundra, grand nord, altitude ; sinon surtout des feuillus.
-        const conif = t === 7 || nord < 0.28 || h > 1.0 || (t === 3 && hasard() < 0.25);
-        if (h > 0.08 && h < 1.6) places.push([x, h, z, 0.6 + hasard() * 0.65, conif ? 0 : 1, i, hasard() * Math.PI * 2]);
-      }
+    // ── Carte lointaine : tout le monde, allegee (vue d'ensemble) ──
+    const surface = (this.largeurMonde + LX * 3) * (this.hauteurMonde + LZ * 3);
+    this.pasLoin = Math.max(0.3, Math.sqrt(surface / (MOBILE ? 1.5e5 : 4e5)));
+    this.reliefLoin = new THREE.Mesh(new THREE.BufferGeometry(), this.matLoin);
+    this.reliefLoin.receiveShadow = !MOBILE;
+    this.reliefLoin.visible = false;
+    this.reliefLoin.position.y = -0.05;
+    this.scene.add(this.reliefLoin);
+    // Travailleur : calcule le sol en parallele de l'affichage. Sans lui
+    // (navigateur trop ancien), le calcul se fait ici, par petits morceaux.
+    this.attente = new Map();     // tuiles demandees : cle -> version
+    this.versionTuile = 0;
+    try {
+      this.travailleur = new Worker(new URL('./sol-worker.js', import.meta.url), { type: 'module' });
+      this.travailleur.onmessage = e => this.recevoirSol(e.data);
+      this.travailleur.onerror = () => this.sansTravailleur();
+      this.travailleur.postMessage({ t: 'init', terrain: this.terrain.slice(), l: this.g.l, h: this.g.h, sombre, mobile: MOBILE, pasLoin: this.pasLoin });
+    } catch (x) {
+      this.sansTravailleur();
     }
-    // Geometries : troncs bruns, feuillage blanc (teinte donnee par instance).
+
+    // ── Tuiles detaillees (sol fin, grille, arbres), construites a la
+    // demande autour de ce que l'on regarde ──
+    this.TUILE = 24;
+    this.pasPres = MOBILE ? 0.5 : 0.3;
+    this.tuiles = new Map();
+    this.groupes.tuiles = new THREE.Group();
+    this.scene.add(this.groupes.tuiles);
+    this.arbresGeo = this.geometriesArbres();
+    this.matArbre = new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true, vertexColors: true });
+    this.matGrille = new THREE.LineBasicMaterial({ color: sombre ? 0xffffff : 0x1c2a1c, transparent: true, opacity: sombre ? 0.05 : 0.06, depthWrite: false });
+
+    // Contour de survol / selection : anneau hexagonal epais, toujours visible.
+    this.anneauGeo = this.geometrieAnneau(0.14);
+    this.survolMesh = new THREE.Mesh(this.anneauGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false }));
+    this.selMesh = new THREE.Mesh(this.anneauGeo, new THREE.MeshBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 1, depthTest: false }));
+    this.survolMesh.visible = this.selMesh.visible = false;
+    this.survolMesh.renderOrder = this.selMesh.renderOrder = 10;
+    this.groupes.selection.add(this.survolMesh, this.selMesh);
+  }
+
+  /** Geometrie Three.js depuis les tableaux calcules par sol.js. */
+  geoDepuis(d) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(d.pos, 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(d.nor, 3));
+    geo.setAttribute('color', new THREE.BufferAttribute(d.col, 3));
+    geo.setAttribute('aCase', new THREE.BufferAttribute(d.cas, 1));
+    geo.setIndex(new THREE.BufferAttribute(d.idx, 1));
+    geo.computeBoundingSphere();
+    return geo;
+  }
+
+  poserLoin(d) {
+    const ancienne = this.reliefLoin.geometry;
+    this.reliefLoin.geometry = this.geoDepuis(d);
+    ancienne.dispose();
+    this.loinPret = true;
+    this.reliefLoin.visible = true;
+  }
+
+  /** Reponse du travailleur : carte lointaine ou tuile. */
+  recevoirSol(m) {
+    if (m.t === 'loin') this.poserLoin(m.loin);
+    else if (m.t === 'tuile') {
+      if (this.attente.get(m.cle) !== m.version) return; // tuile jetee entre-temps
+      this.attente.delete(m.cle);
+      this.poserTuile(m.cle, m);
+    }
+  }
+
+  /** Pas de travailleur : tout se calcule ici. */
+  sansTravailleur() {
+    if (this.travailleur) { this.travailleur.terminate(); this.travailleur = null; }
+    this.attente.clear();
+    if (!this.loinPret) this.poserLoin(this.sol.maillageLoin(this.pasLoin));
+  }
+
+  /** Geometries des deux modeles d'arbres (conifere a etages, feuillu). */
+  geometriesArbres() {
     const assembler = parts => {
       let n2 = 0;
-      const geos = parts.map(([g, coul]) => { const ng = g.toNonIndexed(); n2 += ng.attributes.position.count; return [ng, new THREE.Color(coul)]; });
+      const geos = parts.map(([g, coul]) => { const ng = g.index ? g.toNonIndexed() : g; n2 += ng.attributes.position.count; return [ng, new THREE.Color(coul)]; });
       const posA = new Float32Array(n2 * 3), norA = new Float32Array(n2 * 3), colA = new Float32Array(n2 * 3);
       let o = 0;
       for (const [g, c] of geos) {
@@ -442,74 +385,132 @@ export class Carte {
       out.setAttribute('color', new THREE.BufferAttribute(colA, 3));
       return out;
     };
+    const seg = MOBILE ? 5 : 7;
     const trn = (rb, rh, hh) => { const g = new THREE.CylinderGeometry(rh, rb, hh, 5); g.translate(0, hh / 2, 0); return g; };
-    const cn = (r, hh, y) => { const g = new THREE.ConeGeometry(r, hh, 7); g.translate(0, y + hh / 2, 0); return g; };
-    const coniferGeo = assembler([[trn(0.03, 0.022, 0.12), '#d9b48a'], [cn(0.17, 0.26, 0.08), '#ffffff'], [cn(0.13, 0.22, 0.2), '#f2f2f2'], [cn(0.085, 0.18, 0.31), '#e6e6e6']]);
-    const couronne = new THREE.IcosahedronGeometry(0.15, 1);
+    const cn = (r, hh, y) => { const g = new THREE.ConeGeometry(r, hh, seg); g.translate(0, y + hh / 2, 0); return g; };
+    const conifere = MOBILE
+      ? assembler([[trn(0.03, 0.022, 0.12), '#d9b48a'], [cn(0.16, 0.3, 0.08), '#ffffff'], [cn(0.1, 0.22, 0.26), '#ededed']])
+      : assembler([[trn(0.03, 0.022, 0.12), '#d9b48a'], [cn(0.17, 0.26, 0.08), '#ffffff'], [cn(0.13, 0.22, 0.2), '#f2f2f2'], [cn(0.085, 0.18, 0.31), '#e6e6e6']]);
+    const couronne = new THREE.IcosahedronGeometry(0.15, MOBILE ? 0 : 1);
     { const pp = couronne.attributes.position; for (let v = 0; v < pp.count; v++) { const f = 0.85 + 0.3 * bruit(pp.getX(v) * 9 + 3, pp.getZ(v) * 9 + pp.getY(v) * 5); pp.setXYZ(v, pp.getX(v) * f, pp.getY(v) * f * 0.85, pp.getZ(v) * f); } couronne.translate(0, 0.27, 0); }
-    const petite = new THREE.IcosahedronGeometry(0.09, 0); petite.translate(0.07, 0.35, -0.04);
-    const feuilluGeo = assembler([[trn(0.032, 0.022, 0.2), '#d9b48a'], [couronne, '#ffffff'], [petite, '#eeeeee']]);
-    const matArbre = new THREE.MeshStandardMaterial({ roughness: 0.9, flatShading: true, vertexColors: true });
-    const parType = [[], []];
-    places.forEach((p, k) => parType[p[4]].push(k));
-    this.arbresMeshes = [new THREE.InstancedMesh(coniferGeo, matArbre, Math.max(1, parType[0].length)), new THREE.InstancedMesh(feuilluGeo, matArbre, Math.max(1, parType[1].length))];
-    this.arbresMeshes.forEach((m, j2) => { m.count = parType[j2].length; });
-    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), v = new THREE.Vector3(), axe = new THREE.Vector3(0, 1, 0);
-    // arbresCases[k] : case de l'arbre k ; arbresRef[k] : [modele, index].
-    this.arbresRef = [];
-    const compteurs = [0, 0];
-    places.forEach(([x, h, z, e, type, , rot], k) => {
-      const mesh = this.arbresMeshes[type], idx = compteurs[type]++;
-      m.compose(v.set(x, h - 0.03, z), q.setFromAxisAngle(axe, rot), s.set(e, e * (type === 0 ? 1.15 : 1), e));
-      mesh.setMatrixAt(idx, m);
-      if (type === 0) tmp.set(this.terrain[places[k][5]] === 7 ? '#2f5a46' : '#2b5a32');
-      else tmp.set(['#3f7a35', '#4f8a3b', '#5d8f3a', '#466f2e', '#6b8f3c'][Math.floor(hasard() * 5)]);
-      tmp.offsetHSL((hasard() - 0.5) * 0.03, 0, (hasard() - 0.5) * 0.1);
-      mesh.setColorAt(idx, tmp);
-      this.arbresRef.push([type, idx]);
-    });
-    for (const mesh of this.arbresMeshes) { mesh.castShadow = true; mesh.receiveShadow = true; this.scene.add(mesh); }
-    // Compatibilite : this.arbres = le premier modele (utilise ailleurs pour needsUpdate).
-    this.arbres = this.arbresMeshes[0];
-    this.arbresCases = places.map(p => p[5]);
-    // Arbres de chaque case : on les retire quand un batiment y est construit.
-    this.arbresParCase = new Map();
-    this.arbresCases.forEach((c, k) => { if (!this.arbresParCase.has(c)) this.arbresParCase.set(c, []); this.arbresParCase.get(c).push(k); });
-    this.matricesArbres = places.map(() => null);
-    this.construireGrille();
-
-    // Contour de survol / selection : anneau hexagonal epais, toujours visible.
-    this.anneauGeo = this.geometrieAnneau(0.14);
-    this.survolMesh = new THREE.Mesh(this.anneauGeo, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85, depthTest: false }));
-    this.selMesh = new THREE.Mesh(this.anneauGeo, new THREE.MeshBasicMaterial({ color: 0x4ade80, transparent: true, opacity: 1, depthTest: false }));
-    this.survolMesh.visible = this.selMesh.visible = false;
-    this.survolMesh.renderOrder = this.selMesh.renderOrder = 10;
-    this.groupes.selection.add(this.survolMesh, this.selMesh);
+    const parts = [[trn(0.032, 0.022, 0.2), '#d9b48a'], [couronne, '#ffffff']];
+    if (!MOBILE) { const petite = new THREE.IcosahedronGeometry(0.09, 0); petite.translate(0.07, 0.35, -0.04); parts.push([petite, '#eeeeee']); }
+    return [conifere, assembler(parts)];
   }
 
-  /** Quadrillage discret des cases (terres uniquement). */
-  construireGrille() {
-    const sombre = this.theme === 'dark';
-    const n = this.g.n;
-    if (this.grille) { this.scene.remove(this.grille); this.grille.geometry.dispose(); this.grille.material.dispose(); }
-    const lignes = [];
-    for (let i = 0; i < n; i++) {
-      if (!this.defs.terrains[this.terrain[i]].terre) continue;
-      const [cx, cz] = this.pos(i);
-      for (let j = 0; j < 3; j++) {
-        const [ax, az] = this.coin(j), [bx, bz] = this.coin(j + 1);
-        for (let s2 = 0; s2 < 3; s2++) {
-          const t1 = s2 / 3, t2 = (s2 + 1) / 3;
-          const x1 = cx + ax + (bx - ax) * t1, z1 = cz + az + (bz - az) * t1;
-          const x2 = cx + ax + (bx - ax) * t2, z2 = cz + az + (bz - az) * t2;
-          lignes.push(x1, Math.max(0.02, this.altitude(x1, z1)) + 0.04, z1, x2, Math.max(0.02, this.altitude(x2, z2)) + 0.04, z2);
-        }
-      }
+  cleTuile(x, z) {
+    return Math.floor((x + LX * 1.5) / this.TUILE) + ',' + Math.floor((z + LZ * 1.5) / this.TUILE);
+  }
+
+  jeterTuile(cle) {
+    this.attente.delete(cle);
+    const t = this.tuiles.get(cle);
+    if (!t) return;
+    this.groupes.tuiles.remove(t.groupe);
+    t.groupe.traverse(o => { if (o.geometry && o.geometry !== this.arbresGeo[0] && o.geometry !== this.arbresGeo[1]) o.geometry.dispose(); });
+    this.tuiles.delete(cle);
+  }
+
+  /** Demande la tuile (tx, tz) : au travailleur, ou calcul immediat. */
+  demanderTuile(tx, tz) {
+    const cle = tx + ',' + tz, version = ++this.versionTuile;
+    this.attente.set(cle, version);
+    if (this.travailleur) this.travailleur.postMessage({ t: 'tuile', tx, tz, T: this.TUILE, pas: this.pasPres, cle, version });
+    else { this.attente.delete(cle); this.poserTuile(cle, this.sol.tuile(tx, tz, this.TUILE, this.pasPres)); }
+  }
+
+  /** Pose une tuile calculee : sol detaille, grille, arbres. */
+  poserTuile(cle, d) {
+    const [tx, tz] = cle.split(',').map(Number);
+    if (this.tuiles.has(cle)) this.jeterTuile(cle);
+    const groupe = new THREE.Group();
+    const sol = new THREE.Mesh(this.geoDepuis(d.sol), this.matSol);
+    sol.receiveShadow = !MOBILE;
+    groupe.add(sol);
+    if (d.grille.length) {
+      const gl = new THREE.BufferGeometry();
+      gl.setAttribute('position', new THREE.BufferAttribute(d.grille, 3));
+      const grille = new THREE.LineSegments(gl, this.matGrille);
+      grille.userData.grille = true;
+      grille.visible = this.cam.d < 60;
+      groupe.add(grille);
     }
-    const gl = new THREE.BufferGeometry();
-    gl.setAttribute('position', new THREE.Float32BufferAttribute(lignes, 3));
-    this.grille = new THREE.LineSegments(gl, new THREE.LineBasicMaterial({ color: sombre ? 0xffffff : 0x1c2a1c, transparent: true, opacity: sombre ? 0.05 : 0.06, depthWrite: false }));
-    this.scene.add(this.grille);
+    const parCase = new Map();
+    d.arbres.forEach((a, type) => {
+      const nb = a.cas.length;
+      if (!nb) return;
+      const im = new THREE.InstancedMesh(this.arbresGeo[type], this.matArbre, nb);
+      im.instanceMatrix = new THREE.InstancedBufferAttribute(a.mat, 16);
+      im.instanceColor = new THREE.InstancedBufferAttribute(a.cou, 3);
+      for (let k = 0; k < nb; k++) {
+        const i = a.cas[k];
+        if (!parCase.has(i)) parCase.set(i, []);
+        parCase.get(i).push([im, k, new THREE.Matrix4().fromArray(a.mat, 16 * k)]);
+      }
+      im.castShadow = !MOBILE;
+      im.computeBoundingSphere();
+      groupe.add(im);
+    });
+    const tuile = { groupe, parCase, cle, tx, tz };
+    this.tuiles.set(cle, tuile);
+    this.groupes.tuiles.add(groupe);
+    // Pas d'arbres sous les batiments deja construits.
+    for (const i of parCase.keys()) if (this.bat[i]) this.arbresVisibles(i, false);
+  }
+
+  /** Zone du sol visible (rectangle), d'apres les coins de l'ecran. */
+  zoneVisible() {
+    const ray = this._ray ??= new THREE.Raycaster(), plan = this._plan ??= new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    // Au-dela, les details ne se voient plus : la carte lointaine suffit.
+    const p = new THREE.Vector3(), lim = Math.max(45, this.cam.d * 1.7);
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1], [0, 1], [0, -1], [-1, 0], [1, 0]]) {
+      ray.setFromCamera({ x: sx, y: sy }, this.camera);
+      let ok = ray.ray.intersectPlane(plan, p);
+      if (!ok || p.distanceTo(this.camera.position) > lim) {
+        // Vers l'horizon : on s'arrete a la distance utile.
+        p.copy(this.camera.position).addScaledVector(ray.ray.direction, lim); p.y = 0;
+      }
+      x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z);
+    }
+    return [x0, x1, z0, z1];
+  }
+
+  /** De pres : construit les tuiles visibles (quelques-unes par image) ; de
+   *  loin : la carte allegee suffit. */
+  majTuiles() {
+    const pres = this.cam.d < this.D_DETAIL;
+    // La carte lointaine reste toujours dessous : les tuiles detaillees
+    // apparaissent par-dessus au fur et a mesure, sans trou ni attente.
+    this.groupes.tuiles.visible = pres;
+    if (!pres) return;
+    const T = this.TUILE, ox = -LX * 1.5, oz = -LZ * 1.5;
+    const [x0, x1, z0, z1] = this.zoneVisible();
+    const ta = Math.floor((x0 - ox) / T), tb = Math.floor((x1 - ox) / T), ua = Math.floor((z0 - oz) / T), ub = Math.floor((z1 - oz) / T);
+    const ntx = Math.ceil((this.largeurMonde + LX * 3) / T), ntz = Math.ceil((this.hauteurMonde + LZ * 3) / T);
+    const voulues = [];
+    for (let u = Math.max(0, ua - 1); u <= Math.min(ntz - 1, ub + 1); u++) for (let t = Math.max(0, ta - 1); t <= Math.min(ntx - 1, tb + 1); t++) voulues.push([t, u]);
+    const cx = (this.cam.x - ox) / T, cz = (this.cam.z - oz) / T;
+    voulues.sort((a, b) => Math.hypot(a[0] + 0.5 - cx, a[1] + 0.5 - cz) - Math.hypot(b[0] + 0.5 - cx, b[1] + 0.5 - cz));
+    // Avec le travailleur : jusqu'a 6 tuiles en preparation a la fois. Sans
+    // lui : une seule par image, pour ne pas figer l'affichage.
+    let place = this.travailleur ? 6 - this.attente.size : 1;
+    for (const [t, u] of voulues) {
+      const cle = t + ',' + u;
+      if (this.tuiles.has(cle) || this.attente.has(cle)) continue;
+      if (place-- <= 0) break;
+      this.demanderTuile(t, u);
+    }
+    const grilleVue = this.cam.d < 60;
+    const op = (this.theme === 'dark' ? 0.05 : 0.06) * Math.min(1, (60 - this.cam.d) / 25);
+    this.matGrille.opacity = op;
+    for (const tu of this.tuiles.values()) tu.groupe.children.forEach(o => { if (o.userData.grille) o.visible = grilleVue; });
+    // Memoire : on garde les tuiles proches, on jette les plus lointaines.
+    const max = MOBILE ? 70 : 180;
+    if (this.tuiles.size > max) {
+      const loin = [...this.tuiles.values()].sort((a, b) => Math.hypot(b.tx + 0.5 - cx, b.tz + 0.5 - cz) - Math.hypot(a.tx + 0.5 - cx, a.tz + 0.5 - cz));
+      for (const tu of loin.slice(0, this.tuiles.size - max)) this.jeterTuile(tu.cle);
+    }
   }
 
   coin(j, echelle = 1) {
@@ -531,51 +532,29 @@ export class Carte {
 
   // ── Couleurs : teinte de la nation, brouillard, zone de tir ───────
   recolorer() {
-    const n = this.g.n;
-    const teinte = new Float32Array(n * 4);
-    const brume = new Uint8Array(n);
-    const c = new THREE.Color();
+    const n = this.g.n, d = this.teintes.image.data;
+    const cache = this._teintesPays ??= new Map(), c = new THREE.Color();
+    const rgb = hex => { let v = cache.get(hex); if (!v) { c.set(hex); v = [c.r * 255, c.g * 255, c.b * 255]; cache.set(hex, v); } return v; };
     for (let i = 0; i < n; i++) {
-      let a = 0;
+      let a = 0, col = null;
       const t = this.defs.terrains[this.terrain[i]];
       if (this.mode === 'politique' && this.proprio[i] >= 0) {
         const pa = this.pays.get(this.proprio[i]);
-        if (pa) { c.set(melanger(pa.couleur, '#ffffff', 0.12)); a = 0.42; }
+        if (pa) { col = rgb(pa._teinte ??= melanger(pa.couleur, '#ffffff', 0.12)); a = 0.42; }
       } else if (this.mode === 'ressources' && t.terre) {
-        const d = this.depot[i];
-        if (d > 0) { c.set(this.defs.depots[d].couleur); a = 0.7; } else { c.set('#9ca3af'); a = 0.45; }
+        const dd = this.depot[i];
+        if (dd > 0) { col = rgb(this.defs.depots[dd].couleur); a = 0.7; } else { col = rgb('#9ca3af'); a = 0.45; }
       }
-      if (this.irr[i]) { c.set('#b6ff3b'); a = 0.55; }
-      if (this.zone && this.zone.has(i)) { c.set(this.zoneCouleur); a = Math.max(a, 0.4); }
-      teinte[4 * i] = c.r; teinte[4 * i + 1] = c.g; teinte[4 * i + 2] = c.b; teinte[4 * i + 3] = a;
-      brume[i] = this.vision && !this.vision[i] ? 1 : 0;
+      if (this.irr[i]) { col = rgb('#b6ff3b'); a = 0.55; }
+      if (this.zone && this.zone.has(i)) { col = rgb(this.zoneCouleur); a = Math.max(a, 0.4); }
+      const brume = this.vision && !this.vision[i] ? 128 : 0;
+      const o = 4 * i;
+      if (col) { d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; }
+      d[o + 3] = Math.round(a * 127) + brume;
     }
-    const sombre = this.theme === 'dark';
-    const [vr, vg, vb] = sombre ? [0.06, 0.08, 0.1] : [0.86, 0.89, 0.92];
-    const col = this.relief.geometry.getAttribute('color');
-    const out = col.array, base = this.vBase, cas = this.vCase, hauts = this.relief.geometry.getAttribute('position').array;
-    for (let k = 0; k < cas.length; k++) {
-      let r = base[3 * k], g = base[3 * k + 1], b = base[3 * k + 2];
-      const i = cas[k];
-      if (i >= 0 && hauts[3 * k + 1] > -0.05) {
-        const a = teinte[4 * i + 3];
-        if (a > 0) { r += (teinte[4 * i] - r) * a; g += (teinte[4 * i + 1] - g) * a; b += (teinte[4 * i + 2] - b) * a; }
-        if (brume[i]) {
-          // Vrai brouillard de guerre : hors vision, la terre est noyée dans le
-          // voile (on ne distingue plus le terrain), pas juste grisée.
-          const l = 0.3 * r + 0.59 * g + 0.11 * b;
-          r = (r + (l - r) * 0.9); g = (g + (l - g) * 0.9); b = (b + (l - b) * 0.9);
-          const f = sombre ? 0.9 : 0.9;
-          r += (vr - r) * f; g += (vg - g) * f; b += (vb - b) * f;
-        }
-      } else if (i >= 0 && brume[i]) {
-        // Mer hors vision : voile épais aussi.
-        r += (vr - r) * 0.85; g += (vg - g) * 0.85; b += (vb - b) * 0.85;
-      }
-      out[3 * k] = r; out[3 * k + 1] = g; out[3 * k + 2] = b;
-    }
-    col.needsUpdate = true;
+    this.teintes.needsUpdate = true;
     this.couleursSales = false;
+    this.derniereTeinte = performance.now();
   }
 
   // ── Frontieres (rubans qui epousent le relief) ────────────────────
@@ -850,20 +829,13 @@ export class Carte {
 
   /** Montre ou cache les arbres d'une case (une foret laisse la place au batiment). */
   arbresVisibles(i, visibles) {
-    const ks = this.arbresParCase?.get(i);
-    if (!ks) return;
-    const vide = new THREE.Matrix4().makeScale(0, 0, 0), m = new THREE.Matrix4();
-    for (const k of ks) {
-      const [type, idx] = this.arbresRef[k], mesh = this.arbresMeshes[type];
-      if (!visibles) {
-        if (!this.matricesArbres[k]) { mesh.getMatrixAt(idx, m); this.matricesArbres[k] = m.clone(); }
-        mesh.setMatrixAt(idx, vide);
-      } else if (this.matricesArbres[k]) {
-        mesh.setMatrixAt(idx, this.matricesArbres[k]);
-        this.matricesArbres[k] = null;
-      }
-      mesh.instanceMatrix.needsUpdate = true;
-    }
+    if (!this.tuiles) return;
+    const [x, z] = this.pos(i);
+    const t = this.tuiles.get(this.cleTuile(x, z));
+    const l = t && t.parCase.get(i);
+    if (!l) return;
+    const vide = this._vide ??= new THREE.Matrix4().makeScale(0, 0, 0);
+    for (const [im, idx, m] of l) { im.setMatrixAt(idx, visibles ? m : vide); im.instanceMatrix.needsUpdate = true; }
   }
 
   majBatiment(i) {
@@ -1590,6 +1562,21 @@ export class Carte {
   }
 
   // ── Boucle de rendu ──────────────────────────────────────────────
+  /** Resolution adaptative : sous 30 images/s, on baisse la definition ;
+   *  au-dessus de 55, on la remonte. */
+  ajusterResolution(t) {
+    this._img = (this._img || 0) + 1;
+    if (!this._t0) this._t0 = t;
+    if (t - this._t0 < 2000) return;
+    const fps = this._img * 1000 / (t - this._t0);
+    this.fps = fps;
+    this._img = 0; this._t0 = t;
+    let r = this.ratio;
+    if (fps < 30 && r > 0.55) r = Math.max(0.55, r - 0.15);
+    else if (fps > 55 && r < this.ratioMax) r = Math.min(this.ratioMax, r + 0.1);
+    if (r !== this.ratio) { this.ratio = r; this.renderer.setPixelRatio(r); this.redimensionner(); }
+  }
+
   boucle(t) {
     requestAnimationFrame(this.boucle);
     if (document.hidden) return;
@@ -1605,11 +1592,9 @@ export class Carte {
       if (k >= 1) this.anim = null;
     }
     this.animerTrousNoirs(t);
-    if (this.deformation) {
-      const k = (performance.now() - this.deformation.t0) / this.deformation.duree;
-      if (k > 0) this.finirDeformation(Math.min(1, k));
-    }
-    if (this.couleursSales) this.recolorer();
+    // Teintes : au plus 4 fois par seconde (les messages du serveur arrivent
+    // chaque seconde, les offensives changent des cases en continu).
+    if (this.couleursSales && performance.now() - (this.derniereTeinte || 0) > 250) this.recolorer();
     // Avec les offensives, des cases changent de main chaque seconde : on
     // regroupe les reconstructions (frontieres, noms) au lieu de tout
     // refaire a chaque message du serveur.
@@ -1622,8 +1607,16 @@ export class Carte {
     const cp = Math.cos(c.tangage), sp = Math.sin(c.tangage);
     this.camera.position.set(c.x + Math.sin(c.lacet) * cp * c.d, sp * c.d, c.z + Math.cos(c.lacet) * cp * c.d);
     this.camera.lookAt(c.x, 0, c.z);
-    // Grille des cases : discrete de pres, invisible de loin.
-    if (this.grille) { this.grille.visible = c.d < 60; this.grille.material.opacity = (this.theme === 'dark' ? 0.05 : 0.06) * Math.min(1, (60 - c.d) / 25); }
+    this.camera.updateMatrixWorld();
+    this.majTuiles();
+    // Ombres : la zone ombree suit la vue.
+    if (this.soleil.castShadow) {
+      const e = Math.min(90, Math.max(25, c.d * 1.2)), sc = this.soleil.shadow.camera;
+      this.soleil.position.set(c.x - 70, 75, c.z - 45);
+      this.soleil.target.position.set(c.x, 0, c.z);
+      if (sc.right !== e) { sc.left = -e; sc.right = e; sc.top = e; sc.bottom = -e; sc.updateProjectionMatrix(); }
+    }
+    this.ajusterResolution(t);
     // Brouillard d'horizon proportionnel au recul (vue du monde entier).
     if (this.scene.fog) { this.scene.fog.near = Math.max(120, c.d * 1.4); this.scene.fog.far = Math.max(280, c.d * 3); }
 

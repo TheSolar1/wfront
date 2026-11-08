@@ -196,4 +196,8 @@ static/
   vendor/              Three.js (served locally, no CDN)
 ```
 
+### Map rendering performance
+
+The world map has 262,000 hexes, so the client renders it in two levels of detail: a light mesh of the whole world (about 150,000 vertices on phones, 400,000 on computers), always shown, and detailed tiles (24 × 24 units: fine relief, hex grid, trees) built only around what the camera looks at and drawn on top. Tiles are computed in a Web Worker (`static/js/sol-worker.js`, shared code in `static/js/sol.js`) so the display never freezes; nation colours, resources and fog of war are applied by the GPU from a small per-hex texture instead of recolouring millions of vertices. Phones get no shadows and a pixel ratio of 1; on every device the resolution drops automatically when the frame rate falls under 30 fps. The camera can zoom out far enough to see the whole world.
+
 The server validates every action: the client only sends intentions (`construire`, `deplacer`, `guerre`…).
