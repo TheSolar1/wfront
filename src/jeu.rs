@@ -2606,6 +2606,11 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             if !est_terre(c.terrain) {
                 return Err("Impossible de bâtir en mer.".into());
             }
+            // Pentes trop fortes. Les plateaux et terrains vallonnes (collines)
+            // restent constructibles.
+            if c.terrain == T_MONTAGNE {
+                return Err("Impossible de bâtir en montagne : la pente est trop forte. Les collines et les plateaux sont constructibles.".into());
+            }
             if c.bat.is_some() {
                 return Err("Il y a déjà un bâtiment ici (améliorez-le ou démolissez-le).".into());
             }

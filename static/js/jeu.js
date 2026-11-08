@@ -177,10 +177,14 @@ function recevoirEtat(e) {
   majObjectifs();
   majPanneau(false);
   if (premier) {
-    if (S.moi) S.carte.centrerSur(S.moi.capitale, 30);
-    // Joueur deja installe qui n'a jamais vu le tutoriel.
-    if (S.moi && !S.moi.elimine && !tutoFait()) setTimeout(() => lancerTuto(), 1500);
-    else if (!sessionStorage.getItem('wf-fondation-vue')) ouvrirFondation();
+    if (S.moi) {
+      S.carte.centrerSur(S.moi.capitale, 30);
+      // Joueur deja installe qui n'a jamais vu le tutoriel.
+      if (!S.moi.elimine && !tutoFait()) setTimeout(() => lancerTuto(), 1500);
+    } else if (!sessionStorage.getItem('wf-fondation-vue')) {
+      // Pas encore de pays : choix du pays (ou fondation sur carte aleatoire).
+      ouvrirFondation();
+    }
   }
   if (S.moi && S.moi.elimine && (!avant || !avant.elimine)) ouvrirAneantie();
 }

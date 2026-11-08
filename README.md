@@ -8,7 +8,7 @@ A multiplayer strategy and war game in the browser: you lead a country, grow it,
 
 | | |
 |---|---|
-| **Map** | The **real world map** in hexagons, with real proportions (Equal Earth projection: true surface areas; latitudes 56° S to 83° N, no Antarctica). Real mountain ranges, deserts, forests and tundra (game approximation). Optionally a randomly generated world (`"carte": "aleatoire"`). Oceans, coasts, plains, forests, hills, mountains, deserts, tundra, meteorite craters. 3D relief, fog of war, three modes (political, terrain, resources). |
+| **Map** | The **real world map** in hexagons, with real proportions (Equal Earth projection: true surface areas; latitudes 56° S to 83° N, no Antarctica). **Real relief** from NASA elevation data: mountains where slopes are steep (Himalaya, Andes, Rockies, Alps…), hills on high plateaus and rolling land (Tibet, Altiplano, African plateau…). **Nothing can be built on mountains**; hills and plateaus are buildable. Deserts, forests and tundra follow the real climate (game approximation). Optionally a randomly generated world (`"carte": "aleatoire"`). Oceans, coasts, plains, forests, hills, mountains, deserts, tundra, meteorite craters. 3D relief, fog of war, three modes (political, terrain, resources). |
 | **Resources** | Credits, food, metal, oil, uranium, rare earths, plus electricity, population, influence and research. Each region has its own deposits. |
 | **Troops (OpenFront style)** | A troop pool that refills on its own (maximum depends on territory, cities, the capital, barracks). **Right-click** a tile: send an adjustable share of your troops, which advance tile by tile toward it (neutral land: the country expands; enemy at war: invasion against its terrain, forts and troops; distant coast: landing from a shipyard). **Left-click**: build. |
 | **Ores and crafting** | 4 ores (common, rare, radioactive, legendary), extracted by quarries and mines. The refinery turns them into metal, rare earths, uranium, or any of the **118 elements** of the periodic table (legendary ones decay quickly). The factory assembles **105 products** across 8 tiers, from steel to the **black hole**. |
@@ -55,7 +55,7 @@ Administration (world announcement, nation removal, `devTout`) only appears and 
 
 `cargo run -- --apercu` prints the map as text, handy for checking a map size or choosing a `graine` (seed).
 
-The world map comes from `src/monde_reel.bin`, built from Natural Earth (public domain) by `outils/carte-monde`: `cd outils/carte-monde && npm install && node generer.js` (add `--apercu monde.ppm` for a picture). Mountain ranges, deserts and forests are listed at the top of `generer.js`.
+The world map comes from `src/monde_reel.bin`, built from Natural Earth (public domain) and NASA elevation (`outils/carte-monde/donnees/altitude-nasa.png`, public domain, taken from the MIT `three-globe` package) by `outils/carte-monde`: `cd outils/carte-monde && npm install && node generer.js` (add `--apercu monde.ppm` for a picture). Mountain and hill thresholds (elevation and local relief) are in `terrainDe()`; deserts and forests are listed at the top of `generer.js`.
 
 ## Sign-in: "Sign in with VEX" (`reseau` mode, the default)
 
@@ -190,6 +190,7 @@ static/
   css/wfront.css   game styles (theme.css tokens only)
   js/jeu.js            client: connection, interface, orders
   js/carte.js          Three.js 3D rendering
+  js/modeles.js        detailed 3D models of the 32 buildings (windows, roofs, tanks, vehicles…)
   js/panneaux.js       panels (country, construction, armies, research…)
   img/solid/           VEX icons
   vendor/              Three.js (served locally, no CDN)

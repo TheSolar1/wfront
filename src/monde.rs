@@ -549,14 +549,15 @@ fn placer_gisements_reels(cases: &mut [Case], regions: &[u8], largeur: usize, gr
                 match (r, t) {
                     (0, T_DESERT) => 3.0, (0, T_PLAINE | T_TOUNDRA) => 2.0, (0, T_MONTAGNE) => 0.0,
                     (1, T_COLLINE) => 3.0, (1, T_MONTAGNE | T_DESERT) => 2.0,
-                    (2, T_MONTAGNE) => 3.0, (2, T_COLLINE | T_DESERT | T_TOUNDRA) => 2.0,
-                    (3, T_COLLINE) => 3.0, (3, T_FORET | T_MONTAGNE) => 2.0,
+                    (2, T_COLLINE) => 3.0, (2, T_DESERT | T_TOUNDRA) => 2.0,
+                    (3, T_COLLINE) => 3.0, (3, T_FORET) => 2.0,
                     _ => 1.0,
                 }
             };
             let mut candidats: Vec<(f64, usize)> = liste
                 .iter()
-                .filter(|&&i| cases[i].depot == D_AUCUN)
+                // Pas de gisement en montagne : on ne peut pas y construire de mine.
+                .filter(|&&i| cases[i].depot == D_AUCUN && cases[i].terrain != T_MONTAGNE)
                 .map(|&i| {
                     let (x, y) = ((i % largeur) as f64, (i / largeur) as f64);
                     // Bassins : un bruit lent regroupe les gisements.
@@ -928,8 +929,10 @@ impl Monde {
             let depot = match t {
                 T_DESERT if region(10.0) > 0.52 && de < 0.45 => D_METAL,
                 T_PLAINE | T_TOUNDRA if region(10.0) > 0.60 && de < 0.18 => D_METAL,
-                T_MONTAGNE | T_COLLINE if region(20.0) > 0.66 && de < 0.30 => D_URANIUM,
-                T_COLLINE | T_MONTAGNE if de < 0.40 => D_METAL,
+                // Rien en montagne (on ne peut pas y construire) : les filons
+                // sont dans les collines.
+                T_COLLINE if region(20.0) > 0.66 && de < 0.30 => D_URANIUM,
+                T_COLLINE if de < 0.40 => D_METAL,
                 T_FORET | T_COLLINE if region(30.0) > 0.60 && de < 0.25 => D_TERRES_RARES,
                 T_TOUNDRA if region(20.0) > 0.60 && de < 0.18 => D_URANIUM,
                 T_DESERT if de < 0.08 => D_METAL,
@@ -941,7 +944,7 @@ impl Monde {
         // Crateres de meteorite : seule source de minerai legendaire. Tres
         // rares (un pour ~900 cases de terre, 3 au moins) et bien espaces.
         let mut terres: Vec<(f64, usize)> = (0..monde.cases.len())
-            .filter(|&i| est_terre(monde.cases[i].terrain))
+            .filter(|&i| est_terre(monde.cases[i].terrain) && monde.cases[i].terrain != T_MONTAGNE)
             .map(|i| {
                 let (x, y) = monde.xy(i);
                 (res.hash(x * 101 + 13, y * 53 + 29), i)
@@ -1003,6 +1006,9 @@ mod tests_monde_reel {
         assert_eq!(t(10.0, 23.0), T_DESERT, "Sahara");
         assert_eq!(t(-62.0, -5.0), T_FORET, "Amazonie");
         assert_eq!(t(86.0, 28.0), T_MONTAGNE, "Himalaya");
+        assert_eq!(t(-70.5, -33.0), T_MONTAGNE, "Andes (Aconcagua)");
+        assert_eq!(t(88.0, 33.0), T_COLLINE, "plateau du Tibet : haut mais peu pentu, constructible");
+        assert!(m.cases.iter().all(|c| c.terrain != T_MONTAGNE || c.depot == D_AUCUN), "aucun gisement en montagne");
         assert!(!est_terre(t(-40.0, 30.0)), "Atlantique");
         assert!(!est_terre(t(-150.0, 0.0)), "Pacifique");
         assert!(est_terre(t(2.5, 47.0)), "France");
@@ -1091,6 +1097,21 @@ mod tests_monde_reel {
         assert!(commande(&mut m, &jb, &cmd(index_pays("LU")), &regles).is_err(), "Luxembourg");
         commande(&mut m, &jb, &cmd(index_pays("DE")), &regles).unwrap();
         assert_eq!(m.pays.values().find(|p| p.user_id == 2).unwrap().nom, "Allemagne");
+    }
+
+    #[test]
+    fn on_ne_construit_pas_en_montagne() {
+        use crate::jeu::{commande, Joueur, Regles};
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 708 };
+        let mut m = Monde::generer_monde_reel(708, 5);
+        let j = Joueur { user_id: 7, nom: "Nora", admin: false, triche: false };
+        commande(&mut m, &j, &serde_json::json!({"action": "rejoindre", "pays_reel": index_pays("NP"), "couleur": "#ef4444", "spe": "militaire"}), &regles).unwrap();
+        let pid = m.pays.values().find(|p| p.user_id == 7).unwrap().id;
+        let mont = (0..m.cases.len()).find(|&i| m.cases[i].proprio == Some(pid) && m.cases[i].terrain == T_MONTAGNE && m.cases[i].bat.is_none()).expect("le Nepal a des montagnes");
+        let e = commande(&mut m, &j, &serde_json::json!({"action": "construire", "case": mont, "bat": "carriere"}), &regles).unwrap_err();
+        assert!(e.contains("montagne"), "{e}");
+        let plat = (0..m.cases.len()).find(|&i| m.cases[i].proprio == Some(pid) && m.cases[i].terrain != T_MONTAGNE && m.cases[i].bat.is_none()).unwrap();
+        commande(&mut m, &j, &serde_json::json!({"action": "construire", "case": plat, "bat": "carriere"}), &regles).unwrap();
     }
 
     #[test]
