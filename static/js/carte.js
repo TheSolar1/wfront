@@ -150,7 +150,7 @@ export class Carte {
     // Mer translucide au niveau 0 : les fonds marins restent visibles.
     this.eau = new THREE.Mesh(
       new THREE.PlaneGeometry(this.largeurMonde * 5, this.hauteurMonde * 5),
-      new THREE.MeshPhongMaterial({ color: sombre ? 0x15466e : 0x2d7db5, transparent: true, opacity: 0.74, shininess: 110, specular: 0xa9dcff, depthWrite: false })
+      new THREE.MeshPhongMaterial({ color: sombre ? 0x15466e : 0x2d7db5, transparent: true, opacity: 0.74, shininess: 60, specular: 0x6f93a8, depthWrite: false })
     );
     this.eau.rotation.x = -Math.PI / 2;
     this.eau.position.set(this.largeurMonde / 2, 0, this.hauteurMonde / 2);
@@ -189,6 +189,9 @@ export class Carte {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    // Recul maximal selon la forme de l'ecran : en portrait (telephone tenu
+    // droit), il faut reculer plus pour voir toute la largeur du monde.
+    if (this.largeurMonde) this.dMax = Math.max(110, this.largeurMonde * 0.62 * Math.max(1, 1.5 / this.camera.aspect));
   }
 
   pos(i) {
@@ -281,12 +284,11 @@ if (vHaut > -0.05) {
 }`);
     };
     this.matSol.customProgramCacheKey = () => 'sol-wfront';
-    // Carte lointaine : meme rendu, legerement en retrait, pour que les
-    // tuiles detaillees passent toujours devant la ou elles existent.
-    this.matLoin = this.matSol.clone();
-    Object.assign(this.matLoin, { polygonOffset: true, polygonOffsetFactor: 3, polygonOffsetUnits: 3 });
-    this.matLoin.onBeforeCompile = this.matSol.onBeforeCompile;
-    this.matLoin.customProgramCacheKey = () => 'sol-wfront';
+    // Carte lointaine : meme materiau. De pres, elle est un peu abaissee
+    // (voir majTuiles) pour que les tuiles detaillees passent devant. Pas de
+    // decalage de profondeur : vu en biais et de loin, il repoussait tout
+    // le sol derriere la mer.
+    this.matLoin = this.matSol;
 
     // ── Carte lointaine : tout le monde, allegee (vue d'ensemble) ──
     const surface = (this.largeurMonde + LX * 3) * (this.hauteurMonde + LZ * 3);
@@ -294,7 +296,7 @@ if (vHaut > -0.05) {
     this.reliefLoin = new THREE.Mesh(new THREE.BufferGeometry(), this.matLoin);
     this.reliefLoin.receiveShadow = !MOBILE;
     this.reliefLoin.visible = false;
-    this.reliefLoin.position.y = -0.05;
+    this.reliefLoin.position.y = 0;
     this.scene.add(this.reliefLoin);
     // Travailleur : calcule le sol en parallele de l'affichage. Sans lui
     // (navigateur trop ancien), le calcul se fait ici, par petits morceaux.
@@ -483,6 +485,7 @@ if (vHaut > -0.05) {
     // La carte lointaine reste toujours dessous : les tuiles detaillees
     // apparaissent par-dessus au fur et a mesure, sans trou ni attente.
     this.groupes.tuiles.visible = pres;
+    this.reliefLoin.position.y = pres ? -0.12 : 0;
     if (!pres) return;
     const T = this.TUILE, ox = -LX * 1.5, oz = -LZ * 1.5;
     const [x0, x1, z0, z1] = this.zoneVisible();
@@ -1435,7 +1438,8 @@ if (vHaut > -0.05) {
         const d = Math.hypot(a.x - b.x, a.y - b.y);
         this.cam.d = Math.min(this.dMax, Math.max(7, bas.cam.d * bas.pinch / Math.max(1, d)));
         const angle = Math.atan2(b.y - a.y, b.x - a.x);
-        this.cam.lacet = bas.cam.lacet - (angle - bas.angle);
+        // La carte tourne dans le meme sens que les doigts.
+        this.cam.lacet = bas.cam.lacet + (angle - bas.angle);
         const my = (a.y + b.y) / 2;
         this.cam.tangage = Math.min(1.45, Math.max(0.3, bas.cam.tangage + (my - bas.milieuY) * SENSI.inclinaison));
         this.anim = null;
@@ -1617,6 +1621,15 @@ if (vHaut > -0.05) {
       if (sc.right !== e) { sc.left = -e; sc.right = e; sc.top = e; sc.bottom = -e; sc.updateProjectionMatrix(); }
     }
     this.ajusterResolution(t);
+    // Plans de la camera adaptes au recul : sans cela, de loin, la precision
+    // de profondeur s'effondre et la mer passe devant le sol (telephones).
+    const near = Math.max(0.3, c.d * 0.04), far = Math.max(400, c.d * 4 + 200);
+    if (Math.abs(this.camera.near - near) > near * 0.1 || Math.abs(this.camera.far - far) > far * 0.1) {
+      this.camera.near = near; this.camera.far = far; this.camera.updateProjectionMatrix();
+    }
+    // Reflet du soleil sur la mer : agreable de pres, eblouissant de loin.
+    const reflet = Math.max(0, Math.min(1, 1 - (c.d - 60) / 140));
+    this.eau.material.specular.setRGB(0.44 * reflet, 0.58 * reflet, 0.66 * reflet);
     // Brouillard d'horizon proportionnel au recul (vue du monde entier).
     if (this.scene.fog) { this.scene.fog.near = Math.max(120, c.d * 1.4); this.scene.fog.far = Math.max(280, c.d * 3); }
 
