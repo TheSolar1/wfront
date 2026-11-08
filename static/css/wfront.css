@@ -852,3 +852,15 @@ body[data-mode="dev"] .wf-apps-vex, body[data-mode="dev"] .wf-lien-vex { display
 }
 @keyframes wf-reflet { from { background-position: 150% 0; } to { background-position: -100% 0; } }
 .wf-puce .wf-blason, .wf-fab-puce .wf-blason { margin-right: 4px; }
+
+/* ── Carte du monde : choix du pays ─────────────────────────────── */
+.wf-pays-liste { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; max-height: 300px; overflow-y: auto; padding: 2px; }
+.wf-pays-choix { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 8px 10px; border-radius: 9px; border: 1px solid var(--panel-border); background: var(--surface2); cursor: pointer; color: var(--text); }
+.wf-pays-choix small { color: var(--text-dim); font-size: 11.5px; }
+.wf-pays-choix:hover:not(:disabled) { border-color: var(--accent); background: var(--sidebar-hover); }
+.wf-pays-liste .wf-pays-choix.actif { border-color: var(--accent); background: var(--accent); color: #fff; opacity: 1; box-shadow: 0 0 0 3px var(--aglow); }
+.wf-pays-liste .wf-pays-choix.actif small { color: #fff; opacity: .9; }
+.wf-pays-choix.pris { opacity: .45; cursor: not-allowed; }
+.wf-pays-choix[hidden] { display: none; }
+.wf-pays-choisi { margin: 0; font-size: 13.5px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+.wf-pays-choisi .ico { color: var(--accent); }

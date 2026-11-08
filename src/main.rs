@@ -92,10 +92,12 @@ struct Config {
     /// Seul le detenteur de la cle privee correspondante voit et utilise
     /// l'administration (page /admin). Vide : administration desactivee.
     admin_cle_publique: String,
-    /// "monde" (defaut) : la vraie carte du monde, aux vraies proportions
-    /// (carte_hauteur est alors deduite de carte_largeur). "aleatoire" :
-    /// continents inventes, differents a chaque graine.
+    /// "monde" (defaut) : la vraie carte du monde aux vraies proportions,
+    /// ou chaque joueur prend un vrai pays (pas de nations de l'ordinateur).
+    /// "aleatoire" : continents inventes (carte_largeur x carte_hauteur).
     carte: String,
+    /// Largeur de la carte du monde (la hauteur suit les proportions).
+    largeur_monde: usize,
     carte_largeur: usize,
     carte_hauteur: usize,
     /// Graine de la carte. 0 (defaut) : tiree au hasard a chaque nouveau monde.
@@ -140,6 +142,7 @@ impl Default for Config {
             admins: Vec::new(),
             invites: true,
             carte: "monde".into(),
+            largeur_monde: 500,
             carte_largeur: 384,
             carte_hauteur: 240,
             graine: 0,
@@ -268,6 +271,7 @@ fn charger_monde(cfg: &Config, racine: &Path) -> monde::Monde {
         match serde_json::from_str::<monde::Monde>(&t) {
             Ok(mut m) => {
                 jeu::migrer(&mut m);
+                m.preparer_regions();
                 println!("[monde] sauvegarde chargee : {} pays, {} armees.", m.pays.len(), m.armees.len());
                 return m;
             }
@@ -289,7 +293,7 @@ fn nouvelle_carte(cfg: &Config, graine: u64) -> monde::Monde {
     if cfg.carte == "aleatoire" {
         monde::Monde::generer(cfg.carte_largeur.clamp(30, 600), cfg.carte_hauteur.clamp(20, 400), graine)
     } else {
-        monde::Monde::generer_monde_reel(cfg.carte_largeur.clamp(60, 600), graine)
+        monde::Monde::generer_monde_reel(cfg.largeur_monde.clamp(60, 800), graine)
     }
 }
 
@@ -350,6 +354,7 @@ async fn main() {
         protection_s: (cfg.protection_heures * 3600.0) as i64,
         vitesse: cfg.vitesse.clamp(0.1, 100.0),
         monde_reel: cfg.carte != "aleatoire",
+        largeur_monde: cfg.largeur_monde.clamp(60, 800),
     };
     let app: Partage = Arc::new(App {
         cfg: cfg.clone(),

@@ -115,12 +115,26 @@ pub fn init(m: &Monde, nom: &str, admin: bool, vitesse: f64, vex_url: &str) -> S
     let terrain: String = m.cases.iter().map(|c| std::char::from_digit(c.terrain as u32, 10).unwrap()).collect();
     let depot: String = m.cases.iter().map(|c| std::char::from_digit(c.depot as u32, 10).unwrap()).collect();
     let cotes: String = (0..m.cases.len()).map(|i| if m.est_cote(i) { '1' } else { '0' }).collect();
+    let monde_reel = if m.monde_reel {
+        use base64::Engine as _;
+        let pays: Vec<Value> = crate::monde::pays_reels()
+            .iter()
+            .enumerate()
+            .map(|(k, p)| json!({ "k": k + 1, "code": p.code, "nom": p.nom, "capitale": m.capitales_reelles.get(k + 1) }))
+            .collect();
+        json!({ "pays": pays, "regions": base64::engine::general_purpose::STANDARD.encode(&m.regions) })
+    } else {
+        Value::Null
+    };
     json!({
         "t": "init",
         "joueur": { "nom": nom, "admin": admin },
         "vitesse": vitesse,
         "vex_url": vex_url,
         "carte": { "largeur": m.largeur, "hauteur": m.hauteur, "terrain": terrain, "depot": depot, "cotes": cotes },
+        // Carte du monde : vrais pays (index k -> pays_reels[k - 1]) et vrai
+        // pays de chaque case (un octet par case, en base64).
+        "monde_reel": monde_reel,
         "defs": {
             "ressources": RESSOURCES,
             "terrains": TERRAINS,
@@ -218,6 +232,7 @@ pub fn pays_publics(m: &Monde, bl: &HashMap<u32, Bilan>) -> Vec<Value> {
                 "devise": p.devise,
                 "spe": p.spe,
                 "capitale": p.capitale,
+                "pays_reel": p.pays_reel,
                 "bloc": p.bloc,
                 "elimine": p.elimine,
                 "protection": (p.protection - maint).max(0),

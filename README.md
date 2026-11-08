@@ -24,6 +24,17 @@ A multiplayer strategy and war game in the browser: you lead a country, grow it,
 
 Computer-controlled nations can fill the game (`"bots"` in `config.json`, 0 for none).
 
+## Real countries (world map)
+
+On the world map, every **real country** exists: the 194 independent states plus Taiwan, Palestine, Kosovo and Western Sahara (198 in total). Overseas territories belong to the country that governs them (French Guiana, Réunion, New Caledonia → France; Greenland → Denmark; Puerto Rico → United States; Falklands → United Kingdom…). Even micro-states and small island nations get at least one hex.
+
+- When joining, a player **chooses a country**: they get its whole territory (overseas included) and their capital is placed at the real capital. A country already led by another player cannot be taken.
+- **No computer nations**: the world is played between players only, as a persistent server over weeks.
+- If a country is wiped out, its player can take another free country (or the free part of a country).
+- On the map, thin lines show the real borders; hovering a hex shows its real country and whether it is free.
+
+Country borders and names come from Natural Earth and the `world-countries` package; capitals are listed in `outils/carte-monde/capitales.js`.
+
 ## Run locally (without VEX)
 
 ```bash
@@ -147,8 +158,9 @@ The VEX session lasts one hour (`datecra` in `loginc`). A game already open keep
 | `vex_db_fichier` / `vex_db` | — | VEX MySQL access (path to `db.json`, or inline credentials) |
 | `session_duree_s` | `3600` | Same duration as VEX |
 | `verifier_ip`, `verifier_navigateur` | `true` | Same checks as VEX's `verifier_session` |
-| `carte` | `monde` | `monde` = real world map, `aleatoire` = invented continents. Used for a new world (first launch, or admin "New map") |
-| `carte_largeur`, `carte_hauteur`, `graine` | `384`, `240`, `0` | Map size. With the world map, only the width counts (the height follows real proportions): 256 is a good size, 128 is coarse (Europe is tiny). `graine` changes deposits, and the whole map with `aleatoire` (0: random) |
+| `carte` | `monde` | `monde` = real world map where each player takes a real country (no computer nations), `aleatoire` = invented continents with bots. Used for a new world (first launch, or admin "New map") |
+| `largeur_monde` | `500` | Width of the world map (500 × 262 hexes); the height follows real proportions |
+| `carte_largeur`, `carte_hauteur`, `graine` | `384`, `240`, `0` | Size of the random map (`aleatoire`). `graine` changes deposits, and the whole map with `aleatoire` (0: random) |
 | `vitesse` | `1.0` | Speeds up the whole game (tests) |
 | `protection_heures` | `2` | How long a new country cannot be attacked |
 | `sauvegarde`, `intervalle_sauvegarde_s` | `data/monde.json`, `30` | World file and save frequency |

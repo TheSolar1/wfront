@@ -32,6 +32,8 @@ pub struct Regles {
     /// Carte du monde reel (true) ou carte aleatoire (false) pour une
     /// « Nouvelle carte » de l'administration.
     pub monde_reel: bool,
+    /// Largeur de la carte du monde (la hauteur suit les vraies proportions).
+    pub largeur_monde: usize,
 }
 
 fn maintenant() -> i64 {
@@ -1101,17 +1103,60 @@ fn installer_pays(m: &mut Monde, pid: u32, regles: &Regles) -> Result<(), String
         Some(c) => c,
         None => apparition_chez_un_bot(m).ok_or("Plus aucune terre libre pour fonder une nation.")?,
     };
-    let maint = maintenant();
     m.cases[cap].proprio = Some(pid);
-    m.cases[cap].bat = Some("capitale".into());
-    m.cases[cap].niv = 1;
-    m.toucher(cap);
     for v in m.voisins(cap) {
         if est_terre(m.cases[v].terrain) && m.cases[v].proprio.is_none() {
             m.cases[v].proprio = Some(pid);
             m.toucher(v);
         }
     }
+    initialiser_pays(m, pid, cap, regles);
+    Ok(())
+}
+
+/// Le vrai pays k est-il deja dirige par une nation encore en vie ?
+pub fn pays_reel_occupe(m: &Monde, k: u8) -> Option<u32> {
+    m.pays.values().find(|p| p.pays_reel == k && !p.elimine).map(|p| p.id)
+}
+
+/// Carte du monde : la nation prend le vrai pays k, c'est-a-dire toutes
+/// ses cases encore libres, et sa capitale a la vraie capitale (ou la
+/// case libre du pays la plus proche).
+fn installer_pays_reel(m: &mut Monde, pid: u32, k: u8, regles: &Regles) -> Result<(), String> {
+    let nom = crate::monde::pays_reels().get(k as usize - 1).map(|p| p.nom.clone()).ok_or("Pays inconnu.")?;
+    if let Some(autre) = pays_reel_occupe(m, k).filter(|&a| a != pid) {
+        return Err(format!("{} est déjà dirigé par {}.", nom, m.pays[&autre].joueur));
+    }
+    let libres: Vec<usize> = (0..m.cases.len())
+        .filter(|&i| m.region(i) == k && m.cases[i].proprio.is_none() && est_terre(m.cases[i].terrain))
+        .collect();
+    if libres.is_empty() {
+        return Err(format!("Tout le territoire de {} est occupé par d'autres nations.", nom));
+    }
+    let vraie = m.capitales_reelles.get(k as usize).copied().unwrap_or(usize::MAX);
+    let cap = if libres.contains(&vraie) {
+        vraie
+    } else if vraie < m.cases.len() {
+        *libres.iter().min_by_key(|&&i| m.distance(i, vraie)).unwrap()
+    } else {
+        libres[0]
+    };
+    for &i in &libres {
+        m.cases[i].proprio = Some(pid);
+        m.toucher(i);
+    }
+    m.pays.get_mut(&pid).unwrap().pays_reel = k;
+    initialiser_pays(m, pid, cap, regles);
+    Ok(())
+}
+
+/// Etat de depart d'une nation (capitale deja choisie et possedee).
+fn initialiser_pays(m: &mut Monde, pid: u32, cap: usize, regles: &Regles) {
+    let maint = maintenant();
+    m.cases[cap].proprio = Some(pid);
+    m.cases[cap].bat = Some("capitale".into());
+    m.cases[cap].niv = 1;
+    m.toucher(cap);
     let p = m.pays.get_mut(&pid).unwrap();
     p.capitale = cap;
     p.res = [1500.0, 0.0, 650.0, 0.0, 0.0, 0.0];
@@ -1134,7 +1179,6 @@ fn installer_pays(m: &mut Monde, pid: u32, regles: &Regles) -> Result<(), String
     let mut garnison = BTreeMap::new();
     garnison.insert("infanterie".to_string(), 6);
     deposer_unites(m, pid, cap, &garnison);
-    Ok(())
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -2470,8 +2514,11 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             // Les trous noirs sont eternels : ils survivent au nouveau monde,
             // au meme endroit et a la meme taille.
             let trous = std::mem::take(&mut m.trous_noirs);
-            *m = if regles.monde_reel { Monde::generer_monde_reel(l, graine) } else { Monde::generer(l, h, graine) };
-            m.bots_admin = bots;
+            *m = if regles.monde_reel { Monde::generer_monde_reel(regles.largeur_monde, graine) } else { Monde::generer(l, h, graine) };
+            // Carte du monde : jamais de nations jouees par l'ordinateur.
+            if !m.monde_reel {
+                m.bots_admin = bots;
+            }
             let n = m.cases.len();
             for t in trous.into_iter().filter(|t| t.case < n) {
                 avaler(m, t.case, (t.rayon + 1e-9).floor() as i64);
@@ -2499,7 +2546,14 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
         if !m.pays[&pid].elimine {
             return Err("Votre nation existe encore.".into());
         }
-        installer_pays(m, pid, regles)?;
+        if m.monde_reel {
+            let k = u(cmd, "pays_reel").filter(|&k| k >= 1 && k as usize <= crate::monde::pays_reels().len()).ok_or("Choisissez un pays.")? as u8;
+            installer_pays_reel(m, pid, k, regles)?;
+            let p = m.pays.get_mut(&pid).unwrap();
+            p.nom = crate::monde::pays_reels()[k as usize - 1].nom.clone();
+        } else {
+            installer_pays(m, pid, regles)?;
+        }
         let nom = m.nom_pays(pid);
         m.evenement(None, "diplomatie", format!("{} renaît de ses cendres.", nom), Some(m.pays[&pid].capitale));
         return Ok("Nation refondée.".into());
@@ -3594,11 +3648,26 @@ fn rejoindre(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Result<
     if pays_du_joueur(m, j.user_id).is_some() {
         return Err("Vous dirigez déjà une nation.".into());
     }
-    let nom = texte_propre(s(cmd, "nom"), 28);
-    if nom.chars().count() < 3 {
+    // Carte du monde : on choisit un vrai pays libre, dont la nation prend
+    // le nom.
+    let reel = if m.monde_reel {
+        let k = u(cmd, "pays_reel").filter(|&k| k >= 1 && k as usize <= crate::monde::pays_reels().len()).ok_or("Choisissez un pays.")? as u8;
+        if let Some(autre) = pays_reel_occupe(m, k) {
+            return Err(format!("{} est déjà dirigé par {}.", crate::monde::pays_reels()[k as usize - 1].nom, m.pays[&autre].joueur));
+        }
+        Some(k)
+    } else {
+        None
+    };
+    let nom = match reel {
+        Some(k) => crate::monde::pays_reels()[k as usize - 1].nom.clone(),
+        None => texte_propre(s(cmd, "nom"), 28),
+    };
+    if nom.chars().count() < 3 && reel.is_none() {
         return Err("Le nom doit faire au moins 3 caractères.".into());
     }
-    if m.pays.values().any(|p| p.nom.eq_ignore_ascii_case(&nom)) {
+    // Ancienne nation aneantie qui portait ce nom : elle le libere.
+    if m.pays.values().any(|p| p.nom.eq_ignore_ascii_case(&nom) && !(reel.is_some() && p.elimine)) {
         return Err("Ce nom est déjà pris.".into());
     }
     let couleur = s(cmd, "couleur").to_string();
@@ -3642,8 +3711,13 @@ fn rejoindre(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Result<
         troupes: 0.0,
         stock: Default::default(),
         fabrications: vec![],
+        pays_reel: 0,
     });
-    if let Err(e) = installer_pays(m, pid, regles) {
+    let installe = match reel {
+        Some(k) => installer_pays_reel(m, pid, k, regles),
+        None => installer_pays(m, pid, regles),
+    };
+    if let Err(e) = installe {
         m.pays.remove(&pid);
         return Err(e);
     }
@@ -3872,7 +3946,7 @@ mod tests_armes {
     /// le centre devient de la mer (cratere).
     #[test]
     fn antimatiere_prend_le_territoire_et_creuse() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false, largeur_monde: 500 };
         let mut m = Monde::generer(60, 40, 7);
         crate::bots::assurer(&mut m, 1, &regles, 0.0);
         let pid = *m.pays.keys().next().unwrap();
@@ -3887,7 +3961,7 @@ mod tests_armes {
     /// reacteur a fusion fabrique, consomme a la construction.
     #[test]
     fn centrale_fusion_exige_un_reacteur() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false, largeur_monde: 500 };
         let mut m = Monde::generer(60, 40, 7);
         crate::bots::assurer(&mut m, 1, &regles, 0.0);
         let pid = *m.pays.keys().next().unwrap();
@@ -3906,7 +3980,7 @@ mod tests_armes {
     /// Trou noir : il reste et grossit petit a petit en avalant les terres.
     #[test]
     fn trou_noir_reste_et_grossit() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false, largeur_monde: 500 };
         let mut m = Monde::generer(60, 40, 7);
         crate::bots::assurer(&mut m, 1, &regles, 0.0);
         let pid = *m.pays.keys().next().unwrap();

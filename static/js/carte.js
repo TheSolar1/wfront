@@ -94,6 +94,8 @@ export class Carte {
     this.terrain = Uint8Array.from(c.terrain, ch => +ch);
     this.depot = Uint8Array.from(c.depot, ch => +ch);
     this.proprio = new Int32Array(n).fill(-1);
+    // Carte du monde : vrai pays de chaque case (0 = mer).
+    this.regions = init.monde_reel ? Uint8Array.from(atob(init.monde_reel.regions), ch => ch.charCodeAt(0)) : null;
     this.bat = new Array(n).fill('');
     this.niv = new Uint8Array(n);
     this.irr = new Uint8Array(n);
@@ -195,10 +197,12 @@ export class Carte {
     new ResizeObserver(() => this.redimensionner()).observe(this.el);
 
     this.groupes = {};
-    for (const k of ['bords', 'depots', 'bats', 'armees', 'chemins', 'air', 'effets', 'labels', 'selection']) {
+    for (const k of ['frontieres', 'bords', 'depots', 'bats', 'armees', 'chemins', 'air', 'effets', 'labels', 'selection']) {
       this.groupes[k] = new THREE.Group();
       this.scene.add(this.groupes[k]);
     }
+    // Frontieres des vrais pays : apres le relief (altitude), sans bloquer.
+    setTimeout(() => this.construireFrontieresReelles(), 0);
   }
 
   redimensionner() {
@@ -486,6 +490,31 @@ export class Carte {
   }
 
   // ── Frontieres (rubans qui epousent le relief) ────────────────────
+  /** Carte du monde : fines frontieres des vrais pays (fixes). */
+  construireFrontieresReelles() {
+    if (!this.regions) return;
+    const pos = [];
+    for (let i = 0; i < this.g.n; i++) {
+      const r = this.regions[i];
+      if (!r) continue;
+      const [x, z] = this.pos(i);
+      this.g.voisins(i).forEach((v, k) => {
+        if (v < 0 || !this.regions[v] || this.regions[v] === r) return;
+        const [a, b] = DIRS_COINS[k];
+        const A = this.coin(a), B = this.coin(b), A2 = this.coin(a, 0.95), B2 = this.coin(b, 0.95);
+        const P = [[x + A[0], z + A[1]], [x + B[0], z + B[1]], [x + B2[0], z + B2[1]], [x + A2[0], z + A2[1]]];
+        const h = P.map(([px, pz]) => Math.max(0.03, this.altitude(px, pz)) + 0.06);
+        for (const t of [0, 1, 2, 0, 2, 3]) pos.push(P[t][0], h[t], P[t][1]);
+      });
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    const mat = new THREE.MeshBasicMaterial({ color: 0x1c1e21, transparent: true, opacity: 0.32, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 });
+    const mesh = new THREE.Mesh(g, mat);
+    mesh.renderOrder = 1;
+    this.groupes.frontieres.add(mesh);
+  }
+
   construireBords() {
     const pos = [], col = [];
     const c = new THREE.Color(), bc = new THREE.Color();

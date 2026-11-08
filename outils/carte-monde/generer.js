@@ -12,9 +12,16 @@
 // 3. Terrains : chaines de montagnes, deserts, forets et toundra places
 //    a la main d'apres la geographie reelle (approximation de jeu).
 //
-// Sortie : en-tete "WFMONDE1", largeur u16, hauteur u16, puis les cases
-// ligne par ligne en RLE (repetitions u8, code terrain u8). Le serveur
-// (monde.rs) la reechantillonne a la taille de carte voulue.
+// 4. Pays reels (Natural Earth, countries-50m) : l'outre-mer est rattache
+//    au pays qui le dirige (voir SOUVERAIN) ; capitales dans capitales.js,
+//    noms francais du paquet world-countries.
+//
+// Sorties :
+// - src/monde_reel.bin : en-tete "WFMONDE2", largeur u16, hauteur u16,
+//   puis deux couches ligne par ligne en RLE (repetitions u8, valeur u8) :
+//   les terrains, puis l'index du pays (0 = aucun). Le serveur (monde.rs)
+//   la reechantillonne a la taille de carte voulue.
+// - src/pays_reels.json : la liste des pays (index = position + 1).
 // ══════════════════════════════════════════════════════════════════
 'use strict';
 const fs = require('fs');
@@ -48,21 +55,18 @@ function inverse(x, y) {
   return [lon, lat];
 }
 
-// ── Masque des terres (equirectangulaire, 5' d'arc) ─────────────────
+// ── Rasterisation (equirectangulaire, 5' d'arc) ─────────────────────
 const ML = 4320, MH = 2160;
-function masqueTerres() {
-  const topo = JSON.parse(fs.readFileSync(require.resolve('world-atlas/land-50m.json'), 'utf8'));
-  const geo = topojson.feature(topo, topo.objects.land);
-  const anneaux = [];
-  for (const f of geo.features || [geo]) {
-    const g = f.geometry;
-    const polys = g.type === 'Polygon' ? [g.coordinates] : g.coordinates;
-    for (const p of polys) for (const r of p) anneaux.push(r);
-  }
-  // Anneaux « deroules » : la longitude reste continue quand un contour
-  // traverse l'antimeridien (Tchoukotka, Fidji…), puis chaque anneau est
-  // rempli separement (pair-impair) et replie modulo 360°.
-  const m = new Uint8Array(ML * MH);
+function anneauxDe(geometrie) {
+  const polys = geometrie.type === 'Polygon' ? [geometrie.coordinates] : geometrie.type === 'MultiPolygon' ? geometrie.coordinates : [];
+  return polys.flat();
+}
+// Remplit des anneaux (regle pair-impair) et appelle f(ligne, colonne)
+// pour chaque pixel couvert. Les anneaux sont « deroules » : la longitude
+// reste continue quand un contour traverse l'antimeridien (Tchoukotka,
+// Fidji…), puis les colonnes sont repliees modulo 360°.
+function remplir(anneaux, f) {
+  const bascules = new Map(); // ligne -> colonnes ou la parite change
   for (const brut of anneaux) {
     const r = [];
     let decal = 0;
@@ -73,7 +77,7 @@ function masqueTerres() {
       }
       r.push([brut[i][0] + decal, brut[i][1]]);
     }
-    const parLigne = new Map();
+    const xsParLigne = new Map();
     for (let i = 0; i < r.length - 1; i++) {
       const [x1, y1] = r[i], [x2, y2] = r[i + 1];
       if (y1 === y2) continue;
@@ -81,20 +85,76 @@ function masqueTerres() {
       for (let l = Math.max(0, Math.ceil(r1)); l <= Math.min(MH - 1, Math.floor(r2)); l++) {
         const lat = 90 - (l + 0.5) / MH * 180;
         if ((y1 <= lat && y2 > lat) || (y2 <= lat && y1 > lat)) {
-          if (!parLigne.has(l)) parLigne.set(l, []);
-          parLigne.get(l).push(x1 + (lat - y1) / (y2 - y1) * (x2 - x1));
+          if (!xsParLigne.has(l)) xsParLigne.set(l, []);
+          xsParLigne.get(l).push(x1 + (lat - y1) / (y2 - y1) * (x2 - x1));
         }
       }
     }
-    for (const [l, xs] of parLigne) {
+    for (const [l, xs] of xsParLigne) {
       xs.sort((a, b) => a - b);
+      if (!bascules.has(l)) bascules.set(l, []);
+      const b = bascules.get(l);
       for (let k = 0; k + 1 < xs.length; k += 2) {
         const c1 = Math.ceil((xs[k] + 180) / 360 * ML - 0.5), c2 = Math.floor((xs[k + 1] + 180) / 360 * ML - 0.5);
-        for (let c = c1; c <= c2; c++) m[l * ML + (((c % ML) + ML) % ML)] ^= 1;
+        if (c2 >= c1) b.push(c1, c2 + 1);
       }
     }
   }
+  for (const [l, b] of bascules) {
+    b.sort((x, y) => x - y);
+    for (let k = 0; k + 1 < b.length; k += 2) {
+      for (let c = b[k]; c < b[k + 1]; c++) f(l, ((c % ML) + ML) % ML);
+    }
+  }
+}
+function masqueTerres() {
+  const topo = JSON.parse(fs.readFileSync(require.resolve('world-atlas/land-50m.json'), 'utf8'));
+  const geo = topojson.feature(topo, topo.objects.land);
+  const m = new Uint8Array(ML * MH);
+  remplir((geo.features || [geo]).flatMap(f => anneauxDe(f.geometry)), (l, c) => { m[l * ML + c] = 1; });
   return m;
+}
+
+// ── Pays reels ──────────────────────────────────────────────────────
+// Pays jouables : les Etats independants, plus Taiwan, la Palestine, le
+// Kosovo et le Sahara occidental. L'outre-mer et les territoires
+// rattaches appartiennent au pays qui les dirige.
+const SOUVERAIN = {
+  GL: 'DK', FO: 'DK', AX: 'FI', HK: 'CN', MO: 'CN',
+  PR: 'US', VI: 'US', GU: 'US', AS: 'US', MP: 'US',
+  GS: 'GB', IO: 'GB', SH: 'GB', PN: 'GB', AI: 'GB', FK: 'GB', KY: 'GB', BM: 'GB', VG: 'GB', TC: 'GB', MS: 'GB', JE: 'GB', GG: 'GB', IM: 'GB',
+  NU: 'NZ', CK: 'NZ', AW: 'NL', CW: 'NL', SX: 'NL',
+  PM: 'FR', WF: 'FR', MF: 'FR', BL: 'FR', PF: 'FR', NC: 'FR', TF: 'FR',
+  HM: 'AU', NF: 'AU',
+};
+// Entites sans code ISO dans Natural Earth.
+const SANS_CODE = { 'Somaliland': 'SO', 'Kosovo': 'XK', 'N. Cyprus': 'CY', 'Indian Ocean Ter.': 'AU', 'Siachen Glacier': 'IN' };
+const AUSSI_JOUABLES = ['TW', 'PS', 'XK', 'EH'];
+const NOMS = { CD: 'RD Congo', CG: 'Congo', KP: 'Corée du Nord', KR: 'Corée du Sud', VA: 'Vatican', PS: 'Palestine', EH: 'Sahara occidental' };
+
+function paysReels() {
+  const pays = require('world-countries');
+  const capitales = require('./capitales.js');
+  const parNum = new Map(pays.map(c => [c.ccn3, c]));
+  const jouables = pays.filter(c => c.independent || AUSSI_JOUABLES.includes(c.cca2)).sort((a, b) => a.cca2.localeCompare(b.cca2));
+  const index = new Map(jouables.map((c, i) => [c.cca2, i + 1]));
+  const liste = jouables.map(c => {
+    if (!capitales[c.cca2]) throw new Error('capitale manquante : ' + c.cca2);
+    return { code: c.cca2, nom: NOMS[c.cca2] || c.translations.fra.common, capitale: capitales[c.cca2] };
+  });
+  const topo = JSON.parse(fs.readFileSync(require.resolve('world-atlas/countries-50m.json'), 'utf8'));
+  const m = new Uint8Array(ML * MH);
+  const sansPays = [];
+  for (const f of topojson.feature(topo, topo.objects.countries).features) {
+    let code = f.id ? parNum.get(f.id)?.cca2 : SANS_CODE[f.properties.name];
+    if (code === 'AQ') continue;
+    code = SOUVERAIN[code] || code;
+    const k = index.get(code);
+    if (!k) { sansPays.push(f.properties.name); continue; }
+    remplir(anneauxDe(f.geometry), (l, c) => { m[l * ML + c] = k; });
+  }
+  if (sansPays.length) console.log('territoires sans pays jouable :', sansPays.join(', '));
+  return { liste, masque: m };
 }
 const terre = (m, lon, lat) => {
   const c = Math.min(ML - 1, Math.max(0, Math.floor((lon + 180) / 360 * ML)));
@@ -273,10 +333,12 @@ const LAT_N = 83, LAT_S = -56, MARGE = 0.02;
 const XMAX = projeter(180, 0)[0];
 const YN = projeter(0, LAT_N)[1], YS = projeter(0, LAT_S)[1];
 const largeurP = 2 * XMAX * (1 + 2 * MARGE), hauteurP = (YN - YS) + 2 * MARGE * 2 * XMAX;
-const RW = 1440, RH = Math.round(RW * hauteurP / largeurP);
+const RW = 2048, RH = Math.round(RW * hauteurP / largeurP);
 
 const masque = masqueTerres();
+const { liste: PAYS, masque: masquePays } = paysReels();
 const raster = new Uint8Array(RW * RH);
+const rasterPays = new Uint8Array(RW * RH);
 let terres = 0;
 for (let r = 0; r < RH; r++) {
   const y = YN + MARGE * 2 * XMAX - (r + 0.5) / RH * hauteurP;
@@ -285,25 +347,47 @@ for (let r = 0; r < RH; r++) {
     let t = OCEAN;
     if (y <= YN && y >= YS) {
       const [lon, lat] = inverse(x, y);
-      if (Math.abs(lon) <= 180) t = terrainDe(masque, lon, lat);
+      if (Math.abs(lon) <= 180) {
+        t = terrainDe(masque, lon, lat);
+        if (t) {
+          const mc = Math.min(ML - 1, Math.max(0, Math.floor((lon + 180) / 360 * ML)));
+          const ml = Math.min(MH - 1, Math.max(0, Math.floor((90 - lat) / 180 * MH)));
+          rasterPays[r * RW + c] = masquePays[ml * ML + mc];
+          // Terre sans pays : la mer Caspienne (comptee comme terre dans
+          // land-50m) ; elle redevient de l'eau.
+          if (!rasterPays[r * RW + c]) t = OCEAN;
+        }
+      }
     }
     raster[r * RW + c] = t;
     if (t) terres++;
   }
 }
 
-// RLE ligne par ligne
-const octets = [...Buffer.from('WFMONDE1'), RW & 255, RW >> 8, RH & 255, RH >> 8];
-for (let r = 0; r < RH; r++) {
-  let c = 0;
-  while (c < RW) {
-    const t = raster[r * RW + c];
-    let n = 1;
-    while (c + n < RW && n < 255 && raster[r * RW + c + n] === t) n++;
-    octets.push(n, t);
-    c += n;
+// RLE ligne par ligne : les terrains, puis les pays.
+const octets = [...Buffer.from('WFMONDE2'), RW & 255, RW >> 8, RH & 255, RH >> 8];
+for (const couche of [raster, rasterPays]) {
+  for (let r = 0; r < RH; r++) {
+    let c = 0;
+    while (c < RW) {
+      const t = couche[r * RW + c];
+      let n = 1;
+      while (c + n < RW && n < 255 && couche[r * RW + c + n] === t) n++;
+      octets.push(n, t);
+      c += n;
+    }
   }
 }
+// Liste des pays (index = position + 1) et capitale en coordonnees
+// normalisees de la carte (0..1).
+const u = x => (x + XMAX * (1 + 2 * MARGE)) / largeurP;
+const v = y => (YN + MARGE * 2 * XMAX - y) / hauteurP;
+const pays = PAYS.map(p => {
+  const [x, y] = projeter(p.capitale[0], p.capitale[1]);
+  return { code: p.code, nom: p.nom, capitale: [+u(x).toFixed(5), +v(y).toFixed(5)] };
+});
+fs.writeFileSync(path.join(__dirname, '..', '..', 'src', 'pays_reels.json'), JSON.stringify(pays, null, 0).replace(/\},\{/g, '},\n{') + '\n');
+console.log(`${pays.length} pays jouables`);
 const sortie = path.join(__dirname, '..', '..', 'src', 'monde_reel.bin');
 fs.writeFileSync(sortie, Buffer.from(octets));
 console.log(`${sortie} : ${RW} x ${RH}, ${(terres / (RW * RH) * 100).toFixed(1)} % de terres, ${octets.length} octets`);
@@ -311,9 +395,15 @@ console.log(`${sortie} : ${RW} x ${RH}, ${(terres / (RW * RH) * 100).toFixed(1)}
 // Apercu PNG-like en PPM (pour verifier a l'œil) si demande.
 if (process.argv.includes('--apercu')) {
   const coul = { 0: [30, 79, 122], 2: [143, 191, 90], 3: [63, 125, 58], 4: [168, 161, 92], 5: [138, 129, 118], 6: [217, 194, 126], 7: [185, 198, 201] };
-  const ppm = Buffer.alloc(RW * RH * 3);
-  for (let i = 0; i < RW * RH; i++) { const k = coul[raster[i]]; ppm[i * 3] = k[0]; ppm[i * 3 + 1] = k[1]; ppm[i * 3 + 2] = k[2]; }
   const f = process.argv[process.argv.indexOf('--apercu') + 1];
+  const ppm = Buffer.alloc(RW * RH * 3), ppm2 = Buffer.alloc(RW * RH * 3);
+  for (let i = 0; i < RW * RH; i++) {
+    const k = coul[raster[i]]; ppm[i * 3] = k[0]; ppm[i * 3 + 1] = k[1]; ppm[i * 3 + 2] = k[2];
+    const p = rasterPays[i];
+    const q = raster[i] ? (p ? [60 + hash(p, 1, 3) * 190, 60 + hash(p, 2, 3) * 190, 60 + hash(p, 3, 3) * 190] : [255, 0, 255]) : [30, 79, 122];
+    ppm2[i * 3] = q[0]; ppm2[i * 3 + 1] = q[1]; ppm2[i * 3 + 2] = q[2];
+  }
   fs.writeFileSync(f, Buffer.concat([Buffer.from(`P6 ${RW} ${RH} 255\n`), ppm]));
-  console.log('apercu :', f);
+  fs.writeFileSync(f.replace(/(\.ppm)?$/, '-pays.ppm'), Buffer.concat([Buffer.from(`P6 ${RW} ${RH} 255\n`), ppm2]));
+  console.log('apercus :', f);
 }
