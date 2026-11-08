@@ -857,6 +857,30 @@ async function executerOrdre(i) {
 // ══════════════════════════════════════════════════════════════════
 // Notifications et fenetres
 // ══════════════════════════════════════════════════════════════════
+// ── Mise a jour depuis GitHub (panneau d'administration) ──
+async function majVerifier() {
+  if (!S.maj) S.maj = { chargement: true };
+  majPanneau(true);
+  try { S.maj = await (await fetch('admin/maj?verifier=1', { credentials: 'same-origin' })).json(); }
+  catch { S.maj = { autorise: true, git: true, fetch_ok: false, nouveautes: [], etat: {} }; }
+  majPanneau(true);
+}
+async function majLancer() {
+  const r = await fetch('admin/maj', { method: 'POST', credentials: 'same-origin' }).then(x => x.json()).catch(() => ({ erreur: 'Serveur injoignable.' }));
+  if (!r.ok) { toast(r.erreur || 'Échec du lancement.', 'err'); return; }
+  toast('Mise à jour lancée.', 'ok');
+  // Suivi : le serveur redemarre pendant la mise a jour (requetes en echec = on reessaie).
+  const suivre = async () => {
+    try {
+      const m = await (await fetch('admin/maj', { credentials: 'same-origin' })).json();
+      S.maj = m; majPanneau(true);
+      if (!m.en_cours && m.etat && (m.etat.etape === 'ok' || m.etat.etape === 'erreur')) { toast(m.etat.message, m.etat.etape === 'ok' ? 'ok' : 'err'); return; }
+    } catch {}
+    setTimeout(suivre, 5000);
+  };
+  setTimeout(suivre, 2000);
+}
+
 function toast(texte, type = 'info', icone, caseCible) {
   if (!texte) return;
   const el = document.createElement('div');
@@ -987,6 +1011,10 @@ const ACTIONS = {
   admin_paix: () => confirmer('Paix mondiale ?', 'Toutes les guerres s\'arrêtent immédiatement.', 'Imposer la paix', () => agir('admin_paix_mondiale')),
   admin_carte: () => confirmer('Générer une nouvelle carte ?', 'Le monde actuel est effacé : toutes les nations disparaissent et chacun doit refonder la sienne. Irréversible.', 'Nouvelle carte', () => agir('admin_nouvelle_carte'), true),
   admin_moi: () => agir('dev_tout'),
+  admin_maj_verifier: () => majVerifier(),
+  admin_maj_lancer: () => confirmer('Mettre à jour WFront ?',
+    `${(S.maj && S.maj.nouveautes || []).length} changement(s) de GitHub vont être installés. Le jeu se compile (quelques minutes) puis redémarre : la partie est sauvegardée et chacun est reconnecté. Retour automatique à l'ancienne version si la nouvelle ne démarre pas.`,
+    'Mettre à jour', majLancer, true),
   admin_donner_form: d => {
     const p = S.pays.get(+d.pays);
     const idx = [0, 2, 5, 4, 3];

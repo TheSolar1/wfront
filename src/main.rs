@@ -402,6 +402,8 @@ async fn main() {
         .route("/invite/entrer", get(invite_entrer))
         .route("/deconnexion", get(deconnexion))
         .route("/api/statut", get(api_statut))
+        .route("/api/permissions", get(api_permissions))
+        .route("/admin/maj", get(admin_maj_etat).post(admin_maj_lancer))
         .route("/admin", get(page_admin))
         .route("/admin/defi", get(admin_defi))
         .route("/admin/prouver", post(admin_prouver))
@@ -652,15 +654,17 @@ fn decoder_url(s: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
-/// Identite du visiteur. Le privilege d'administration ne vient QUE de la
-/// cle d'administration (cookie wf_admin obtenu sur /admin), jamais du mode
-/// d'authentification ni du privilege VEX.
+/// Identite du visiteur. Le privilege d'administration vient de la cle
+/// d'administration (cookie wf_admin obtenu sur /admin), de la liste
+/// « admins » de config.json, ou de la permission « wfront.admin » donnee
+/// dans VEX (Admin > Roles & Plans > Permissions, par role ou par compte).
 async fn authentifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Option<Identite> {
     let mut id = identifier(app, headers, addr).await?;
     let compte_admin = id.compte.as_ref().map(|c| app.cfg.admins.iter().any(|a| a.trim().eq_ignore_ascii_case(c))).unwrap_or(false);
     // Un invite (sans compte VEX) n'a jamais l'administration.
     let invite = id.compte.as_deref().map(|c| c.starts_with("invite:")).unwrap_or(false);
-    id.privilege = if !invite && (compte_admin || app.admin.valide(&cookie(headers, "wf_admin"), id.user_id)) { 1 } else { 10 };
+    let perm_vex = !invite && permission_vex(app, id.rang_vex, id.user_id, PERM_ADMIN);
+    id.privilege = if !invite && (compte_admin || perm_vex || app.admin.valide(&cookie(headers, "wf_admin"), id.user_id)) { 1 } else { 10 };
     Some(id)
 }
 
@@ -686,18 +690,43 @@ async fn identifier(app: &Partage, headers: &HeaderMap, addr: SocketAddr) -> Opt
             compte: Some(s.compte),
         });
     }
-    let pool = app.db.clone()?;
     let jeton = cookie(headers, "connexion_cookie");
-    if jeton.is_empty() {
+    let vex = match app.db.clone() {
+        Some(pool) if !jeton.is_empty() => {
+            let ip = ip_client(app, headers, addr);
+            let ua = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let cfg = app.cfg.clone();
+            tokio::task::spawn_blocking(move || verifier_vex(&pool, &cfg, &jeton, &ip, &ua))
+                .await
+                .ok()
+                .flatten()
+        }
+        _ => None,
+    };
+    // FIX (demande utilisateur : "jouer sans compte ne marche pas") : en
+    // mode vex, le mode invite n'etait jamais lu -- seul le mode reseau le
+    // gerait. Sans session VEX valide, on accepte une session invite.
+    vex.or_else(|| identite_invite(app, headers))
+}
+
+/// Session « Jouer sans compte » (cookie wf_session, compte « invite:... »).
+fn identite_invite(app: &App, headers: &HeaderMap) -> Option<Identite> {
+    if !app.cfg.invites {
         return None;
     }
-    let ip = ip_client(app, headers, addr);
-    let ua = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-    let cfg = app.cfg.clone();
-    tokio::task::spawn_blocking(move || verifier_vex(&pool, &cfg, &jeton, &ip, &ua))
-        .await
-        .ok()
-        .flatten()
+    let s = app.reseau.session(&cookie(headers, "wf_session"))?;
+    if !s.compte.starts_with("invite:") {
+        return None;
+    }
+    Some(Identite {
+        user_id: reseau::id_compte(&s.compte),
+        nom: s.nom,
+        privilege: 10,
+        rang_vex: 10,
+        sombre: s.sombre,
+        noeud: None,
+        compte: Some(s.compte),
+    })
 }
 
 /// Change a chaque demarrage : ajoute aux liens des .css/.js (?v=) pour que
@@ -769,6 +798,7 @@ fn gabarit(app: &App, fichier: &str, id: Option<&Identite>) -> Response {
         .replace("__NOM__", &echapper(id.map(|i| i.nom.as_str()).unwrap_or("")))
         .replace("__CONNECTE__", if id.is_some() { "1" } else { "0" })
         .replace("__MODE__", &echapper(&app.cfg.auth))
+        .replace("__VEX_LOGIN__", &echapper(&url_connexion(app)))
         .replace("__V__", VERSION_FICHIERS.get_or_init(|| chrono::Utc::now().timestamp().to_string()))
         .replace(
             "__ADMIN__",
@@ -860,7 +890,7 @@ fn url_retour(app: &App, headers: &HeaderMap) -> String {
 }
 
 async fn page_connexion(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Response {
-    if app.cfg.auth != "reseau" {
+    if !(app.cfg.auth == "reseau" || (app.cfg.auth == "vex" && app.cfg.invites)) {
         return Redirect::to(&url_connexion(&app)).into_response();
     }
     if authentifier(&app, &headers, addr).await.is_some() {
@@ -939,7 +969,7 @@ struct InviteParams {
 
 /// Jouer sans compte VEX : un pseudo suffit (session « invite »).
 async fn invite_entrer(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Query(q): Query<InviteParams>) -> Response {
-    if app.cfg.auth != "reseau" || !app.cfg.invites {
+    if !(app.cfg.auth == "reseau" || app.cfg.auth == "vex") || !app.cfg.invites {
         return Redirect::to(&url_connexion(&app)).into_response();
     }
     let nom: String = q.nom.chars().filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '_' | '-' | '.')).take(24).collect();
@@ -1221,6 +1251,197 @@ async fn admin_sortir(State(app): State<Partage>, headers: HeaderMap) -> Respons
     let mut r = Redirect::to(&chemin(&app, "/jeu")).into_response();
     r.headers_mut().append(header::SET_COOKIE, "wf_admin=; Path=/; Max-Age=0".parse().unwrap());
     r
+}
+
+/// Bloc ajoute par WFront a la grille des permissions de VEX (Admin > Roles
+/// & Plans). VEX le lit via config.json -> "permissions_apps" et y stocke les
+/// choix du fondateur (par role ou par compte) ; voir permission_vex.
+const PERM_ADMIN: &str = "wfront.admin";
+
+async fn api_permissions() -> Json<Value> {
+    Json(json!({
+        "groupes": [{
+            "label": "WFront",
+            "icon": "gamepad",
+            "permissions": [
+                {"id": PERM_ADMIN, "label": "Administrer le jeu (outils d'administration WFront)", "danger": true},
+                {"id": PERM_MAJ, "label": "Mettre à jour WFront depuis GitHub (bouton du panneau admin)", "danger": true}
+            ]
+        }]
+    }))
+}
+
+/// Permission donnee depuis VEX (mode vex uniquement) : le fondateur VEX a
+/// tout ; sinon admin_permissions[rang] ou admin_permissions_comptes[id] du
+/// config.json de VEX (a cote de son db.json). Relu a chaque appel (petit
+/// fichier) : un changement dans VEX s'applique tout de suite.
+fn permission_vex(app: &App, rang: i64, user_id: i64, perm: &str) -> bool {
+    if app.cfg.auth != "vex" || app.cfg.vex_db_fichier.is_empty() || user_id <= 0 {
+        return false;
+    }
+    if rang == 1 {
+        return true;
+    }
+    let chemin = app.racine.join(&app.cfg.vex_db_fichier).with_file_name("config.json");
+    let cfg: Value = match std::fs::read_to_string(&chemin).ok().and_then(|t| serde_json::from_str(&t).ok()) {
+        Some(v) => v,
+        None => return false,
+    };
+    let contient = |v: Option<&Value>| {
+        v.and_then(|l| l.as_array()).map(|l| l.iter().any(|x| x.as_str() == Some(perm))).unwrap_or(false)
+    };
+    contient(cfg.get("admin_permissions").and_then(|t| t.get(rang.to_string())))
+        || contient(cfg.get("admin_permissions_comptes").and_then(|t| t.get(user_id.to_string())))
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Mise a jour depuis GitHub (bouton du panneau d'administration du jeu)
+// ══════════════════════════════════════════════════════════════════
+const PERM_MAJ: &str = "wfront.maj";
+
+const SCRIPT_MAJ: &str = r##"#!/bin/sh
+# Mise a jour de WFront depuis GitHub (TheSolar1/wfront), lancee par le
+# bouton du panneau d'administration du jeu. Ecrit son avancement dans
+# data/maj.json (lu par GET /admin/maj). Ecrit par main.rs a chaque lancement.
+cd "$(dirname "$0")/.." || exit 1
+etat() { m=$(printf '%s' "$2" | tr -d '"\\' | tr '\n' ' '); printf '{"etape":"%s","message":"%s","date":"%s"}' "$1" "$m" "$(date -u +%FT%TZ)" > data/maj.json; }
+etat recuperation "Récupération depuis GitHub…"
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then etat erreur "Le serveur a des changements qui ne sont pas sur GitHub : mise à jour refusée."; exit 1; fi
+git fetch -q origin main || { etat erreur "GitHub injoignable."; exit 1; }
+git merge -q --ff-only origin/main || { etat erreur "GitHub et le serveur ont divergé : mise à jour refusée."; exit 1; }
+etat compilation "Compilation (quelques minutes)…"
+"$HOME/.cargo/bin/cargo" build --release > data/maj-build.log 2>&1 || { etat erreur "La compilation a échoué (data/maj-build.log) : WFront garde l'ancienne version."; exit 1; }
+TS=$(date +%Y%m%d-%H%M%S); mkdir -p .sauvegardes
+cp -p wfront ".sauvegardes/wfront.$TS"; cp -p data/monde.json ".sauvegardes/monde.$TS.json" 2>/dev/null
+etat redemarrage "Redémarrage…"
+echo "[maj] $(date -u +%FT%TZ) par $WF_QUI -> $(git log -1 --format=%h)" >> wfront.out
+kill "$WF_PID"; i=0; while kill -0 "$WF_PID" 2>/dev/null && [ $i -lt 60 ]; do sleep 0.5; i=$((i+1)); done
+cp -f target/release/wfront ./wfront
+nohup ./wfront >> wfront.out 2>&1 &
+N=$!; sleep 10
+if curl -sf -m 5 "http://127.0.0.1:$WF_PORT/api/statut" >/dev/null; then
+  etat ok "Mis à jour : $(git log -1 --format='%h %s')"
+else
+  kill $N 2>/dev/null; sleep 2; cp -f ".sauvegardes/wfront.$TS" ./wfront
+  nohup ./wfront >> wfront.out 2>&1 &
+  etat erreur "La nouvelle version ne démarrait pas : retour automatique à l'ancienne."
+fi
+"##;
+
+/// Admin (privilege 1) ET : dans la liste « admins », ou permission
+/// « wfront.maj » donnee dans VEX (le fondateur VEX l'a d'office).
+fn peut_mettre_a_jour(app: &App, id: &Identite) -> bool {
+    if id.privilege != 1 {
+        return false;
+    }
+    let liste = id.compte.as_ref().map(|c| app.cfg.admins.iter().any(|a| a.trim().eq_ignore_ascii_case(c))).unwrap_or(false);
+    liste || permission_vex(app, id.rang_vex, id.user_id, PERM_MAJ)
+}
+
+fn git(racine: &Path, args: &[&str]) -> Option<String> {
+    let o = std::process::Command::new("git").args(args).current_dir(racine).output().ok()?;
+    if !o.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+fn etat_maj(racine: &Path) -> Value {
+    std::fs::read_to_string(racine.join("data/maj.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(Value::Null)
+}
+
+fn maj_en_cours(racine: &Path) -> bool {
+    let e = etat_maj(racine);
+    if !matches!(e.get("etape").and_then(|v| v.as_str()).unwrap_or(""), "recuperation" | "compilation" | "redemarrage") {
+        return false;
+    }
+    // Plus de 20 min sans nouvelle : script mort, on ne bloque plus.
+    std::fs::metadata(racine.join("data/maj.json"))
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs() < 1200)
+        .unwrap_or(false)
+}
+
+/// GET /admin/maj[?verifier=1] : version actuelle, nouveautes de GitHub
+/// (avec ?verifier=1 : git fetch d'abord), etat de la derniere mise a jour.
+async fn admin_maj_etat(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Query(q): Query<HashMap<String, String>>) -> Response {
+    let Some(id) = authentifier(&app, &headers, addr).await else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"erreur": "Connectez-vous d'abord."}))).into_response();
+    };
+    if !peut_mettre_a_jour(&app, &id) {
+        return Json(json!({"autorise": false})).into_response();
+    }
+    let racine = app.racine.clone();
+    let verifier = q.contains_key("verifier");
+    let r = tokio::task::spawn_blocking(move || {
+        let est_git = git(&racine, &["rev-parse", "--is-inside-work-tree"]).is_some();
+        let fetch_ok = !est_git || !verifier || git(&racine, &["fetch", "-q", "origin", "main"]).is_some();
+        let nouveautes: Vec<Value> = git(&racine, &["log", "--format=%h\x1f%an\x1f%ci\x1f%s", "HEAD..origin/main"])
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| !l.is_empty())
+            .take(50)
+            .map(|l| {
+                let c: Vec<&str> = l.split('\x1f').collect();
+                json!({"id": c.first(), "auteur": c.get(1), "date": c.get(2), "titre": c.get(3)})
+            })
+            .collect();
+        json!({
+            "autorise": true,
+            "git": est_git,
+            "fetch_ok": fetch_ok,
+            "local": git(&racine, &["log", "-1", "--format=%h — %s (%ci)"]),
+            "modifs_locales": git(&racine, &["status", "--porcelain", "--untracked-files=no"]).map(|s| s.lines().count()).unwrap_or(0),
+            "nouveautes": nouveautes,
+            "etat": etat_maj(&racine),
+            "en_cours": maj_en_cours(&racine),
+        })
+    })
+    .await
+    .unwrap_or(json!({"erreur": "interne"}));
+    Json(r).into_response()
+}
+
+/// POST /admin/maj : lance la mise a jour dans un processus detache (il
+/// survit a l'arret de WFront, qu'il redemarre lui-meme).
+async fn admin_maj_lancer(State(app): State<Partage>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Response {
+    let Some(id) = authentifier(&app, &headers, addr).await else {
+        return (StatusCode::UNAUTHORIZED, Json(json!({"erreur": "Connectez-vous d'abord."}))).into_response();
+    };
+    if !peut_mettre_a_jour(&app, &id) {
+        return (StatusCode::FORBIDDEN, Json(json!({"erreur": "Permission « Mettre à jour WFront » requise (VEX › Admin › Rôles & Plans)."}))).into_response();
+    }
+    if maj_en_cours(&app.racine) {
+        return (StatusCode::CONFLICT, Json(json!({"erreur": "Une mise à jour est déjà en cours."}))).into_response();
+    }
+    let script = app.racine.join("data").join("maj.sh");
+    if std::fs::write(&script, SCRIPT_MAJ).is_err() {
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"erreur": "Impossible d'écrire data/maj.sh."}))).into_response();
+    }
+    let _ = std::fs::write(
+        app.racine.join("data").join("maj.json"),
+        json!({"etape": "recuperation", "message": "Démarrage…", "date": chrono::Utc::now().to_rfc3339()}).to_string(),
+    );
+    let lancement = std::process::Command::new("setsid")
+        .arg("sh")
+        .arg(&script)
+        .current_dir(&app.racine)
+        .env("WF_PID", std::process::id().to_string())
+        .env("WF_PORT", app.cfg.port.to_string())
+        .env("WF_QUI", &id.nom)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    match lancement {
+        Ok(_) => {
+            println!("[maj] lancee par {}", id.nom);
+            Json(json!({"ok": true})).into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"erreur": format!("Lancement impossible : {}", e)}))).into_response(),
+    }
 }
 
 async fn api_statut(State(app): State<Partage>) -> Json<Value> {

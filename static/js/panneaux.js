@@ -1129,6 +1129,26 @@ function panneauAide(S) {
 // ══════════════════════════════════════════════════════════════════
 // Administration (detenteur de la cle d'administration uniquement)
 // ══════════════════════════════════════════════════════════════════
+// Mise a jour depuis GitHub : S.maj = reponse de GET admin/maj (voir jeu.js).
+function blocMaj(S) {
+  const m = S.maj;
+  if (!m) return `<div class="wf-admin-actions"><button class="wf-btn petit secondaire" data-act="admin_maj_verifier">${ico('code-commit')} Vérifier GitHub</button><small>Compare cette version avec le dépôt officiel TheSolar1/wfront.</small></div>`;
+  if (m.chargement) return `<p class="wf-note">${ico('rotate')} Vérification…</p>`;
+  if (!m.autorise) return `<p class="wf-note">${ico('lock')} Il faut la permission « Mettre à jour WFront » (VEX › Admin › Rôles &amp; Plans).</p>`;
+  const e = m.etat || {};
+  let h = `<p class="wf-note">${ico('code-commit')} Version actuelle : <b>${esc(m.local || '?')}</b></p>`;
+  if (m.en_cours) h += `<p class="wf-note">${ico('rotate')} ${esc(e.message || 'Mise à jour en cours…')}</p>`;
+  else if (e.etape === 'ok' || e.etape === 'erreur') h += `<p class="wf-note">${ico(e.etape === 'ok' ? 'circle-check' : 'triangle-exclamation')} Dernière mise à jour : ${esc(e.message || '')}</p>`;
+  if (!m.git) h += `<p class="wf-note">${ico('triangle-exclamation')} Le dossier du serveur n'est pas relié à GitHub.</p>`;
+  else if (!m.fetch_ok) h += `<p class="wf-note">${ico('triangle-exclamation')} GitHub injoignable.</p>`;
+  else if (m.modifs_locales) h += `<p class="wf-note">${ico('triangle-exclamation')} Le serveur a ${m.modifs_locales} fichier(s) modifié(s) qui ne sont pas sur GitHub : mise à jour bloquée pour ne rien perdre.</p>`;
+  if (m.nouveautes && m.nouveautes.length) h += `<table class="wf-table"><thead><tr><th>Changement sur GitHub</th><th>Auteur</th><th>Date</th></tr></thead><tbody>${m.nouveautes.map(c => `<tr><td>${esc(c.titre || '')}</td><td>${esc(c.auteur || '')}</td><td>${esc((c.date || '').slice(0, 16))}</td></tr>`).join('')}</tbody></table>`;
+  else if (m.git && m.fetch_ok) h += `<p class="wf-note">${ico('circle-check')} Déjà à jour avec GitHub.</p>`;
+  h += `<div class="wf-admin-actions"><button class="wf-btn petit secondaire" data-act="admin_maj_verifier" ${m.en_cours ? 'disabled' : ''}>${ico('arrows-rotate')} Vérifier</button>`;
+  if (m.nouveautes && m.nouveautes.length && !m.modifs_locales && !m.en_cours) h += `<button class="wf-btn petit danger" data-act="admin_maj_lancer">${ico('cloud-arrow-down')} Mettre à jour</button>`;
+  return h + '</div>';
+}
+
 function panneauAdmin(S) {
   const tous = [...S.pays.values()].sort((a, b) => a.id - b.id);
   const vivants = tous.filter(p => !p.elimine);
@@ -1152,6 +1172,8 @@ function panneauAdmin(S) {
     <button class="wf-btn petit secondaire" data-act="admin_moi" ${S.moi ? '' : 'disabled'}>${ico('wand-magic-sparkles')} Tout me donner (mode dev)</button>
     <small>Le maximum : toutes les technologies et améliorations, 10 millions de chaque ressource, 100 000 de chaque élément, 1 000 de chaque produit.</small>
   </div>
+  ${titre('Mise à jour', 'cloud-arrow-down')}
+  ${blocMaj(S)}
   ${titre('Annonce mondiale', 'bullhorn')}
   <div class="wf-form"><textarea id="admin-annonce" data-garder maxlength="300" placeholder="Message diffusé à tous les joueurs"></textarea>
   <button class="wf-btn" data-act="admin_annonce">${ico('bullhorn')} Publier</button></div>
