@@ -525,7 +525,7 @@ mod tests {
     /// envoie ses armees sur ses provinces.
     #[test]
     fn un_bot_fort_attaque_son_voisin() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 2, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -562,7 +562,7 @@ mod tests {
     /// un accident : centrale detruite, zone irradiee, nuage qui derive.
     #[test]
     fn accident_nucleaire_sans_technologie() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -589,7 +589,7 @@ mod tests {
     /// l'entoure, sauf si des troupes etrangeres s'y trouvent.
     #[test]
     fn encerclement() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 2, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -620,7 +620,7 @@ mod tests {
     /// mais pas un bout d'ile touche en un seul point.
     #[test]
     fn encerclement_contre_la_mer() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -641,7 +641,7 @@ mod tests {
     /// Les bots s'etendent avec leurs troupes, sans commandant.
     #[test]
     fn un_bot_s_etend_avec_ses_troupes() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -658,7 +658,7 @@ mod tests {
     /// un chantier naval, et reste acquise.
     #[test]
     fn debarquement_depuis_un_port() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -692,7 +692,7 @@ mod tests {
     /// Une terre proche de l'autre cote de la mer se prend sans chantier naval.
     #[test]
     fn traversee_d_un_bras_de_mer() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -720,7 +720,7 @@ mod tests {
     /// sa nation (sur des terres reprises a un bot).
     #[test]
     fn fonder_quand_les_bots_ont_tout_pris() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(60, 40, 7);
         assurer(&mut m, 2, &regles, 0.0);
         let bot = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -740,7 +740,7 @@ mod tests {
     /// tant qu'il y a du minerai, arretees au stock vise.
     #[test]
     fn lignes_automatiques_en_parallele() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -763,7 +763,7 @@ mod tests {
     /// Une carriere sur un gisement radioactif extrait du minerai radioactif.
     #[test]
     fn carriere_sur_gisement_radioactif() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -779,7 +779,7 @@ mod tests {
     /// assemble tout jusqu'au produit voulu.
     #[test]
     fn fabrication_en_chaine() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -806,7 +806,7 @@ mod tests {
     /// Admin : « Tout donner » marche dans tous les modes, dons precis.
     #[test]
     fn admin_dons() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(60, 40, 7);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -831,7 +831,7 @@ mod tests {
     #[test]
     #[ignore]
     fn simulation_economie() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(128, 80, 12345);
         assurer(&mut m, 6, &regles, 0.0);
         for t in 0..3600 {
@@ -853,7 +853,7 @@ mod tests {
     /// Un bot avec raffinerie et complexe industriel fabrique des produits a bonus.
     #[test]
     fn un_bot_fabrique() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -874,7 +874,7 @@ mod tests {
     /// Plans au marche, et alliance proposee puis acceptee.
     #[test]
     fn plans_et_alliance() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 2, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -897,7 +897,7 @@ mod tests {
     /// Minerai -> raffinerie -> elements -> fabrique -> produit.
     #[test]
     fn chaine_de_fabrication() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -927,7 +927,7 @@ mod tests {
     /// Le centre d'enrichissement transforme 1,5 uranium brut en 1 enrichi.
     #[test]
     fn enrichissement_uranium() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
@@ -945,7 +945,7 @@ mod tests {
     /// silo -> missile nucleaire -> guerre -> tir -> impact.
     #[test]
     fn frappe_nucleaire_de_bout_en_bout() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(84, 52, 20260925);
         assurer(&mut m, 2, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();

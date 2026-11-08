@@ -430,6 +430,23 @@ impl Monde {
 }
 
 // ── Generation de la carte ────────────────────────────────────────
+/// Carte du monde reel, decodee une fois : (largeur, hauteur, terrains).
+fn monde_reel() -> &'static (usize, usize, Vec<u8>) {
+    static CARTE: std::sync::OnceLock<(usize, usize, Vec<u8>)> = std::sync::OnceLock::new();
+    CARTE.get_or_init(|| {
+        let b: &[u8] = include_bytes!("monde_reel.bin");
+        assert!(b.len() > 12 && &b[..8] == b"WFMONDE1", "monde_reel.bin invalide");
+        let w = b[8] as usize | (b[9] as usize) << 8;
+        let h = b[10] as usize | (b[11] as usize) << 8;
+        let mut v = Vec::with_capacity(w * h);
+        for p in b[12..].chunks_exact(2) {
+            v.extend(std::iter::repeat(p[1]).take(p[0] as usize));
+        }
+        v.resize(w * h, T_OCEAN);
+        (w, h, v)
+    })
+}
+
 struct Bruit {
     graine: u64,
 }
@@ -475,7 +492,6 @@ impl Monde {
     pub fn generer(largeur: usize, hauteur: usize, graine: u64) -> Monde {
         let alt = Bruit { graine };
         let hum = Bruit { graine: graine.wrapping_add(7_919) };
-        let res = Bruit { graine: graine.wrapping_add(104_729) };
         let tord = Bruit { graine: graine.wrapping_add(15_485_863) };
 
         // Chaque graine tire aussi la « forme » du monde : taille des
@@ -529,7 +545,58 @@ impl Monde {
                 cases[y * largeur + x].terrain = terrain;
             }
         }
+        Monde::depuis_terrains(largeur, hauteur, graine, cases)
+    }
 
+    /// Carte du monde reel (src/monde_reel.bin, fabrique par
+    /// outils/carte-monde) : vrais continents en projection Equal Earth,
+    /// surfaces respectees. La hauteur se deduit de la largeur pour garder
+    /// les vraies proportions. La graine ne change que les gisements.
+    pub fn generer_monde_reel(largeur: usize, graine: u64) -> Monde {
+        let (rw, rh, raster) = monde_reel();
+        let (rw, rh) = (*rw, *rh);
+        let hauteur = ((largeur as f64 * rh as f64 / rw as f64 / 0.866).round() as usize).max(10);
+        let (lw, lh) = (largeur as f64 + 0.5, (hauteur - 1) as f64 * 0.866 + 1.0);
+        let lire = |u: f64, v: f64| -> u8 {
+            let c = ((u * rw as f64) as isize).clamp(0, rw as isize - 1) as usize;
+            let r = ((v * rh as f64) as isize).clamp(0, rh as isize - 1) as usize;
+            raster[r * rw + c]
+        };
+        let mut cases = vec![Case::default(); largeur * hauteur];
+        for y in 0..hauteur {
+            for x in 0..largeur {
+                let px = x as f64 + if y % 2 == 1 { 0.5 } else { 0.0 };
+                let py = y as f64 * 0.866;
+                // Echantillons repartis sur l'hexagone : terre si au moins
+                // 40 % de l'hexagone est emerge ; terrain le plus present
+                // (les chaines de montagnes, fines, comptent davantage).
+                let mut compte = [0usize; 8];
+                const N: usize = 5;
+                for i in 0..N {
+                    for j in 0..N {
+                        let ox = (i as f64 + 0.5) / N as f64 - 0.5;
+                        let oy = ((j as f64 + 0.5) / N as f64 - 0.5) * 0.866;
+                        let t = lire((px + 0.5 + ox) / lw, (py + 0.5 + oy) / lh) as usize;
+                        compte[t.min(7)] += 1;
+                    }
+                }
+                let terre: usize = compte[2..].iter().sum();
+                cases[y * largeur + x].terrain = if terre * 10 < N * N * 4 {
+                    T_OCEAN
+                } else if compte[T_MONTAGNE as usize] * 10 >= terre * 3 {
+                    T_MONTAGNE
+                } else {
+                    (2..8).max_by_key(|&t| compte[t]).unwrap_or(2) as u8
+                };
+            }
+        }
+        Monde::depuis_terrains(largeur, hauteur, graine, cases)
+    }
+
+    /// Fin de la generation, commune aux deux cartes : mer cotiere,
+    /// gisements, crateres.
+    fn depuis_terrains(largeur: usize, hauteur: usize, graine: u64, cases: Vec<Case>) -> Monde {
+        let res = Bruit { graine: graine.wrapping_add(104_729) };
         let mut monde = Monde {
             largeur,
             hauteur,
@@ -615,5 +682,61 @@ impl Monde {
         }
 
         monde
+    }
+}
+
+#[cfg(test)]
+mod tests_monde_reel {
+    use super::*;
+
+    /// Case la plus proche d'un point (longitude, latitude), via la meme
+    /// projection Equal Earth que outils/carte-monde.
+    fn case_de(m: &Monde, lon: f64, lat: f64) -> usize {
+        let (a1, a2, a3, a4, mm) = (1.340264, -0.081106, 0.000893, 0.003796, 3f64.sqrt() / 2.0);
+        let proj = |lon: f64, lat: f64| {
+            let t = (mm * lat.to_radians().sin()).asin();
+            let (t2, t6) = (t * t, t.powi(6));
+            let x = lon.to_radians() * t.cos() / (mm * (a1 + 3.0 * a2 * t2 + t6 * (7.0 * a3 + 9.0 * a4 * t2)));
+            (x, t * (a1 + a2 * t2 + t6 * (a3 + a4 * t2)))
+        };
+        let xmax = proj(180.0, 0.0).0;
+        let (yn, ys) = (proj(0.0, 83.0).1, proj(0.0, -56.0).1);
+        let (lp, hp) = (2.0 * xmax * 1.04, (yn - ys) + 0.04 * 2.0 * xmax);
+        let (x, y) = proj(lon, lat);
+        let u = (x + xmax * 1.04) / lp;
+        let v = (yn + 0.04 * xmax - y) / hp;
+        let py = v * ((m.hauteur - 1) as f64 * 0.866 + 1.0) - 0.5;
+        let row = (py / 0.866).round().clamp(0.0, (m.hauteur - 1) as f64) as usize;
+        let px = u * (m.largeur as f64 + 0.5) - 0.5 - if row % 2 == 1 { 0.5 } else { 0.0 };
+        row * m.largeur + px.round().clamp(0.0, (m.largeur - 1) as f64) as usize
+    }
+
+    #[test]
+    fn la_carte_du_monde_est_reconnaissable() {
+        let m = Monde::generer_monde_reel(256, 42);
+        assert_eq!(m.largeur, 256);
+        // Vraies proportions : environ 2,2 fois plus large que haute.
+        let ratio = m.largeur as f64 / (m.hauteur as f64 * 0.866);
+        assert!((2.0..2.5).contains(&ratio), "proportions {} x {}", m.largeur, m.hauteur);
+        let terres = m.cases.iter().filter(|c| est_terre(c.terrain)).count() as f64 / m.cases.len() as f64;
+        assert!((0.15..0.32).contains(&terres), "part de terres {terres}");
+        let t = |lon, lat| m.cases[case_de(&m, lon, lat)].terrain;
+        assert_eq!(t(10.0, 23.0), T_DESERT, "Sahara");
+        assert_eq!(t(-62.0, -5.0), T_FORET, "Amazonie");
+        assert_eq!(t(86.0, 28.0), T_MONTAGNE, "Himalaya");
+        assert!(!est_terre(t(-40.0, 30.0)), "Atlantique");
+        assert!(!est_terre(t(-150.0, 0.0)), "Pacifique");
+        assert!(est_terre(t(2.5, 47.0)), "France");
+        assert!(est_terre(t(134.0, -25.0)), "Australie");
+        assert!(est_terre(t(-100.0, 40.0)), "Etats-Unis");
+    }
+
+    #[test]
+    fn la_taille_suit_la_largeur() {
+        for l in [60, 128, 300] {
+            let m = Monde::generer_monde_reel(l, 1);
+            assert_eq!(m.cases.len(), m.largeur * m.hauteur);
+            assert!(m.cases.iter().filter(|c| est_terre(c.terrain)).count() > l * 2);
+        }
     }
 }

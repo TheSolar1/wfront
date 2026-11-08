@@ -8,7 +8,7 @@ A multiplayer strategy and war game in the browser: you lead a country, grow it,
 
 | | |
 |---|---|
-| **Map** | Randomly generated hexagonal world (128 × 80 by default): continent size, sea level, coasts and climate change with every world. Oceans, coasts, plains, forests, hills, mountains, deserts, tundra, meteorite craters. 3D relief, fog of war, three modes (political, terrain, resources). |
+| **Map** | The **real world map** in hexagons, with real proportions (Equal Earth projection: true surface areas; latitudes 56° S to 83° N, no Antarctica). Real mountain ranges, deserts, forests and tundra (game approximation). Optionally a randomly generated world (`"carte": "aleatoire"`). Oceans, coasts, plains, forests, hills, mountains, deserts, tundra, meteorite craters. 3D relief, fog of war, three modes (political, terrain, resources). |
 | **Resources** | Credits, food, metal, oil, uranium, rare earths, plus electricity, population, influence and research. Each region has its own deposits. |
 | **Troops (OpenFront style)** | A troop pool that refills on its own (maximum depends on territory, cities, the capital, barracks). **Right-click** a tile: send an adjustable share of your troops, which advance tile by tile toward it (neutral land: the country expands; enemy at war: invasion against its terrain, forts and troops; distant coast: landing from a shipyard). **Left-click**: build. |
 | **Ores and crafting** | 4 ores (common, rare, radioactive, legendary), extracted by quarries and mines. The refinery turns them into metal, rare earths, uranium, or any of the **118 elements** of the periodic table (legendary ones decay quickly). The factory assembles **105 products** across 8 tiers, from steel to the **black hole**. |
@@ -40,7 +40,9 @@ Administration (world announcement, nation removal, `devTout`) only appears and 
 2. Put the public key (32 bytes in base64: `openssl pkey -in "wfront admin.pem" -pubout -outform DER | tail -c 32 | base64`) in `admin_cle_publique` in `config.json`.
 3. Open `/admin` and choose the `.pem` file: the browser signs a server challenge, and the key never leaves the computer. Unlocking lasts 12 h and only applies to the account that obtained it.
 
-`cargo run -- --apercu` prints the map as text, handy for choosing a `graine` (seed).
+`cargo run -- --apercu` prints the map as text, handy for checking a map size or choosing a `graine` (seed).
+
+The world map comes from `src/monde_reel.bin`, built from Natural Earth (public domain) by `outils/carte-monde`: `cd outils/carte-monde && npm install && node generer.js` (add `--apercu monde.ppm` for a picture). Mountain ranges, deserts and forests are listed at the top of `generer.js`.
 
 ## Sign-in: "Sign in with VEX" (`reseau` mode, the default)
 
@@ -145,7 +147,8 @@ The VEX session lasts one hour (`datecra` in `loginc`). A game already open keep
 | `vex_db_fichier` / `vex_db` | — | VEX MySQL access (path to `db.json`, or inline credentials) |
 | `session_duree_s` | `3600` | Same duration as VEX |
 | `verifier_ip`, `verifier_navigateur` | `true` | Same checks as VEX's `verifier_session` |
-| `carte_largeur`, `carte_hauteur`, `graine` | `128`, `80`, `0` | World generation (first launch only). `graine` at 0: random map |
+| `carte` | `monde` | `monde` = real world map, `aleatoire` = invented continents. Used for a new world (first launch, or admin "New map") |
+| `carte_largeur`, `carte_hauteur`, `graine` | `384`, `240`, `0` | Map size. With the world map, only the width counts (the height follows real proportions): 256 is a good size, 128 is coarse (Europe is tiny). `graine` changes deposits, and the whole map with `aleatoire` (0: random) |
 | `vitesse` | `1.0` | Speeds up the whole game (tests) |
 | `protection_heures` | `2` | How long a new country cannot be attacked |
 | `sauvegarde`, `intervalle_sauvegarde_s` | `data/monde.json`, `30` | World file and save frequency |

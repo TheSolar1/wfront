@@ -1,0 +1,10 @@
+{
+  "name": "wfront-carte-monde",
+  "private": true,
+  "description": "Fabrique src/monde_reel.bin (carte du monde reel de WFront) a partir de Natural Earth.",
+  "scripts": { "generer": "node generer.js" },
+  "dependencies": {
+    "topojson-client": "3.1.0",
+    "world-atlas": "2.0.2"
+  }
+}

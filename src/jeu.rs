@@ -29,6 +29,9 @@ pub struct Regles {
     pub protection_s: i64,
     /// Vitesse du jeu : les durees annoncees aux joueurs sont en temps reel.
     pub vitesse: f64,
+    /// Carte du monde reel (true) ou carte aleatoire (false) pour une
+    /// « Nouvelle carte » de l'administration.
+    pub monde_reel: bool,
 }
 
 fn maintenant() -> i64 {
@@ -2467,7 +2470,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             // Les trous noirs sont eternels : ils survivent au nouveau monde,
             // au meme endroit et a la meme taille.
             let trous = std::mem::take(&mut m.trous_noirs);
-            *m = Monde::generer(l, h, graine);
+            *m = if regles.monde_reel { Monde::generer_monde_reel(l, graine) } else { Monde::generer(l, h, graine) };
             m.bots_admin = bots;
             let n = m.cases.len();
             for t in trous.into_iter().filter(|t| t.case < n) {
@@ -3869,7 +3872,7 @@ mod tests_armes {
     /// le centre devient de la mer (cratere).
     #[test]
     fn antimatiere_prend_le_territoire_et_creuse() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(60, 40, 7);
         crate::bots::assurer(&mut m, 1, &regles, 0.0);
         let pid = *m.pays.keys().next().unwrap();
@@ -3884,7 +3887,7 @@ mod tests_armes {
     /// reacteur a fusion fabrique, consomme a la construction.
     #[test]
     fn centrale_fusion_exige_un_reacteur() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(60, 40, 7);
         crate::bots::assurer(&mut m, 1, &regles, 0.0);
         let pid = *m.pays.keys().next().unwrap();
@@ -3903,7 +3906,7 @@ mod tests_armes {
     /// Trou noir : il reste et grossit petit a petit en avalant les terres.
     #[test]
     fn trou_noir_reste_et_grossit() {
-        let regles = Regles { protection_s: 0, vitesse: 1.0 };
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false };
         let mut m = Monde::generer(60, 40, 7);
         crate::bots::assurer(&mut m, 1, &regles, 0.0);
         let pid = *m.pays.keys().next().unwrap();

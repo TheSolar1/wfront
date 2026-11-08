@@ -92,6 +92,10 @@ struct Config {
     /// Seul le detenteur de la cle privee correspondante voit et utilise
     /// l'administration (page /admin). Vide : administration desactivee.
     admin_cle_publique: String,
+    /// "monde" (defaut) : la vraie carte du monde, aux vraies proportions
+    /// (carte_hauteur est alors deduite de carte_largeur). "aleatoire" :
+    /// continents inventes, differents a chaque graine.
+    carte: String,
     carte_largeur: usize,
     carte_hauteur: usize,
     /// Graine de la carte. 0 (defaut) : tiree au hasard a chaque nouveau monde.
@@ -135,6 +139,7 @@ impl Default for Config {
             admin_cle_publique: String::new(),
             admins: Vec::new(),
             invites: true,
+            carte: "monde".into(),
             carte_largeur: 384,
             carte_hauteur: 240,
             graine: 0,
@@ -274,8 +279,18 @@ fn charger_monde(cfg: &Config, racine: &Path) -> monde::Monde {
         }
     }
     let graine = graine_carte(cfg);
-    println!("[monde] generation d'une carte {}x{} (graine {}).", cfg.carte_largeur, cfg.carte_hauteur, graine);
-    monde::Monde::generer(cfg.carte_largeur.clamp(30, 600), cfg.carte_hauteur.clamp(20, 400), graine)
+    let m = nouvelle_carte(cfg, graine);
+    println!("[monde] generation d'une carte {} {}x{} (graine {}).", if cfg.carte == "aleatoire" { "aleatoire" } else { "du monde" }, m.largeur, m.hauteur, graine);
+    m
+}
+
+/// Carte du monde reel, ou aleatoire si config.json le demande.
+fn nouvelle_carte(cfg: &Config, graine: u64) -> monde::Monde {
+    if cfg.carte == "aleatoire" {
+        monde::Monde::generer(cfg.carte_largeur.clamp(30, 600), cfg.carte_hauteur.clamp(20, 400), graine)
+    } else {
+        monde::Monde::generer_monde_reel(cfg.carte_largeur.clamp(60, 600), graine)
+    }
 }
 
 /// Graine de config.json, ou une graine au hasard si elle vaut 0.
@@ -334,6 +349,7 @@ async fn main() {
     let regles = jeu::Regles {
         protection_s: (cfg.protection_heures * 3600.0) as i64,
         vitesse: cfg.vitesse.clamp(0.1, 100.0),
+        monde_reel: cfg.carte != "aleatoire",
     };
     let app: Partage = Arc::new(App {
         cfg: cfg.clone(),
@@ -462,9 +478,9 @@ async fn signal_arret() {
 fn apercu_carte(cfg: &Config) {
     let graine = graine_carte(cfg);
     println!("graine {}", graine);
-    let m = monde::Monde::generer(cfg.carte_largeur, cfg.carte_hauteur, graine);
+    let m = nouvelle_carte(cfg, graine);
     let mut compte = [0usize; 9];
-    let mut depots = [0usize; 6];
+    let mut depots = [0usize; defs::DEPOTS.len()];
     for y in 0..m.hauteur {
         let mut ligne = String::new();
         if y % 2 == 1 {

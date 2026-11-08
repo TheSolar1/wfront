@@ -1276,8 +1276,10 @@ document.querySelectorAll('[data-mode-carte]').forEach(b => b.addEventListener('
   document.querySelectorAll('[data-mode-carte]').forEach(x => x.classList.toggle('actif', x === b));
   S.carte?.setMode(b.dataset.modeCarte);
 }));
-$('#wf-recentrer').addEventListener('click', () => { if (S.moi) S.carte.centrerSur(S.moi.capitale, 30); else S.carte.centrerSur(Math.floor(S.g.n / 2), 70); });
-$('#wf-vue-globale').addEventListener('click', () => S.carte.centrerSur(Math.floor(S.g.n / 2) + Math.floor(S.g.l / 2), 95));
+// Case au centre de la carte (ligne du milieu, colonne du milieu).
+const caseCentre = () => Math.floor(S.g.h / 2) * S.g.l + Math.floor(S.g.l / 2);
+$('#wf-recentrer').addEventListener('click', () => { if (S.moi) S.carte.centrerSur(S.moi.capitale, 30); else S.carte.centrerSur(caseCentre(), 70); });
+$('#wf-vue-globale').addEventListener('click', () => S.carte.centrerSur(caseCentre(), S.carte.dMax * 0.9));
 
 // Horloge + rafraichissement leger (comptes a rebours)
 setInterval(() => {

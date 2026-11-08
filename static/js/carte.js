@@ -13,6 +13,18 @@ import { geometrieBatiment, materielBatiments } from './modeles.js';
 const MOBILE = matchMedia('(pointer: coarse)').matches || window.innerWidth < 760;
 
 const R = 1;                       // rayon d'un hexagone
+// Sensibilite de la camera (plus petit = plus lent). glisser = 1 : la
+// carte suit exactement la souris.
+const SENSI = {
+  glisser: 1,
+  rotation: 0.0028,        // clic droit + glisser (avant : 0.006)
+  inclinaison: 0.0018,     // (avant : 0.004)
+  zoom: 0.0006,            // molette (avant : 0.0012)
+  zoomMax: 0.12,           // par cran de molette (avant : 0.25)
+  clavier: 0.45,           // ZQSD / fleches (avant : 0.9)
+  rotationClavier: 0.7,    // E / R (avant : 1.2)
+  zoomClavier: 0.6,        // + / - (avant : 1)
+};
 const LX = Math.sqrt(3) * R;       // pas horizontal
 const LZ = 1.5 * R;                // pas vertical
 // Altitude de base et rugosite par terrain (ocean, mer, plaine, foret,
@@ -137,7 +149,7 @@ export class Carte {
     this.renderer.shadowMap.type = MOBILE ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
     this.el.appendChild(this.renderer.domElement);
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(40, 1, 0.3, 700);
+    this.camera = new THREE.PerspectiveCamera(40, 1, 0.3, 1400);
     const sombre = this.theme === 'dark';
     const ciel = sombre ? 0x0f1418 : 0xcfdbe6;
     this.scene.background = new THREE.Color(ciel);
@@ -177,6 +189,8 @@ export class Carte {
     this.scene.add(abysses);
 
     this.cam = { x: this.largeurMonde / 2, z: this.hauteurMonde / 2, d: 70, lacet: 0, tangage: 0.9 };
+    // Recul maximal : assez pour voir toute la carte du monde d'un coup.
+    this.dMax = Math.min(320, Math.max(110, this.largeurMonde * 0.75));
     this.redimensionner();
     new ResizeObserver(() => this.redimensionner()).observe(this.el);
 
@@ -1309,19 +1323,21 @@ export class Carte {
         // glisser ensemble vers le haut / le bas = incliner.
         const [a, b] = [...pointeurs.values()];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
-        this.cam.d = Math.min(110, Math.max(7, bas.cam.d * bas.pinch / Math.max(1, d)));
+        this.cam.d = Math.min(this.dMax, Math.max(7, bas.cam.d * bas.pinch / Math.max(1, d)));
         const angle = Math.atan2(b.y - a.y, b.x - a.x);
         this.cam.lacet = bas.cam.lacet - (angle - bas.angle);
         const my = (a.y + b.y) / 2;
-        this.cam.tangage = Math.min(1.45, Math.max(0.3, bas.cam.tangage + (my - bas.milieuY) * 0.004));
+        this.cam.tangage = Math.min(1.45, Math.max(0.3, bas.cam.tangage + (my - bas.milieuY) * SENSI.inclinaison));
         this.anim = null;
         return;
       }
       if (bas.bouton === 2 || e.shiftKey) {
-        this.cam.lacet = bas.cam.lacet - dx * 0.006;
-        this.cam.tangage = Math.min(1.45, Math.max(0.3, bas.cam.tangage + dy * 0.004));
+        this.cam.lacet = bas.cam.lacet - dx * SENSI.rotation;
+        this.cam.tangage = Math.min(1.45, Math.max(0.3, bas.cam.tangage + dy * SENSI.inclinaison));
       } else {
-        const k = this.cam.d * 0.0019;
+        // La carte suit la souris (le point saisi reste sous le curseur),
+        // au lieu de filer deux fois plus vite qu'elle.
+        const k = 2 * this.cam.d * Math.tan(this.camera.fov * Math.PI / 360) / Math.max(1, cv.clientHeight) * SENSI.glisser;
         const c = Math.cos(this.cam.lacet), s = Math.sin(this.cam.lacet);
         this.cam.x = bas.cam.x - (dx * c + dy * s / Math.sin(this.cam.tangage)) * k;
         this.cam.z = bas.cam.z - (-dx * s + dy * c / Math.sin(this.cam.tangage)) * k;
@@ -1351,7 +1367,7 @@ export class Carte {
     cv.addEventListener('wheel', e => {
       e.preventDefault();
       this.anim = null;
-      this.cam.d = Math.min(110, Math.max(7, this.cam.d * (1 + Math.sign(e.deltaY) * Math.min(0.25, Math.abs(e.deltaY) * 0.0012))));
+      this.cam.d = Math.min(this.dMax, Math.max(7, this.cam.d * (1 + Math.sign(e.deltaY) * Math.min(SENSI.zoomMax, Math.abs(e.deltaY) * SENSI.zoom))));
     }, { passive: false });
     cv.addEventListener('dblclick', e => {
       const i = this.caseSous(e.clientX, e.clientY);
@@ -1374,7 +1390,7 @@ export class Carte {
   clavier(dt) {
     const t = this.touches;
     if (!t.size) return;
-    const v = this.cam.d * 0.9 * dt;
+    const v = this.cam.d * SENSI.clavier * dt;
     let fx = 0, fz = 0;
     if (t.has('z') || t.has('w') || t.has('arrowup')) fz -= 1;
     if (t.has('s') || t.has('arrowdown')) fz += 1;
@@ -1387,10 +1403,10 @@ export class Carte {
       this.borner();
       this.anim = null;
     }
-    if (t.has('e')) this.cam.lacet -= 1.2 * dt;
-    if (t.has('r')) this.cam.lacet += 1.2 * dt;
-    if (t.has('+') || t.has('=')) this.cam.d = Math.max(7, this.cam.d * (1 - dt));
-    if (t.has('-') || t.has('6')) this.cam.d = Math.min(110, this.cam.d * (1 + dt));
+    if (t.has('e')) this.cam.lacet -= SENSI.rotationClavier * dt;
+    if (t.has('r')) this.cam.lacet += SENSI.rotationClavier * dt;
+    if (t.has('+') || t.has('=')) this.cam.d = Math.max(7, this.cam.d * (1 - SENSI.zoomClavier * dt));
+    if (t.has('-') || t.has('6')) this.cam.d = Math.min(this.dMax, this.cam.d * (1 + SENSI.zoomClavier * dt));
   }
 
   caseSous(cx, cy) {
@@ -1468,6 +1484,8 @@ export class Carte {
     const cp = Math.cos(c.tangage), sp = Math.sin(c.tangage);
     this.camera.position.set(c.x + Math.sin(c.lacet) * cp * c.d, sp * c.d, c.z + Math.cos(c.lacet) * cp * c.d);
     this.camera.lookAt(c.x, 0, c.z);
+    // Brouillard d'horizon proportionnel au recul (vue du monde entier).
+    if (this.scene.fog) { this.scene.fog.near = Math.max(120, c.d * 1.4); this.scene.fog.far = Math.max(280, c.d * 3); }
 
     this.groupes.labels.visible = c.d > 20;
     this.groupes.labels.children.forEach(s => (s.material.opacity = Math.min(1, (c.d - 20) / 12)));
