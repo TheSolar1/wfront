@@ -115,11 +115,13 @@ export class Carte {
 
   // ── Scene ────────────────────────────────────────────────────────
   initScene() {
-    // Sur mobile : pas de lissage, résolution limitée, ombres simples.
-    this.renderer = new THREE.WebGLRenderer({ antialias: !MOBILE, powerPreference: 'high-performance' });
-    // Resolution : ajustee en direct pour tenir au moins 30 images/s.
-    this.ratioMax = Math.min(window.devicePixelRatio, MOBILE ? 1 : 1.5);
-    this.ratio = this.ratioMax;
+    // Lissage des bords partout (MSAA : presque gratuit sur les GPU de
+    // telephone, qui travaillent par tuiles). Pas d'ombres sur mobile.
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    // Resolution : ajustee en direct pour tenir au moins 30 images/s. Sur
+    // mobile on part de 1 et on monte jusqu'a 1,5 si le telephone suit.
+    this.ratioMax = Math.min(window.devicePixelRatio, 1.5);
+    this.ratio = Math.min(this.ratioMax, MOBILE ? 1 : 1.5);
     this.renderer.setPixelRatio(this.ratio);
     // Pas d'ombres sur mobile ; sur ordinateur, seulement autour de la vue.
     this.renderer.shadowMap.enabled = !MOBILE;
@@ -279,12 +281,13 @@ varying float vHaut;`)
         .replace('#include <color_fragment>', `#include <color_fragment>
 if (vHaut > -0.05) {
   diffuseColor.rgb = mix(diffuseColor.rgb, vTeinte.rgb, vTeinte.a);
+  // Brouillard : on garde les vraies couleurs, juste ternies (avant, tout
+  // le monde devenait gris uniforme). Le fond de la mer n'est pas voile :
+  // sinon il ne raccordait plus avec le fond autour de la carte.
   if (vBrume > 0.5) {
     float l = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
-    diffuseColor.rgb = mix(mix(diffuseColor.rgb, vec3(l), 0.9), uVoile, 0.9);
+    diffuseColor.rgb = mix(mix(diffuseColor.rgb, vec3(l), 0.5), uVoile, 0.28);
   }
-} else if (vBrume > 0.5) {
-  diffuseColor.rgb = mix(diffuseColor.rgb, uVoile, 0.85);
 }`);
     };
     this.matSol.customProgramCacheKey = () => 'sol-wfront';
@@ -296,7 +299,7 @@ if (vHaut > -0.05) {
 
     // ── Carte lointaine : tout le monde, allegee (vue d'ensemble) ──
     const surface = (this.largeurMonde + LX * 3) * (this.hauteurMonde + LZ * 3);
-    this.pasLoin = Math.max(0.3, Math.sqrt(surface / (MOBILE ? 1.5e5 : 4e5)));
+    this.pasLoin = Math.max(0.3, Math.sqrt(surface / (MOBILE ? 2.5e5 : 4e5)));
     this.reliefLoin = new THREE.Mesh(new THREE.BufferGeometry(), this.matLoin);
     this.reliefLoin.receiveShadow = !MOBILE;
     this.reliefLoin.visible = false;
