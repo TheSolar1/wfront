@@ -910,3 +910,19 @@ body[data-mode="dev"] .wf-apps-vex, body[data-mode="dev"] .wf-lien-vex { display
 .wf-guide-but > .ico { width: 26px; height: 26px; color: var(--accent); flex: none; }
 .wf-guide-but > div { flex: 1; min-width: 200px; }
 .wf-guide-but p { margin: 4px 0 0; }
+
+/* Gisements dans la liste des pays */
+.wf-gis-ligne { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
+.wf-gis { display: inline-flex; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 700; color: var(--text-dim); }
+.wf-gis .ico { width: 12px; height: 12px; }
+.wf-gis.g0 .ico { color: #334155; } [data-theme="dark"] .wf-gis.g0 .ico { color: #cbd5e1; }
+.wf-gis.g1 .ico { color: #94a3b8; }
+.wf-gis.g2 .ico { color: #22c55e; }
+.wf-gis.g3 .ico { color: #a855f7; }
+.wf-gis.vide { font-weight: 500; font-style: italic; }
+.wf-pays-liste .wf-pays-choix.actif .wf-gis, .wf-pays-liste .wf-pays-choix.actif .wf-gis .ico { color: #fff; }
+.wf-pays-choisi > span { line-height: 1.5; }
+.wf-pays-choisi .wf-gis { font-size: 12.5px; font-weight: 600; }
+.wf-pays-outils { display: flex; gap: 8px; flex-wrap: wrap; }
+.wf-pays-outils input { flex: 1; min-width: 180px; }
+.wf-pays-outils select { flex: none; }

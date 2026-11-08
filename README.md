@@ -26,12 +26,13 @@ Computer-controlled nations can fill the game (`"bots"` in `config.json`, 0 for 
 
 ## Real countries (world map)
 
-On the world map, the **real countries** are playable: the independent states plus Taiwan, Palestine, Kosovo and Western Sahara, as long as they cover at least **10 hexes** (`MIN_CASES` in `monde.rs`; about 130 countries at 500 wide). Smaller countries (micro-states, small islands, and at this size also Belgium, the Netherlands, Switzerland…) are not playable: their land is free land that neighbours can annex. Overseas territories belong to the country that governs them (French Guiana, Réunion, New Caledonia → France; Greenland → Denmark; Puerto Rico → United States; Falklands → United Kingdom…).
+On the world map, the **real countries** are playable: the independent states plus Taiwan, Palestine, Kosovo and Western Sahara, as long as they cover at least **30 hexes** (`MIN_CASES` in `monde.rs`; 122 countries at 708 wide). Smaller countries (micro-states, small islands, Belgium, the Netherlands, Switzerland…) are not playable: their land is given to the **nearest playable country**, so there is no land without a country. Overseas territories belong to the country that governs them (French Guiana, Réunion, New Caledonia → France; Greenland → Denmark; Puerto Rico → United States; Falklands → United Kingdom…).
 
 - When joining, a player **chooses a country**: they get its whole territory (overseas included) and their capital is placed at the real capital. A country already led by another player cannot be taken.
 - **No computer nations**: the world is played between players only, as a persistent server over weeks.
 - If a country is wiped out, its player can take another free country (or the free part of a country).
 - On the map, thin lines show the real borders; hovering a hex shows its real country and whether it is free.
+- **Real resources**: each country gets the deposits it really has (`src/ressources_pays.json`): oil in Saudi Arabia, Russia, Venezuela, the Gulf…; common ore (iron, coal, copper) in Australia, Brazil, China…; radioactive ore (uranium) in Kazakhstan, Canada, Australia, Namibia…; rare ore (rare earths, gold, cobalt, lithium) in China, Congo, South Africa… The number of deposits grows with the square root of the country's size, so small rich countries stay rich without giants getting hundreds. An **oil well** built on an oil deposit sells its oil: +25 credits/min per level. The country list shows each country's deposits and can be sorted by size or by resource.
 - **Getting started**: after choosing a country, a step-by-step tutorial shows the interface (resources, building, troops, menu). An **objectives** card on the map states the goal (become the world's first power in the overall ranking) and the next step to take (build, research, expand, recruit, find an ally, reach the top 10). The tutorial can be replayed from the Guide.
 
 Country borders and names come from Natural Earth and the `world-countries` package; capitals are listed in `outils/carte-monde/capitales.js`.
@@ -160,7 +161,7 @@ The VEX session lasts one hour (`datecra` in `loginc`). A game already open keep
 | `session_duree_s` | `3600` | Same duration as VEX |
 | `verifier_ip`, `verifier_navigateur` | `true` | Same checks as VEX's `verifier_session` |
 | `carte` | `monde` | `monde` = real world map where each player takes a real country (no computer nations), `aleatoire` = invented continents with bots. Used for a new world (first launch, or admin "New map") |
-| `largeur_monde` | `500` | Width of the world map (500 × 262 hexes); the height follows real proportions |
+| `largeur_monde` | `708` | Width of the world map (708 × 370 = 262,000 hexes); the height follows real proportions |
 | `carte_largeur`, `carte_hauteur`, `graine` | `384`, `240`, `0` | Size of the random map (`aleatoire`). `graine` changes deposits, and the whole map with `aleatoire` (0: random) |
 | `vitesse` | `1.0` | Speeds up the whole game (tests) |
 | `protection_heures` | `2` | How long a new country cannot be attacked |

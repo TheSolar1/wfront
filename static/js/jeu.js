@@ -109,7 +109,7 @@ function recevoirInit(m) {
   // Carte du monde : vrais pays jouables (index k -> S.reel.pays[k - 1]).
   S.reel = null;
   if (m.monde_reel && S.carte.regions) {
-    const taille = new Array(m.monde_reel.pays.length + 1).fill(0);
+    const taille = new Array(256).fill(0); // index = numero du pays (0 a 255)
     for (const r of S.carte.regions) taille[r]++;
     const pays = m.monde_reel.pays.map(p => ({ ...p, cases: taille[p.k] }));
     S.reel = { pays, parK: new Map(pays.map(p => [p.k, p])), regions: S.carte.regions };
@@ -1071,19 +1071,29 @@ function dirigeant(k) {
   return null;
 }
 
+/** Gisements d'un vrai pays (petrole, minerai commun, radioactif, rare), en icones. */
+const GISEMENTS = [['oil-well', 'pétrole'], ['mountain', 'minerai commun'], ['radiation', 'minerai radioactif'], ['gem', 'minerai rare']];
+function gisementsHtml(p, long = false) {
+  const g = p.gisements || [0, 0, 0, 0];
+  const l = GISEMENTS.map(([ic, nom], k) => g[k] ? `<span class="wf-gis g${k}" title="${g[k]} gisement${g[k] > 1 ? 's' : ''} de ${nom}">${ico(ic)}${long ? `${g[k]} ${nom}` : g[k]}</span>` : '').join('');
+  return l || `<span class="wf-gis vide">${long ? 'Aucun gisement : misez sur les carrières et le commerce' : 'aucun gisement'}</span>`;
+}
+
 /** Carte du monde : choix du vrai pays a diriger (fondation ou refondation). */
 function ouvrirChoixPays(refonder = false) {
   const d = S.defs;
   const couleur = d.couleurs[Math.floor(Math.random() * d.couleurs.length)];
   const liste = [...S.reel.pays].sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
   const libres = liste.filter(p => !dirigeant(p.k)).length;
-  modale(`<div class="wf-modale-tete">${ico('earth-europe')}<div><h2>${refonder ? 'Reprendre un pays' : 'Choisissez votre pays'}</h2><p>Vous dirigez un vrai pays et tout son territoire, outre-mer compris, face aux autres joueurs. Un pays déjà dirigé ne peut pas être pris. ${libres} pays libres sur ${liste.length} (les pays de moins de 10 cases ne sont pas jouables : leurs terres sont libres).</p></div></div>
+  modale(`<div class="wf-modale-tete">${ico('earth-europe')}<div><h2>${refonder ? 'Reprendre un pays' : 'Choisissez votre pays'}</h2><p>Vous dirigez un vrai pays et tout son territoire, outre-mer compris, face aux autres joueurs. Un pays déjà dirigé ne peut pas être pris. ${libres} pays libres sur ${liste.length}. Les ressources sont celles du vrai pays : pétrole, minerai commun (fer, charbon, cuivre), radioactif (uranium) et rare (terres rares, or, cobalt, lithium).</p></div></div>
     <div class="wf-form">
-      <input id="f-recherche" placeholder="Rechercher un pays (ex. : France, Japon…)" autocomplete="off">
+      <div class="wf-pays-outils"><input id="f-recherche" placeholder="Rechercher un pays (ex. : France, Japon…)" autocomplete="off">
+        <select id="f-tri" aria-label="Trier les pays"><option value="nom">Trier par nom</option><option value="cases">Les plus grands</option><option value="0">Le plus de pétrole</option><option value="1">Le plus de minerai commun</option><option value="2">Le plus d'uranium</option><option value="3">Le plus de minerai rare</option></select></div>
       <div class="wf-pays-liste" id="f-liste">${liste.map(p => {
         const chef = dirigeant(p.k);
         return `<button class="wf-pays-choix ${chef ? 'pris' : ''}" data-act="choisir_pays" data-k="${p.k}" data-nom="${esc(p.nom.toLowerCase())}" ${chef ? 'disabled' : ''}>
-          <b>${esc(p.nom)}</b><small>${chef ? `Dirigé par ${esc(chef.joueur)}` : `${p.cases} case${p.cases > 1 ? 's' : ''}`}</small></button>`;
+          <b>${esc(p.nom)}</b><small>${chef ? `Dirigé par ${esc(chef.joueur)}` : `${p.cases} cases`}</small>
+          <span class="wf-gis-ligne">${gisementsHtml(p)}</span></button>`;
       }).join('')}</div>
       <input type="hidden" id="f-pays" value="">
       <p class="wf-pays-choisi" id="f-choisi">Aucun pays choisi.</p>
@@ -1100,6 +1110,16 @@ function ouvrirChoixPays(refonder = false) {
     </div>
     <div class="wf-boutons fin">${refonder ? '<button class="wf-btn secondaire" data-act="fermer_modale">Plus tard</button>' : `<button class="wf-btn secondaire" data-act="observer">${ico('eye')} Observer d'abord</button>`}
     <button class="wf-btn" data-act="${refonder ? 'refonder' : 'rejoindre'}">${ico('flag')} Prendre ce pays</button></div>`, { large: true });
+  $('#f-tri').addEventListener('change', e => {
+    const t = e.target.value, l = $('#f-liste');
+    const cle = p => t === 'nom' ? 0 : t === 'cases' ? -p.cases : -(p.gisements?.[+t] || 0);
+    const tries = [...l.children].sort((a, b) => {
+      const pa = S.reel.parK.get(+a.dataset.k), pb = S.reel.parK.get(+b.dataset.k);
+      return cle(pa) - cle(pb) || pa.nom.localeCompare(pb.nom, 'fr');
+    });
+    tries.forEach(b => l.appendChild(b));
+    l.scrollTop = 0;
+  });
   $('#f-recherche').addEventListener('input', e => {
     const q = e.target.value.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
     document.querySelectorAll('.wf-pays-choix').forEach(b => {
@@ -1193,7 +1213,7 @@ const ACTIONS = {
     el.classList.add('actif');
     $('#f-pays').value = d.k;
     const p = S.reel.parK.get(+d.k);
-    $('#f-choisi').innerHTML = `${ico('flag')} <b>${esc(p.nom)}</b> — ${p.cases} case${p.cases > 1 ? 's' : ''}, capitale et tout le territoire.`;
+    $('#f-choisi').innerHTML = `${ico('flag')} <span><b>${esc(p.nom)}</b> : ${p.cases} cases, capitale et tout le territoire.<br><span class="wf-gis-ligne">${gisementsHtml(p, true)}</span></span>`;
     if (p.capitale != null) S.carte.centrerSur(p.capitale, 40);
   },
   profil: () => agir('profil', { devise: val('profil-devise'), couleur: val('profil-couleur'), embleme: val('profil-embleme') }),
