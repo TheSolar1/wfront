@@ -2547,7 +2547,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             return Err("Votre nation existe encore.".into());
         }
         if m.monde_reel {
-            let k = u(cmd, "pays_reel").filter(|&k| k >= 1 && k as usize <= crate::monde::pays_reels().len()).ok_or("Choisissez un pays.")? as u8;
+            let k = u(cmd, "pays_reel").filter(|&k| k >= 1 && k <= 255 && m.pays_reel_jouable(k as u8)).ok_or("Choisissez un pays (les pays de moins de 10 cases ne sont pas jouables).")? as u8;
             installer_pays_reel(m, pid, k, regles)?;
             let p = m.pays.get_mut(&pid).unwrap();
             p.nom = crate::monde::pays_reels()[k as usize - 1].nom.clone();
@@ -3651,7 +3651,7 @@ fn rejoindre(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Result<
     // Carte du monde : on choisit un vrai pays libre, dont la nation prend
     // le nom.
     let reel = if m.monde_reel {
-        let k = u(cmd, "pays_reel").filter(|&k| k >= 1 && k as usize <= crate::monde::pays_reels().len()).ok_or("Choisissez un pays.")? as u8;
+        let k = u(cmd, "pays_reel").filter(|&k| k >= 1 && k <= 255 && m.pays_reel_jouable(k as u8)).ok_or("Choisissez un pays (les pays de moins de 10 cases ne sont pas jouables).")? as u8;
         if let Some(autre) = pays_reel_occupe(m, k) {
             return Err(format!("{} est déjà dirigé par {}.", crate::monde::pays_reels()[k as usize - 1].nom, m.pays[&autre].joueur));
         }

@@ -111,7 +111,8 @@ function recevoirInit(m) {
   if (m.monde_reel && S.carte.regions) {
     const taille = new Array(m.monde_reel.pays.length + 1).fill(0);
     for (const r of S.carte.regions) taille[r]++;
-    S.reel = { pays: m.monde_reel.pays.map(p => ({ ...p, cases: taille[p.k] })), regions: S.carte.regions };
+    const pays = m.monde_reel.pays.map(p => ({ ...p, cases: taille[p.k] }));
+    S.reel = { pays, parK: new Map(pays.map(p => [p.k, p])), regions: S.carte.regions };
   }
   $('#wf-chargement').classList.add('fini');
   construireMenu();
@@ -173,9 +174,12 @@ function recevoirEtat(e) {
   majMenu();
   majInspecteur();
   majAlertes();
+  majObjectifs();
   majPanneau(false);
   if (premier) {
     if (S.moi) S.carte.centrerSur(S.moi.capitale, 30);
+    // Joueur deja installe qui n'a jamais vu le tutoriel.
+    if (S.moi && !S.moi.elimine && !tutoFait()) setTimeout(() => lancerTuto(), 1500);
     else if (!sessionStorage.getItem('wf-fondation-vue')) ouvrirFondation();
   }
   if (S.moi && S.moi.elimine && (!avant || !avant.elimine)) ouvrirAneantie();
@@ -223,9 +227,9 @@ function majBarre() {
 const MENU = [
   // Construire : clic gauche sur une case. Diplomatie : clic sur un pays.
   // Recherche : plans au marché. Journal : notifications.
-  ['carte', 'Carte du monde', 'earth-europe'], ['pays', 'Mon pays', 'flag'], ['fabrication', 'Fabrication', 'gears'],
-  ['armee', 'Armées', 'person-military-rifle'], ['blocs', 'Blocs & alliances', 'people-group'], ['marche', 'Marché mondial', 'scale-balanced'],
-  ['classement', 'Classements', 'ranking-star'], ['chat', 'Messagerie', 'comments'], ['aide', 'Guide', 'circle-question'],
+  ['carte', 'Carte du monde', 'earth-europe'], ['pays', 'Mon pays', 'landmark-flag'], ['fabrication', 'Usines', 'industry'],
+  ['armee', 'Armées', 'person-military-rifle'], ['blocs', 'Alliances', 'handshake'], ['marche', 'Marché', 'store'],
+  ['classement', 'Classement', 'trophy'], ['chat', 'Messages', 'comments'], ['aide', 'Guide', 'book-open'],
 ];
 
 function construireMenu() {
@@ -495,11 +499,12 @@ function survolCarte(i, e) {
     const a = S.armees.find(x => x.id === S.ordre.armee);
     if (a) dist = ` · ${S.g.distance(a.case, i)} cases`;
   }
-  const reel = S.reel && S.reel.regions[i] ? S.reel.pays[S.reel.regions[i] - 1] : null;
+  const reel = S.reel && S.reel.regions[i] ? S.reel.parK.get(S.reel.regions[i]) : null;
   const chef = reel ? dirigeant(reel.k) : null;
   t.innerHTML = `<b>${esc(nomCase(S, i))}</b>${dist}
     ${p ? `<div>${drapeau(p, 16)} ${esc(p.nom)}</div>` : ''}
-    ${reel && (!p || p.pays_reel !== reel.k) ? `<div>${ico('map-location-dot')} ${esc(reel.nom)}${chef ? '' : ' · libre'}</div>` : ''}
+    ${reel && (!p || p.pays_reel !== reel.k) ? `<div>${ico('map-location-dot')} ${esc(reel.nom)}${chef ? '' : ' · pays libre'}</div>` : ''}
+    ${S.reel && !p && !reel && S.carte.terrain[i] >= 2 && S.carte.terrain[i] <= 7 ? `<div>${ico('map-location-dot')} Terre libre : clic droit pour l'annexer</div>` : ''}
     ${b ? `<div>${ico(S.defs.batiments.find(x => x.id === b)?.icone)} ${esc(S.defs.batiments.find(x => x.id === b)?.nom)} ${S.carte.niv[i]}</div>` : ''}
     ${d ? `<div>${ico(S.defs.depots[d].icone)} ${esc(S.defs.depots[d].nom)}</div>` : ''}
     ${S.carte.irr[i] ? `<div class="neg">${ico('radiation')} Zone irradiée</div>` : ''}
@@ -921,6 +926,145 @@ function confirmer(titre, texte, bouton, ok, danger = false) {
     <button class="wf-btn ${danger ? 'danger' : ''}" data-act="modale_ok">${esc(bouton)}</button></div>`);
 }
 
+// ══════════════════════════════════════════════════════════════════
+// Objectifs (le but du jeu, pas a pas)
+// ══════════════════════════════════════════════════════════════════
+const cleJoueur = k => `wf-${k}-${S.moi?.id}-${S.moi?.cree}`;
+function memo(k, v) { try { if (v === undefined) return localStorage.getItem(cleJoueur(k)); localStorage.setItem(cleJoueur(k), v); } catch (x) { return null; } }
+
+/** Rang de mon pays au classement general (1 = premier). */
+function monRang() {
+  const c = (S.classement || []).slice().sort((a, b) => (b.scores?.global || 0) - (a.scores?.global || 0));
+  const k = c.findIndex(x => x.id === S.moi?.id);
+  return { rang: k < 0 ? null : k + 1, total: c.length };
+}
+
+const OBJECTIFS = [
+  { id: 'bat', ico: 'hammer', titre: 'Construisez un bâtiment',
+    aide: 'Clic gauche sur une de vos cases, puis « Construire ». Une ferme nourrit votre population, une carrière donne du minerai.',
+    fait: () => (S.moi.chantiers?.length > 0) || S.carte.bat.some((b, i) => b && b !== 'capitale' && S.carte.proprio[i] === S.moi.id) },
+  { id: 'rech', ico: 'flask', titre: 'Lancez une recherche',
+    aide: 'Menu « Mon pays » → Recherche : choisissez une technologie. Elle débloque bâtiments, unités et bonus.',
+    fait: () => S.moi.recherche != null || (S.moi.techs?.length > 0) },
+  { id: 'terre', ico: 'map-location-dot', titre: 'Agrandissez votre pays',
+    aide: 'Clic droit sur une terre libre à côté de chez vous : vos troupes s\'en emparent, case par case.',
+    fait: () => { const d = +memo('depart') || 0; return d > 0 && (S.moi.bilan?.cases || 0) >= d + 3; } },
+  { id: 'unite', ico: 'person-military-rifle', titre: 'Recrutez des soldats',
+    aide: 'Construisez une caserne, puis clic gauche dessus → « Produire » (infanterie, chars…).',
+    fait: () => (S.moi.productions?.length > 0) || S.carte.bat.some((b, i) => b === 'caserne' && S.carte.proprio[i] === S.moi.id) && S.armees.filter(a => a.proprio === S.moi.id).length > 1 },
+  { id: 'diplo', ico: 'handshake', titre: 'Trouvez un allié',
+    aide: 'Cliquez sur un autre pays : proposez-lui un pacte de non-agression, ou rejoignez un bloc (menu « Alliances »).',
+    fait: () => S.moi.bloc != null || Object.values(S.relations || {}).some(r => String(r.etat).toLowerCase() === 'pna') },
+  { id: 'top', ico: 'trophy', titre: 'Entrez dans le top 10 mondial',
+    aide: 'Le classement général compte l\'économie, l\'armée, le territoire, la technologie et la diplomatie.',
+    fait: () => { const r = monRang(); return r.rang != null && r.total >= 2 && r.rang <= 10; } },
+];
+
+function majObjectifs() {
+  const el = $('#wf-objectifs');
+  if (!el) return;
+  if (!S.moi || S.moi.elimine) { el.hidden = true; return; }
+  // Taille de depart, pour l'objectif « agrandir ».
+  if (!memo('depart') && S.moi.bilan?.cases) memo('depart', String(S.moi.bilan.cases));
+  const faits = new Set((memo('objectifs') || '').split(',').filter(Boolean));
+  let change = false;
+  for (const o of OBJECTIFS) {
+    if (!faits.has(o.id)) {
+      try { if (o.fait()) { faits.add(o.id); change = true; toast(`Objectif atteint : ${o.titre}`, 'ok', 'circle-check'); } } catch (x) {}
+    }
+  }
+  if (change) memo('objectifs', [...faits].join(','));
+  const suivant = OBJECTIFS.find(o => !faits.has(o.id));
+  const { rang, total } = monRang();
+  const nom = S.moi.nom;
+  el.hidden = false;
+  el.classList.toggle('reduit', !!S.objReduit);
+  el.innerHTML = `<div class="wf-obj-tete" data-act="objectifs_replier" title="Réduire / agrandir">
+      ${ico('bullseye')}<div><b>But : faire de ${esc(nom)} la 1<sup>re</sup> puissance mondiale</b>
+      <small>${rang ? `Vous êtes <b>${rang}<sup>e</sup></b> sur ${total} au classement` : 'Classement en cours de calcul…'} · ${faits.size}/${OBJECTIFS.length} objectifs</small></div>
+      ${ico(S.objReduit ? 'chevron-down' : 'chevron-up', 'wf-obj-fleche')}</div>
+    <div class="wf-obj-corps">
+      ${suivant ? `<div class="wf-obj-actuel">${ico(suivant.ico)}<div><b>${esc(suivant.titre)}</b><p>${esc(suivant.aide)}</p></div></div>` : `<div class="wf-obj-actuel">${ico('crown')}<div><b>Tous les objectifs sont atteints !</b><p>Continuez de grandir pour prendre la 1<sup>re</sup> place du classement.</p></div></div>`}
+      <ol class="wf-obj-liste">${OBJECTIFS.map(o => `<li class="${faits.has(o.id) ? 'fait' : o === suivant ? 'actuel' : ''}">${ico(faits.has(o.id) ? 'circle-check' : o.ico)}<span>${esc(o.titre)}</span></li>`).join('')}</ol>
+      <button class="wf-lien" data-act="tuto">${ico('graduation-cap')} Revoir le tutoriel</button>
+    </div>`;
+}
+try { S.objReduit = !!localStorage.getItem('wf-obj-reduit'); } catch (x) {}
+
+// ══════════════════════════════════════════════════════════════════
+// Tutoriel : visite guidee de l'interface, etape par etape
+// ══════════════════════════════════════════════════════════════════
+const TUTO = [
+  { cible: null, ico: 'earth-europe', titre: () => `Bienvenue, dirigeant de ${S.moi?.nom || 'votre pays'} !`,
+    texte: () => `Vous dirigez un vrai pays, sur la vraie carte du monde. Les autres pays sont dirigés par d'<b>autres joueurs</b>, et le monde continue de tourner quand vous êtes absent.<br><br><b>Le but :</b> faire de votre pays la <b>première puissance mondiale</b> au classement, par l'économie, la science, la diplomatie… ou la guerre.` },
+  { cible: '#wf-resbar', ico: 'coins', titre: () => 'Vos ressources',
+    texte: () => `Crédits, minerais, électricité, population… Vos bâtiments les produisent chaque seconde. Le chiffre vert indique ce que vous gagnez par minute. Passez la souris dessus pour le détail.` },
+  { cible: '#wf-carte-3d', ico: 'hand-pointer', titre: () => 'Construire',
+    texte: () => `<b>Clic gauche</b> sur une de vos cases : un menu rond s'ouvre pour <b>construire</b> (ferme, mine, usine, caserne…), améliorer ou produire des troupes.<br><br>Pour vous déplacer : <b>glissez</b> la carte, <b>molette</b> pour zoomer, <b>clic droit + glisser</b> pour pivoter.`, centre: true },
+  { cible: '#wf-troupes', ico: 'person-military-rifle', titre: () => 'Vos troupes',
+    texte: () => `Votre réserve de troupes se remplit toute seule. <b>Clic droit</b> sur une case : une partie de vos troupes y part (réglez la part avec le curseur).<br>• Terre libre : vous l'annexez.<br>• Pays en guerre avec vous : vous l'envahissez.` },
+  { cible: '#wf-menu', ico: 'bars', titre: () => 'Le menu',
+    texte: () => `<b>Mon pays</b> : économie et recherche. <b>Usines</b> : fabriquer des produits. <b>Armées</b>, <b>Alliances</b> (blocs), <b>Marché</b> pour acheter et vendre, <b>Classement</b> et <b>Messages</b>.` },
+  { cible: '#wf-objectifs', ico: 'bullseye', titre: () => 'Vos objectifs',
+    texte: () => `Ici, l'objectif suivant vous dit quoi faire et comment. Suivez-les un par un : ils vous apprennent tout le jeu.` },
+  { cible: '[data-panneau="aide"]', ico: 'book-open', titre: () => 'Besoin d\'aide ?',
+    texte: () => `Le <b>Guide</b> explique chaque règle en détail. Vous pouvez revoir ce tutoriel à tout moment depuis le Guide ou vos objectifs. Bonne partie !` },
+];
+let tutoEtape = -1;
+const tutoFait = () => { try { return !!localStorage.getItem('wf-tuto-fait'); } catch (x) { return true; } };
+
+function lancerTuto(force = false) {
+  if (!force && tutoFait()) return;
+  if (!$('#wf-modale').hidden) return; // une fenetre est deja ouverte
+  S.menuReduit = false; appliquerHud(); memoriserHud();
+  tutoEtape = 0;
+  afficherTuto();
+}
+function etapeTuto(d) {
+  tutoEtape = Math.max(0, Math.min(TUTO.length - 1, tutoEtape + d));
+  afficherTuto();
+}
+function finTuto() {
+  tutoEtape = -1;
+  $('#wf-tuto').hidden = true;
+  try { localStorage.setItem('wf-tuto-fait', '1'); } catch (x) {}
+}
+function afficherTuto() {
+  const z = $('#wf-tuto');
+  const e = TUTO[tutoEtape];
+  if (!e) return finTuto();
+  const cible = e.cible ? document.querySelector(e.cible) : null;
+  const visible = cible && !cible.hidden && cible.offsetParent !== null;
+  const r = visible ? cible.getBoundingClientRect() : null;
+  const der = tutoEtape === TUTO.length - 1;
+  z.hidden = false;
+  z.innerHTML = `${r && !e.centre ? `<div class="wf-tuto-trou" style="left:${r.left - 6}px;top:${r.top - 6}px;width:${r.width + 12}px;height:${r.height + 12}px"></div>` : '<div class="wf-tuto-voile"></div>'}
+    <div class="wf-tuto-bulle" role="dialog" aria-live="polite">
+      <div class="wf-tuto-tete">${ico(e.ico)}<b>${e.titre()}</b><span>${tutoEtape + 1}/${TUTO.length}</span></div>
+      <p>${e.texte()}</p>
+      <div class="wf-tuto-boutons">
+        <button class="wf-lien" data-act="tuto_fin">Passer</button>
+        <span>${tutoEtape > 0 ? `<button class="wf-btn petit secondaire" data-act="tuto_precedent">Précédent</button>` : ''}
+        <button class="wf-btn petit" data-act="${der ? 'tuto_fin' : 'tuto_suivant'}">${der ? 'Jouer !' : 'Suivant'}</button></span>
+      </div>
+    </div>`;
+  // Bulle a cote de l'element vise (a droite, sinon en dessous), ou au centre.
+  const b = z.querySelector('.wf-tuto-bulle');
+  const W = innerWidth, H = innerHeight, bw = Math.min(380, W - 24);
+  b.style.width = bw + 'px';
+  const bh = b.offsetHeight; // hauteur mesuree a la largeur finale
+  let x = (W - bw) / 2, y = (H - bh) / 2;
+  if (r && !e.centre) {
+    if (r.right + 16 + bw < W) { x = r.right + 16; y = r.top; }
+    else if (r.bottom + 16 + bh < H) { x = r.left; y = r.bottom + 16; }
+    else if (r.top - 16 - bh > 0) { x = r.left; y = r.top - 16 - bh; }
+    else { x = r.left - 16 - bw; y = r.top; }
+  }
+  b.style.left = Math.max(12, Math.min(W - bw - 12, x)) + 'px';
+  b.style.top = Math.max(12, Math.min(H - bh - 12, y)) + 'px';
+}
+window.addEventListener('resize', () => { if (tutoEtape >= 0) afficherTuto(); });
+
 /** Vrai pays k : la nation (encore en vie) qui le dirige, s'il y en a une. */
 function dirigeant(k) {
   for (const p of S.pays?.values() || []) if (p.pays_reel === k && !p.elimine) return p;
@@ -933,7 +1077,7 @@ function ouvrirChoixPays(refonder = false) {
   const couleur = d.couleurs[Math.floor(Math.random() * d.couleurs.length)];
   const liste = [...S.reel.pays].sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
   const libres = liste.filter(p => !dirigeant(p.k)).length;
-  modale(`<div class="wf-modale-tete">${ico('earth-europe')}<div><h2>${refonder ? 'Reprendre un pays' : 'Choisissez votre pays'}</h2><p>Vous dirigez un vrai pays et tout son territoire, outre-mer compris. Un pays déjà dirigé par un joueur ne peut pas être pris. ${libres} pays libres sur ${liste.length}.</p></div></div>
+  modale(`<div class="wf-modale-tete">${ico('earth-europe')}<div><h2>${refonder ? 'Reprendre un pays' : 'Choisissez votre pays'}</h2><p>Vous dirigez un vrai pays et tout son territoire, outre-mer compris, face aux autres joueurs. Un pays déjà dirigé ne peut pas être pris. ${libres} pays libres sur ${liste.length} (les pays de moins de 10 cases ne sont pas jouables : leurs terres sont libres).</p></div></div>
     <div class="wf-form">
       <input id="f-recherche" placeholder="Rechercher un pays (ex. : France, Japon…)" autocomplete="off">
       <div class="wf-pays-liste" id="f-liste">${liste.map(p => {
@@ -1028,7 +1172,10 @@ const ACTIONS = {
   rejoindre: async () => {
     if (S.reel && !val('f-pays')) { toast('Choisissez d\'abord un pays dans la liste.', 'err'); return; }
     const r = await agir('rejoindre', { nom: val('f-nom'), devise: val('f-devise'), couleur: val('f-couleur'), embleme: val('f-embleme'), spe: val('f-spe'), pays_reel: +val('f-pays') || undefined });
-    if (r.ok) { fermerModale(); setTimeout(() => S.moi && S.carte.centrerSur(S.moi.capitale, 24), 300); }
+    if (r.ok) {
+      fermerModale();
+      setTimeout(() => { if (S.moi) S.carte.centrerSur(S.moi.capitale, 30); lancerTuto(); }, 600);
+    }
   },
   refonder: async () => {
     if (S.reel && !val('f-pays')) { toast('Choisissez d\'abord un pays dans la liste.', 'err'); return; }
@@ -1036,11 +1183,16 @@ const ACTIONS = {
     if (r.ok) { fermerModale(); setTimeout(() => S.moi && S.carte.centrerSur(S.moi.capitale, 24), 300); }
   },
   choisir_reprise: () => ouvrirChoixPays(true),
+  tuto: () => lancerTuto(true),
+  tuto_suivant: () => etapeTuto(+1),
+  tuto_precedent: () => etapeTuto(-1),
+  tuto_fin: () => finTuto(),
+  objectifs_replier: () => { S.objReduit = !S.objReduit; try { localStorage.setItem('wf-obj-reduit', S.objReduit ? '1' : ''); } catch (x) {} majObjectifs(); },
   choisir_pays: (d, el) => {
     document.querySelectorAll('.wf-pays-choix.actif').forEach(x => x.classList.remove('actif'));
     el.classList.add('actif');
     $('#f-pays').value = d.k;
-    const p = S.reel.pays[d.k - 1];
+    const p = S.reel.parK.get(+d.k);
     $('#f-choisi').innerHTML = `${ico('flag')} <b>${esc(p.nom)}</b> — ${p.cases} case${p.cases > 1 ? 's' : ''}, capitale et tout le territoire.`;
     if (p.capitale != null) S.carte.centrerSur(p.capitale, 40);
   },
@@ -1315,9 +1467,10 @@ function appliquerHud() {
 // Interface minimale par defaut : menu en icones, barre de troupes compacte.
 try {
   const brut = localStorage.getItem('wf-hud');
-  const h = brut ? JSON.parse(brut) : { i: false, t: true, m: true };
+  // Premiere visite : menu deplie (icones ET noms), plus facile a comprendre.
+  const h = brut ? JSON.parse(brut) : { i: false, t: true, m: false };
   S.inspReduit = h.i; S.troupesReduit = h.t; S.menuReduit = h.m;
-} catch (x) { S.troupesReduit = true; S.menuReduit = true; }
+} catch (x) { S.troupesReduit = true; S.menuReduit = false; }
 appliquerHud();
 
 document.addEventListener('keydown', e => {
