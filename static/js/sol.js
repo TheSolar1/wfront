@@ -53,8 +53,9 @@ const VOISINS_IMPAIR = [[1, 0], [1, -1], [0, -1], [-1, 0], [0, 1], [1, 1]];
 
 export class Sol {
   /** terrain : Uint8Array (une valeur par case), l x h cases. */
-  constructor(terrain, l, h, sombre, mobile) {
+  constructor(terrain, l, h, sombre, mobile, reel = false) {
     this.terrain = terrain;
+    this.reel = reel;
     this.l = l; this.h = h; this.n = l * h;
     this.mobile = mobile;
     this.largeurMonde = LX * (l + 0.5);
@@ -128,6 +129,18 @@ export class Sol {
     return c;
   }
 
+  /** Altitude des neiges. Carte du monde : elle depend de la latitude,
+   *  comme en vrai (tres haut sous les tropiques : seuls les plus hauts
+   *  sommets du Kenya ou des Andes sont blancs ; bas pres des poles). */
+  limiteNeige(z) {
+    if (!this.reel) return 1.75;
+    const lat = Math.abs(83 - (z / this.hauteurMonde) * 139);
+    if (lat <= 15) return 2.5;
+    if (lat <= 35) return 2.5 - (lat - 15) / 20 * 0.75;
+    if (lat <= 55) return 1.75;
+    return Math.max(1.45, 1.75 - (lat - 55) / 15 * 0.3);
+  }
+
   /** Couleur de base d'un sommet : biome, plages, neige, roche en pente, fonds marins. */
   couleurSommet(k, pos, nor, out, cas) {
     const P = this.palette, c = this._c;
@@ -142,7 +155,8 @@ export class Sol {
     } else {
       if (h < 0.16) c.lerp(P.sable, (0.16 - h) / 0.16 * 0.85);
       if (pente > 0.18) c.lerp(P.roche, Math.min(0.8, (pente - 0.18) * 3));
-      if (h > 1.75) c.lerp(P.neige, Math.min(1, (h - 1.75) / 0.45));
+      const sn = this.limiteNeige(z);
+      if (h > sn) c.lerp(P.neige, Math.min(1, (h - sn) / 0.45));
       const v = (fbm(x * 2.3, z * 2.3, 2) - 0.5) * 0.1 + (bruit(x * 7.1, z * 7.1) - 0.5) * 0.04;
       const ht = (fbm(x * 0.2 + 40, z * 0.2, 2) - 0.5) * 0.025;
       c.offsetHSL(ht, 0, v);

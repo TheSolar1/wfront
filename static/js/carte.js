@@ -240,7 +240,7 @@ export class Carte {
     const n = this.g.n;
     const sombre = this.theme === 'dark';
     // Calcul du sol (relief, couleurs) : partage avec le travailleur.
-    this.sol = new Sol(this.terrain, this.g.l, this.g.h, sombre, MOBILE);
+    this.sol = new Sol(this.terrain, this.g.l, this.g.h, sombre, MOBILE, !!this.regions);
     // Altitude des cases : calculee a la demande (voir haut()).
     this.hCase = new Float32Array(n).fill(NaN);
 
@@ -286,7 +286,7 @@ if (vHaut > -0.05) {
   // sinon il ne raccordait plus avec le fond autour de la carte.
   if (vBrume > 0.5) {
     float l = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
-    diffuseColor.rgb = mix(mix(diffuseColor.rgb, vec3(l), 0.5), uVoile, 0.28);
+    diffuseColor.rgb = mix(mix(diffuseColor.rgb, vec3(l), 0.25), uVoile, 0.1);
   }
 }`);
     };
@@ -313,7 +313,7 @@ if (vHaut > -0.05) {
       this.travailleur = new Worker(new URL('./sol-worker.js', import.meta.url), { type: 'module' });
       this.travailleur.onmessage = e => this.recevoirSol(e.data);
       this.travailleur.onerror = () => this.sansTravailleur();
-      this.travailleur.postMessage({ t: 'init', terrain: this.terrain.slice(), l: this.g.l, h: this.g.h, sombre, mobile: MOBILE, pasLoin: this.pasLoin });
+      this.travailleur.postMessage({ t: 'init', terrain: this.terrain.slice(), l: this.g.l, h: this.g.h, sombre, mobile: MOBILE, reel: !!this.regions, pasLoin: this.pasLoin });
     } catch (x) {
       this.sansTravailleur();
     }
