@@ -477,6 +477,7 @@ function majTroupes() {
   $('#wf-ratio-envoi').textContent = fmt(Math.floor(m.troupes * S.ratio));
   const r = $('#wf-ratio');
   if (document.activeElement !== r) r.value = Math.round(S.ratio * 100);
+  r.style.setProperty('--pct', ((r.value - r.min) / (r.max - r.min) * 100).toFixed(1) + '%');
   $('#wf-ratio-val').textContent = Math.round(S.ratio * 100) + ' %';
   document.querySelectorAll('#wf-troupes [data-ratio]').forEach(b => b.classList.toggle('actif', Math.round(S.ratio * 100) === +b.dataset.ratio));
   const nb = S.attaques.filter(a => a.de === m.id).length;
@@ -1005,6 +1006,9 @@ const TUTO = [
     texte: () => `Crédits, minerais, électricité, population… Vos bâtiments les produisent chaque seconde. Le chiffre vert indique ce que vous gagnez par minute. Passez la souris dessus pour le détail.` },
   { cible: '#wf-carte-3d', ico: 'hand-pointer', titre: () => 'Construire',
     texte: () => `<b>Clic gauche</b> sur une de vos cases : un menu rond s'ouvre pour <b>construire</b> (ferme, mine, usine, caserne…), améliorer ou produire des troupes.<br><br>Pour vous déplacer : <b>glissez</b> la carte, <b>molette</b> pour zoomer, <b>clic droit + glisser</b> pour pivoter.`, centre: true },
+  { cible: null, ico: 'industry', titre: () => 'Les bâtiments', large: true,
+    texte: () => `Chaque bâtiment a un rôle. Faites défiler la liste : ceux marqués d'un cadenas se débloquent par la <b>recherche</b> (menu Mon pays).`,
+    liste: listeBatimentsTuto },
   { cible: '#wf-troupes', ico: 'person-military-rifle', titre: () => 'Vos troupes',
     texte: () => `Votre réserve de troupes se remplit toute seule. <b>Clic droit</b> sur une case : une partie de vos troupes y part (réglez la part avec le curseur).<br>• Terre libre : vous l'annexez.<br>• Pays en guerre avec vous : vous l'envahissez.` },
   { cible: '#wf-menu', ico: 'bars', titre: () => 'Le menu',
@@ -1014,6 +1018,20 @@ const TUTO = [
   { cible: '[data-panneau="aide"]', ico: 'book-open', titre: () => 'Besoin d\'aide ?',
     texte: () => `Le <b>Guide</b> explique chaque règle en détail. Vous pouvez revoir ce tutoriel à tout moment depuis le Guide ou vos objectifs. Bonne partie !` },
 ];
+/** Liste des batiments constructibles, par categorie, pour le tutoriel. */
+function listeBatimentsTuto() {
+  if (!S.defs) return '';
+  const techs = new Map((S.defs.techs || []).map(t => [t.id, t.nom]));
+  const cats = new Map();
+  for (const b of S.defs.batiments) {
+    if (!b.constructible) continue;
+    if (!cats.has(b.categorie)) cats.set(b.categorie, []);
+    cats.get(b.categorie).push(b);
+  }
+  return `<div class="wf-tuto-liste">${[...cats].map(([c, l]) => `<h4>${esc(c)}</h4>${l.map(b => `
+    <div class="wf-tuto-bat"><span class="wf-tuto-bat-ic">${ico(b.icone)}</span><div><b>${esc(b.nom)}</b>${b.tech ? `<em>${ico('lock')} ${esc(techs.get(b.tech) || b.tech)}</em>` : ''}
+    <small>${esc(b.desc)}</small></div></div>`).join('')}`).join('')}</div>`;
+}
 let tutoEtape = -1;
 const tutoFait = () => { try { return !!localStorage.getItem('wf-tuto-fait'); } catch (x) { return true; } };
 
@@ -1045,7 +1063,7 @@ function afficherTuto() {
   z.innerHTML = `${r && !e.centre ? `<div class="wf-tuto-trou" style="left:${r.left - 6}px;top:${r.top - 6}px;width:${r.width + 12}px;height:${r.height + 12}px"></div>` : '<div class="wf-tuto-voile"></div>'}
     <div class="wf-tuto-bulle" role="dialog" aria-live="polite">
       <div class="wf-tuto-tete">${ico(e.ico)}<b>${e.titre()}</b><span>${tutoEtape + 1}/${TUTO.length}</span></div>
-      <p>${e.texte()}</p>
+      <p>${e.texte()}</p>${e.liste ? e.liste() : ''}
       <div class="wf-tuto-boutons">
         <button class="wf-lien" data-act="tuto_fin">Passer</button>
         <span>${tutoEtape > 0 ? `<button class="wf-btn petit secondaire" data-act="tuto_precedent">Précédent</button>` : ''}
@@ -1054,7 +1072,7 @@ function afficherTuto() {
     </div>`;
   // Bulle a cote de l'element vise (a droite, sinon en dessous), ou au centre.
   const b = z.querySelector('.wf-tuto-bulle');
-  const W = innerWidth, H = innerHeight, bw = Math.min(380, W - 24);
+  const W = innerWidth, H = innerHeight, bw = Math.min(e.large ? 480 : 380, W - 24);
   b.style.width = bw + 'px';
   const bh = b.offsetHeight; // hauteur mesuree a la largeur finale
   let x = (W - bw) / 2, y = (H - bh) / 2;
