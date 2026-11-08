@@ -9,7 +9,7 @@ let sol = null;
 self.onmessage = e => {
   const m = e.data;
   if (m.t === 'init') {
-    sol = new Sol(m.terrain, m.l, m.h, m.sombre, m.mobile);
+    sol = new Sol(m.terrain, m.l, m.h, m.sombre, m.mobile, m.reel);
     const loin = sol.maillageLoin(m.pasLoin);
     self.postMessage({ t: 'loin', loin }, tampons(loin));
   } else if (m.t === 'terrain') {
