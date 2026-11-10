@@ -447,6 +447,11 @@ mod tests {
     #[test]
     fn la_reserve_se_remplit_jusqu_au_maximum() {
         let (mut m, a, _, _) = monde_deux_pays();
+        // Assez d'habitants pour remplir la reserve, ou que soit le pays.
+        for c in m.cases.iter_mut().filter(|c| c.proprio == Some(a)) {
+            c.hab = 6000.0;
+        }
+        crate::demographie::installer(&mut m, a);
         m.pays.get_mut(&a).unwrap().troupes = 0.0;
         for _ in 0..3000 {
             m.temps += 1.0;

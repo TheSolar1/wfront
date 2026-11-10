@@ -128,10 +128,9 @@ function panneauPays(S) {
   const elecOk = b.elec_ratio >= 0.999;
   const lignesRes = S.defs.ressources.map((r, i) => {
     const net = b.prod[i] - b.conso[i];
-    const cap = i === 0 ? b.stock * 20 : b.stock;
     return `<tr>
       <td>${ico(r.icone, '', `color:${r.couleur}`)} ${esc(r.nom)}</td>
-      <td class="num">${fmt(m.res[i])}<small> / ${fmt(cap)}</small></td>
+      <td class="num">${fmt(m.res[i])}${i === 0 ? '' : `<small> / ${fmt(b.stock)}</small>`}</td>
       <td class="num pos">${signe(b.prod[i])}</td>
       <td class="num neg">${b.conso[i] ? '-' + fmt(b.conso[i], 1) : '0'}</td>
       <td class="num ${net >= 0 ? 'pos' : 'neg'}"><b>${signe(net)}</b></td>

@@ -303,7 +303,9 @@ fn construire(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng
 // ── Expansion : une part des troupes vers les terres neutres ──────
 fn etendre(m: &mut Monde, pid: u32, uid: i64, regles: &Regles, b: &Bilan, rng: &mut impl Rng) {
     let p = &m.pays[&pid];
-    if p.troupes < 0.45 * b.troupes_max || m.attaques.values().any(|a| a.de == pid && a.cible.is_none()) {
+    // Les recrues passent par la formation : on part aussi des qu'il y a
+    // de quoi prendre plusieurs cases (500 troupes), sans attendre 45 %.
+    if p.troupes < (0.45 * b.troupes_max).min(500.0) || m.attaques.values().any(|a| a.de == pid && a.cible.is_none()) {
         return;
     }
     // Les bots laissent toujours de la place aux joueurs : ils arretent de
@@ -962,7 +964,7 @@ mod tests {
         }
         let j = joueur(BASE_ID);
         let case = m.voisins(m.pays[&a].capitale).into_iter()
-            .find(|&v| m.cases[v].proprio == Some(a) && m.cases[v].bat.is_none() && est_terre(m.cases[v].terrain))
+            .find(|&v| m.cases[v].proprio == Some(a) && m.cases[v].bat.is_none() && est_terre(m.cases[v].terrain) && m.cases[v].terrain != T_MONTAGNE)
             .expect("case libre");
         let r = jeu::commande(&mut m, &j, &json!({ "action": "construire", "case": case, "bat": "silo" }), &regles);
         assert!(r.is_ok(), "construire silo : {:?}", r);
@@ -986,7 +988,7 @@ mod tests {
             p.ur_enrichi = 100.0;
             p.stock.insert("explosifs".into(), 50.0);
         }
-        let pop_b = m.pays[&b].pop;
+        let hab_cible = m.cases[cible].hab;
         let r = jeu::commande(&mut m, &j, &tir, &regles);
         assert!(r.is_ok(), "tir : {:?}", r);
         assert!((m.pays[&a].ur_enrichi - 60.0).abs() < 1e-6, "40 kg d'uranium consommes");
@@ -994,7 +996,7 @@ mod tests {
         for _ in 0..600 { jeu::tick(&mut m, 1.0); }
         assert!(m.missiles.is_empty(), "missile toujours en vol");
         assert!(m.cases[cible].irradiee > m.temps, "cible non irradiee");
-        assert!(m.pays[&b].pop < pop_b * 0.95, "la population touchee baisse");
+        assert!(m.cases[cible].hab < hab_cible * 0.5, "les habitants de la case touchee meurent ({} -> {})", hab_cible, m.cases[cible].hab);
         // 40 kg : rayon 2 (1 + racine(2)), donc une case a distance 2 est touchee.
         let anneau = m.rayon(cible, 2).into_iter().find(|&v| m.distance(cible, v) == 2).unwrap();
         assert!(m.cases[anneau].irradiee > m.temps);
