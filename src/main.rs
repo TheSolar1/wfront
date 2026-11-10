@@ -142,7 +142,7 @@ impl Default for Config {
             admins: Vec::new(),
             invites: true,
             carte: "monde".into(),
-            largeur_monde: 708,
+            largeur_monde: 2124,
             carte_largeur: 384,
             carte_hauteur: 240,
             graine: 0,
@@ -293,7 +293,7 @@ fn nouvelle_carte(cfg: &Config, graine: u64) -> monde::Monde {
     if cfg.carte == "aleatoire" {
         monde::Monde::generer(cfg.carte_largeur.clamp(30, 600), cfg.carte_hauteur.clamp(20, 400), graine)
     } else {
-        monde::Monde::generer_monde_reel(cfg.largeur_monde.clamp(60, 1000), graine)
+        monde::Monde::generer_monde_reel(cfg.largeur_monde.clamp(60, 3000), graine)
     }
 }
 
@@ -354,7 +354,7 @@ async fn main() {
         protection_s: (cfg.protection_heures * 3600.0) as i64,
         vitesse: cfg.vitesse.clamp(0.1, 100.0),
         monde_reel: cfg.carte != "aleatoire",
-        largeur_monde: cfg.largeur_monde.clamp(60, 1000),
+        largeur_monde: cfg.largeur_monde.clamp(60, 3000),
     };
     let app: Partage = Arc::new(App {
         cfg: cfg.clone(),
@@ -518,7 +518,12 @@ fn apercu_carte(cfg: &Config) {
 fn boucle(app: &Partage, dt: f64, avec_publics: bool) {
     let mut m = app.monde.lock().unwrap();
     let bl = jeu::tick(&mut m, dt);
-    let vis = vue::visions(&m, &bl);
+    // Vision : seulement pour les nations des joueurs connectes.
+    let connectes: std::collections::HashSet<u32> = {
+        let clients = app.clients.lock().unwrap();
+        clients.values().filter_map(|c| jeu::pays_du_joueur(&m, c.user_id)).collect()
+    };
+    let vis = vue::visions(&m, &bl, &connectes);
     let publics = vue::publics(&m, &bl);
     {
         let mut clients = app.clients.lock().unwrap();
@@ -797,7 +802,7 @@ fn verifier_cle_vex(pool: &mysql::Pool, cle: &str, cfg_vex: Option<&Path>) -> Op
 /// Outils d'administration du jeu exposes en HTTP : nom de route -> commande
 /// du jeu (memes regles que les boutons du panneau admin).
 const ACTIONS_ADMIN: &[(&str, &str, &str)] = &[
-    ("nouvelle_carte", "admin_nouvelle_carte", "Nouvelle carte : efface le monde (irréversible)."),
+    ("nouvelle_carte", "admin_nouvelle_carte", "Nouvelle carte : efface le monde (irréversible). Option : {\"largeur\": 2124}."),
     ("paix", "admin_paix_mondiale", "Paix mondiale : arrête toutes les guerres."),
     ("annonce", "admin_annonce", "Annonce mondiale : {\"texte\": \"...\"} (300 caractères max)."),
     ("donner", "admin_donner", "Donner : {\"pays\": id, \"res\": [..], \"troupes\": n, \"elements\": n}."),
@@ -1656,10 +1661,10 @@ async fn client(app: Partage, socket: WebSocket, id: Identite) {
         let m = app.monde.lock().unwrap();
         let _ = tx.try_send(vue::init(&m, &id.nom, admin, app.cfg.vitesse, &app.cfg.vex_url));
         let bl = jeu::bilans(&m);
-        let vis = vue::visions(&m, &bl);
+        let pid = jeu::pays_du_joueur(&m, id.user_id);
+        let vis = vue::visions(&m, &bl, &pid.into_iter().collect());
         let publics = vue::publics(&m, &bl);
         let mut suivi = vue::Suivi::default();
-        let pid = jeu::pays_du_joueur(&m, id.user_id);
         let ctx = vue::Contexte { m: &m, bl: &bl, vis: &vis, publics: Some(&publics) };
         let _ = tx.try_send(vue::etat(&ctx, pid, &mut suivi));
         app.clients.lock().unwrap().insert(cid, Client { user_id: id.user_id, tx: tx.clone(), suivi });
@@ -1718,9 +1723,9 @@ fn traiter(app: &Partage, cid: u64, id: &Identite, admin: bool, cmd: &Value, tx:
 
     // Vue a jour immediatement, sans attendre le prochain tick.
     let bl = jeu::bilans(&m);
-    let vis = vue::visions(&m, &bl);
-    let publics = vue::publics(&m, &bl);
     let pid = jeu::pays_du_joueur(&m, id.user_id);
+    let vis = vue::visions(&m, &bl, &pid.into_iter().collect());
+    let publics = vue::publics(&m, &bl);
     let mut clients = app.clients.lock().unwrap();
     let plein = if let Some(c) = clients.get_mut(&cid) {
         let ctx = vue::Contexte { m: &m, bl: &bl, vis: &vis, publics: Some(&publics) };

@@ -99,6 +99,8 @@ pub struct Bilan {
     // ── Armee (armee.rs) ──
     pub mult_attaque: f64,
     pub mult_defense: f64,
+    /// Finesse de la carte (Monde::echelle).
+    pub echelle: f64,
     pub equipage: f64,
     pub equipe: f64,
 }
@@ -110,7 +112,8 @@ impl Bilan {
 }
 
 pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
-    let mut out: HashMap<u32, Bilan> = m.pays.keys().map(|&k| (k, Bilan::default())).collect();
+    let e = m.echelle();
+    let mut out: HashMap<u32, Bilan> = m.pays.keys().map(|&k| (k, Bilan { echelle: e, ..Default::default() })).collect();
     let mut accueil: HashMap<u32, f64> = HashMap::new();
     let mut religions: HashMap<u32, BTreeMap<u8, f64>> = HashMap::new();
 
@@ -125,18 +128,18 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
             b.revoltes += 1;
             continue;
         }
-        if c.irradiee > m.temps {
+        if (c.irradiee as f64) > m.temps {
             continue;
         }
         if let Some(bat) = &c.bat {
-            *b.niv.entry(bat.clone()).or_insert(0) += c.niv as u32;
+            *b.niv.entry(bat.to_string()).or_insert(0) += c.niv as u32;
             // La table de fabrication est dans le complexe industriel (et
             // dans les anciennes fabriques).
-            if bat == "usine" {
+            if &**bat == "usine" {
                 b.fab_max = b.fab_max.max(c.niv);
             }
             // Une carriere sur un gisement extrait le minerai de ce gisement.
-            if bat == "carriere" {
+            if &**bat == "carriere" {
                 let k = match c.depot { D_TERRES_RARES => 1, D_URANIUM => 2, D_METEORITE => 3, _ => 0 };
                 b.carrieres[k] += c.niv as f64;
             }
@@ -249,7 +252,7 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         // ── Production (par minute) ──
         // Le territoire rapporte aussi : 0,15 credit par minute et par case.
         // Le petrole des puits est vendu : +25 credits par minute et par niveau.
-        let mut cr = 40.0 * b.n("capitale") + 6.0 * b.n("ville") * ratio + 3.0 * b.n("usine") * ratio + b.recettes_tva + 0.15 * b.cases as f64
+        let mut cr = 40.0 * b.n("capitale") + 6.0 * b.n("ville") * ratio + 3.0 * b.n("usine") * ratio + b.recettes_tva + 0.15 * b.cases as f64 / (b.echelle * b.echelle)
             + 25.0 * b.n("puits_petrole") * ratio;
         let mut mult_cr = 1.0 + if p.a("eco_banque") { 0.08 } else { 0.0 };
         mult_cr += 0.05 * p.niv("fiscalite");
@@ -435,7 +438,7 @@ fn accident_nucleaire(m: &mut Monde, pid: u32, i: usize, rng: &mut impl Rng) {
     m.cases[i].bat = None;
     m.cases[i].niv = 0;
     for v in m.rayon(i, 1) {
-        m.cases[v].irradiee = m.temps + 900.0;
+        m.cases[v].irradiee = (m.temps + 900.0) as f32;
         m.toucher(v);
     }
     if let Some(p) = m.pays.get_mut(&pid) {
@@ -478,12 +481,12 @@ fn avaler(m: &mut Monde, centre: usize, r: i64) {
         m.armees.retain(|_, a| a.case != v);
         let c = &mut m.cases[v];
         let ancien = c.proprio.take();
-        let deja = c.terrain == T_NEANT && ancien.is_none() && c.bat.is_none() && c.irradiee > m.temps;
+        let deja = c.terrain == T_NEANT && ancien.is_none() && c.bat.is_none() && (c.irradiee as f64) > m.temps;
         c.bat = None;
         c.niv = 0;
         c.terrain = T_NEANT;
         c.depot = D_AUCUN;
-        c.irradiee = m.temps + 3600.0;
+        c.irradiee = (m.temps + 3600.0) as f32;
         if let Some(o) = ancien {
             if let Some(p) = m.pays.get_mut(&o) {
                 p.chantiers.retain(|x| x.case != v);
@@ -517,7 +520,7 @@ fn nuages(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
                 Some(&v) => n.case = v,
                 None => n.reste = 0.0,
             }
-            m.cases[n.case].irradiee = m.cases[n.case].irradiee.max(m.temps + 240.0);
+            m.cases[n.case].irradiee = m.cases[n.case].irradiee.max((m.temps + 240.0) as f32);
             m.toucher(n.case);
         }
         if n.reste > 0.0 {
@@ -699,21 +702,44 @@ fn marche(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
 /// Garde-fou : taille maximale (provinces) d'une poche prise par encerclement.
 const POCHE_MAX: usize = 400;
 
-fn encerclements(m: &mut Monde) {
+pub fn encerclements(m: &mut Monde) {
     let n = m.cases.len();
-    let mut vu = vec![false; n];
-    for depart in 0..n {
-        if vu[depart] || m.cases[depart].proprio.is_some() || !est_terre(m.cases[depart].terrain) {
+    // Numero du parcours qui a visite chaque case (0 = aucun). Une poche ne
+    // peut toucher que la nation qui l'entoure : on ne part que des cases
+    // neutres voisines d'un territoire (la carte compte des millions de
+    // cases, surtout de la terre neutre).
+    let mut vu = vec![0u32; n];
+    let mut departs: Vec<usize> = Vec::new();
+    for (i, c) in m.cases.iter().enumerate() {
+        if c.proprio.is_some() {
+            for v in m.voisins(i) {
+                if m.cases[v].proprio.is_none() && est_terre(m.cases[v].terrain) {
+                    departs.push(v);
+                }
+            }
+        }
+    }
+    let mut numero = 0u32;
+    for depart in departs {
+        if vu[depart] != 0 {
             continue;
         }
+        numero += 1;
         let mut poche = vec![depart];
         let mut pile = vec![depart];
-        vu[depart] = true;
+        vu[depart] = numero;
         let mut entoure_par: Option<u32> = None;
         let mut ouverte = false;
         let mut cote = false;
         let mut contact: HashSet<usize> = HashSet::new();
+        let mut trop = false;
         while let Some(i) = pile.pop() {
+            // Une poche plus grande que POCHE_MAX n'est pas une poche : on
+            // arrete tot (la carte compte des millions de cases).
+            if poche.len() > POCHE_MAX {
+                trop = true;
+                break;
+            }
             let voisins = m.voisins(i);
             if voisins.len() < 6 {
                 cote = true; // bord du monde : ferme la poche comme la mer
@@ -729,12 +755,19 @@ fn encerclements(m: &mut Monde) {
                         Some(x) if x != o => ouverte = true,
                         _ => {}
                     }
-                } else if !vu[v] {
-                    vu[v] = true;
+                } else if vu[v] == 0 {
+                    vu[v] = numero;
                     poche.push(v);
                     pile.push(v);
+                } else if vu[v] != numero {
+                    // Relie a une zone deja parcourue (trop grande, ou
+                    // ouverte) : ce n'est pas une poche fermee.
+                    ouverte = true;
                 }
             }
+        }
+        if trop {
+            continue;
         }
         let Some(pid) = entoure_par else { continue };
         // Garde-fou, et contre la mer : une poche adossée à l'eau doit être
@@ -1114,7 +1147,7 @@ pub fn capturer(m: &mut Monde, pid: u32, i: usize) {
     m.cases[i].proprio = Some(pid);
     let mut capitale_tombee = false;
     if let Some(b) = m.cases[i].bat.clone() {
-        if b == "capitale" {
+        if &*b == "capitale" {
             capitale_tombee = true;
             m.cases[i].bat = Some("ville".into());
             m.cases[i].niv = m.cases[i].niv.max(1);
@@ -1171,7 +1204,7 @@ fn reduire_batiment(m: &mut Monde, i: usize, niveaux: u8) {
     if let Some(b) = c.bat.clone() {
         if c.niv > niveaux {
             c.niv -= niveaux;
-        } else if b == "capitale" {
+        } else if &*b == "capitale" {
             c.niv = 1;
         } else {
             c.bat = None;
@@ -1185,9 +1218,9 @@ fn endommager_batiment(m: &mut Monde, i: usize, dmg: f64) {
     if m.cases[i].bat.is_none() {
         return;
     }
-    m.cases[i].degats += dmg;
-    while m.cases[i].degats >= DEGATS_NIVEAU && m.cases[i].bat.is_some() {
-        m.cases[i].degats -= DEGATS_NIVEAU;
+    m.cases[i].degats += dmg as f32;
+    while m.cases[i].degats >= DEGATS_NIVEAU as f32 && m.cases[i].bat.is_some() {
+        m.cases[i].degats -= DEGATS_NIVEAU as f32;
         let avant = m.cases[i].niv;
         reduire_batiment(m, i, 1);
         if m.cases[i].bat.as_deref() == Some("capitale") && avant == 1 {
@@ -1204,7 +1237,7 @@ fn apparition(m: &Monde) -> Option<usize> {
         let mut candidats = Vec::new();
         for i in 0..m.cases.len() {
             let c = &m.cases[i];
-            if c.proprio.is_some() || c.irradiee > m.temps || !matches!(c.terrain, T_PLAINE | T_FORET | T_COLLINE | T_DESERT | T_TOUNDRA) {
+            if c.proprio.is_some() || (c.irradiee as f64) > m.temps || !matches!(c.terrain, T_PLAINE | T_FORET | T_COLLINE | T_DESERT | T_TOUNDRA) {
                 continue;
             }
             // Jamais au bord d'un trou noir.
@@ -1686,9 +1719,9 @@ fn frappe_speciale(m: &mut Monde, pid: u32, genre: &str, cible: usize) {
             c.depot = if rng.gen_range(0..100) < 30 { D_METEORITE } else { D_TERRES_RARES };
         } else if trou_noir {
             // Zone morte : plus personne, plus rien ne s'y construit.
-            c.irradiee = m.temps + 3600.0;
+            c.irradiee = (m.temps + 3600.0) as f32;
         } else {
-            c.irradiee = m.temps + 1200.0;
+            c.irradiee = (m.temps + 1200.0) as f32;
         }
         if let Some(o) = ancien {
             if let Some(p) = m.pays.get_mut(&o) {
@@ -1700,13 +1733,13 @@ fn frappe_speciale(m: &mut Monde, pid: u32, genre: &str, cible: usize) {
     }
     // Le trou noir reste sur la carte et grossira (voir trous_noirs()).
     if trou_noir {
-        avaler(m, cible, 3);
+        avaler(m, cible, m.portee(3.0));
         let id = m.nouvel_id();
         m.trous_noirs.push(TrouNoir { id, case: cible, rayon: 3.0 });
     }
     // Antimatiere : l'annihilation creuse un cratere au centre, que l'eau envahit.
     if !trou_noir && !point_zero {
-        for v in m.rayon(cible, RAYON_CRATERE) {
+        for v in m.rayon(cible, m.portee(RAYON_CRATERE as f64)) {
             m.cases[v].terrain = T_MER;
             m.cases[v].depot = D_AUCUN;
             m.toucher(v);
@@ -1731,6 +1764,7 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
     m.temps += dt;
     let mut rng = rand::thread_rng();
     let bl = bilans(m);
+    m.nb_cases = bl.iter().map(|(&k, b)| (k, b.cases as usize)).collect();
     let maint = maintenant();
     let dm = dt / 60.0;
 
@@ -1861,7 +1895,7 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
             accident_nucleaire(m, pid, i, &mut rng);
             continue;
         }
-        m.cases[i].bat = Some(c.bat.clone());
+        m.cases[i].bat = Some(c.bat.as_str().into());
         m.cases[i].niv = c.niv;
         m.cases[i].degats = 0.0;
         m.toucher(i);
@@ -1969,8 +2003,7 @@ fn supprimer_pays(m: &mut Monde, cible: u32) {
     }
     for i in 0..m.cases.len() {
         if m.cases[i].proprio.is_none() {
-            m.rev += 1;
-            m.cases[i].rev = m.rev;
+            m.toucher(i);
         }
     }
     eliminer(m, cible);
@@ -2259,7 +2292,7 @@ fn missions(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
         let mut aa = 0.0;
         for v in m.rayon(cible, 2) {
             let c = &m.cases[v];
-            if c.bat.as_deref() == Some("defense_aa") && c.proprio.map(|o| hostile(m, pid, o)).unwrap_or(false) && c.irradiee <= m.temps {
+            if c.bat.as_deref() == Some("defense_aa") && c.proprio.map(|o| hostile(m, pid, o)).unwrap_or(false) && (c.irradiee as f64) <= m.temps {
                 aa += 25.0 * c.niv as f64;
             }
         }
@@ -2397,7 +2430,7 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
         if let Some(d) = defenseur {
             for v in m.rayon(cible, 3) {
                 let c = &m.cases[v];
-                if c.bat.as_deref() == Some("defense_aa") && c.irradiee <= m.temps {
+                if c.bat.as_deref() == Some("defense_aa") && (c.irradiee as f64) <= m.temps {
                     if let Some(o) = c.proprio {
                         if o == d || m.meme_bloc(o, d) {
                             niveaux += c.niv as f64;
@@ -2439,7 +2472,7 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
             let rend = puissance_nucleaire(&mv.fissile, kg, mv.explosifs);
             let k = rend / 20.0;
             // Pas de plafond : une charge assez grosse couvre toute la carte.
-            let rayon = rayon_nucleaire(rend).clamp(1, m.largeur.max(m.hauteur) as i64);
+            let rayon = ((rayon_nucleaire(rend) as f64 * m.echelle()).round() as i64).clamp(1, m.largeur.max(m.hauteur) as i64);
             let coeur = ((rayon + 1) / 2).max(1);
             let zone: Vec<(usize, f64)> = m
                 .rayon(cible, rayon)
@@ -2473,7 +2506,7 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
                     }
                     m.armees.retain(|_, a| a.case != v);
                 }
-                m.cases[v].irradiee = m.temps + if au_coeur { 1800.0 } else { 900.0 } * k.sqrt().clamp(0.5, 4.0);
+                m.cases[v].irradiee = (m.temps + if au_coeur { 1800.0 } else { 900.0 } * k.sqrt().clamp(0.5, 4.0)) as f32;
                 m.toucher(v);
             }
             // Les capitales rasees se replient ailleurs.
@@ -2499,7 +2532,7 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
                 Some(cible),
             );
         } else {
-            let (rayon, niv, dmg_voisins) = if mv.genre == "missile_balistique" { (1, 2, 0.3) } else { (0, 1, 0.0) };
+            let (rayon, niv, dmg_voisins) = if mv.genre == "missile_balistique" { (m.portee(1.0), 2, 0.3) } else { (m.portee(0.34), 1, 0.0) };
             for v in m.rayon(cible, rayon) {
                 let facteur = if v == cible { 1.0 } else { dmg_voisins };
                 let victimes: Vec<u32> = m
@@ -2650,7 +2683,9 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             // Les trous noirs sont eternels : ils survivent au nouveau monde,
             // au meme endroit et a la meme taille.
             let trous = std::mem::take(&mut m.trous_noirs);
-            *m = if regles.monde_reel { Monde::generer_monde_reel(regles.largeur_monde, graine) } else { Monde::generer(l, h, graine) };
+            // Largeur choisie par l'admin (sinon : celle de config.json).
+            let largeur = u(cmd, "largeur").map(|x| (x as usize).clamp(60, 3000)).unwrap_or(regles.largeur_monde);
+            *m = if regles.monde_reel { Monde::generer_monde_reel(largeur, graine) } else { Monde::generer(l, h, graine) };
             let n = m.cases.len();
             for t in trous.into_iter().filter(|t| t.case < n) {
                 avaler(m, t.case, (t.rayon + 1e-9).floor() as i64);
@@ -2744,7 +2779,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             if c.bat.is_some() {
                 return Err("Il y a déjà un bâtiment ici (améliorez-le ou démolissez-le).".into());
             }
-            if c.irradiee > m.temps {
+            if (c.irradiee as f64) > m.temps {
                 return Err("Zone irradiée : construction impossible.".into());
             }
             let p = &m.pays[&pid];
@@ -2788,7 +2823,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             }
             let id = c.bat.clone().ok_or("Aucun bâtiment à améliorer.")?;
             let d = bat(&id).ok_or("Bâtiment inconnu.")?;
-            if c.irradiee > m.temps {
+            if (c.irradiee as f64) > m.temps {
                 return Err("Zone irradiée.".into());
             }
             let p = &m.pays[&pid];
@@ -2816,7 +2851,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             if !d.produit.is_empty() {
                 fab::ajouter(&mut p.stock, d.produit, -1.0);
             }
-            p.chantiers.push(Chantier { id: cid, case: i, bat: id.clone(), niv, reste: t, total: t });
+            p.chantiers.push(Chantier { id: cid, case: i, bat: id.to_string(), niv, reste: t, total: t });
             Ok(format!("Amélioration lancée : {} niveau {}.", d.nom, niv))
         }
         "demolir" => {
@@ -3257,7 +3292,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             let demande = cmd.get("unites").and_then(|x| x.as_object());
             for (t, &n) in &p.materiel {
                 let Some(ud) = unite(t) else { continue };
-                if ud.domaine != DOM_AIR || (ud.portee as i64) < d {
+                if ud.domaine != DOM_AIR || m.portee(ud.portee) < d {
                     continue;
                 }
                 let voulu = match demande {
@@ -3272,7 +3307,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             if lot.is_empty() {
                 return Err(format!("Aucun avion capable d'atteindre la cible ({} cases de votre base aérienne la plus proche).", d));
             }
-            let vitesse = lot.keys().filter_map(|t| unite(t)).map(|u| u.vitesse).fold(f64::MAX, f64::min);
+            let vitesse = lot.keys().filter_map(|t| unite(t)).map(|u| u.vitesse).fold(f64::MAX, f64::min) * m.echelle();
             let duree = ((d as f64).max(1.0) / vitesse * 60.0).max(4.0);
             let p = m.pays.get_mut(&pid).unwrap();
             for (t, n) in &lot {
@@ -3299,17 +3334,18 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             }
             // Depart : un silo a portee, sinon un bombardier qui emporte le
             // missile depuis une base aerienne (dans son rayon d'action).
-            let silo = crate::armee::base_proche(m, pid, "silo", cible).filter(|&(_, d)| d as f64 <= ud.portee);
+            let e = m.echelle();
+            let silo = crate::armee::base_proche(m, pid, "silo", cible).filter(|&(_, d)| d as f64 <= ud.portee * e);
             let bombardier = m.pays[&pid].materiel.get("bombardier").copied().unwrap_or(0) > 0;
-            let rayon_b = unite("bombardier").map(|u| u.portee).unwrap_or(0.0);
-            let base_air = crate::armee::base_proche(m, pid, "aeroport", cible).filter(|&(_, d)| bombardier && d as f64 <= rayon_b + ud.portee);
+            let rayon_b = unite("bombardier").map(|u| u.portee).unwrap_or(0.0) * e;
+            let base_air = crate::armee::base_proche(m, pid, "aeroport", cible).filter(|&(_, d)| bombardier && d as f64 <= rayon_b + ud.portee * e);
             let (depart, d) = match (silo, base_air) {
                 (Some(x), _) => (x.0, x.1 as f64),
                 (None, Some(x)) => (x.0, x.1 as f64),
                 (None, None) => {
                     return Err(format!(
                         "Hors de portée : il faut un silo à moins de {} cases, ou un bombardier et une base aérienne à moins de {} cases.",
-                        ud.portee, ud.portee + rayon_b
+                        (ud.portee * e).round(), (ud.portee * e + rayon_b).round()
                     ))
                 }
             };
@@ -3359,7 +3395,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
                 (0.0, 0.0, String::new())
             };
             crate::armee::retirer(m.pays.get_mut(&pid).unwrap(), &genre, 1);
-            let duree = (d.max(1.0) / ud.vitesse * 60.0).max(5.0);
+            let duree = (d.max(1.0) / (ud.vitesse * e) * 60.0).max(5.0);
             let mid = m.nouvel_id();
             m.missiles.insert(mid, MissileVol { id: mid, proprio: pid, genre: genre.clone(), depart, cible, progres: 0.0, duree, matiere, explosifs, fissile });
             if let Some(p) = m.pays.get_mut(&pid) {

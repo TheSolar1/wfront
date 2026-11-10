@@ -75,7 +75,7 @@ pub fn forces(m: &Monde, pid: u32) -> Forces {
 /// Portee supplementaire des debarquements grace a la flotte (2 cases par
 /// navire, 30 au plus).
 pub fn bonus_naval(m: &Monde, pid: u32) -> i64 {
-    (forces(m, pid).navires as i64 * 2).min(30)
+    m.portee((forces(m, pid).navires as f64 * 2.0).min(30.0))
 }
 
 /// Ajoute du materiel au stock national.
@@ -102,7 +102,7 @@ pub fn retirer(p: &mut Pays, t: &str, n: u32) -> bool {
 /// Case possedee la plus proche de `cible` portant le batiment `bat`.
 pub fn base_proche(m: &Monde, pid: u32, bat: &str, cible: usize) -> Option<(usize, i64)> {
     (0..m.cases.len())
-        .filter(|&i| m.cases[i].proprio == Some(pid) && m.cases[i].bat.as_deref() == Some(bat) && m.cases[i].irradiee <= m.temps)
+        .filter(|&i| m.cases[i].proprio == Some(pid) && m.cases[i].bat.as_deref() == Some(bat) && (m.cases[i].irradiee as f64) <= m.temps)
         .map(|i| (i, m.distance(i, cible)))
         .min_by_key(|&(_, d)| d)
 }

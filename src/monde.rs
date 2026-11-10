@@ -13,14 +13,16 @@ pub struct Case {
     pub terrain: u8,
     pub depot: u8,
     pub proprio: Option<u32>,
-    pub bat: Option<String>,
+    /// Batiment (texte court : 16 octets au lieu de 24, la carte compte des
+    /// millions de cases).
+    pub bat: Option<Box<str>>,
     pub niv: u8,
     /// Temps de jeu (s) jusqu'auquel la case est irradiee.
-    pub irradiee: f64,
+    pub irradiee: f32,
     /// Degats cumules par les bombardements (300 = -1 niveau).
-    pub degats: f64,
+    pub degats: f32,
     /// Numero de revision : envoye aux clients quand il change.
-    pub rev: u64,
+    pub rev: u32,
     /// Habitants de la case (demographie.rs), meme sans proprietaire.
     #[serde(default, skip_serializing_if = "zero_f32")]
     pub hab: f32,
@@ -372,6 +374,8 @@ pub struct Monde {
     pub largeur: usize,
     pub hauteur: usize,
     pub graine: u64,
+    /// Sauvegarde compacte (des millions de cases) : voir cases_compactes.
+    #[serde(with = "cases_compactes")]
     pub cases: Vec<Case>,
     pub pays: BTreeMap<u32, Pays>,
     pub armees: BTreeMap<u32, Armee>,
@@ -436,6 +440,12 @@ pub struct Monde {
     pub histos: BTreeMap<u32, Vec<Vec<f64>>>,
     #[serde(skip)]
     pub demo_acc: f64,
+    /// Cases modifiees recemment : (revision, case).
+    #[serde(skip)]
+    pub journal: VecDeque<(u64, usize)>,
+    /// Nombre de cases de chaque nation (mis a jour a chaque tick).
+    #[serde(skip)]
+    pub nb_cases: HashMap<u32, usize>,
     #[serde(skip)]
     pub occ_acc: f64,
 }
@@ -494,7 +504,7 @@ impl Monde {
 
     /// Zone morte d'un trou noir : plus personne ne peut y vivre ni la prendre.
     pub fn zone_morte(&self, i: usize) -> bool {
-        self.cases[i].irradiee > self.temps
+        (self.cases[i].irradiee as f64) > self.temps
     }
 
     pub fn est_cote(&self, i: usize) -> bool {
@@ -504,7 +514,13 @@ impl Monde {
 
     pub fn toucher(&mut self, i: usize) {
         self.rev += 1;
-        self.cases[i].rev = self.rev;
+        self.cases[i].rev = self.rev as u32;
+        // Journal des cases modifiees : les clients n'envoient que celles-ci
+        // (pas de parcours de toute la carte a chaque tick).
+        self.journal.push_back((self.rev, i));
+        if self.journal.len() > 400_000 {
+            self.journal.pop_front();
+        }
     }
 
     pub fn nouvel_id(&mut self) -> u32 {
@@ -690,7 +706,9 @@ fn placer_gisements_reels(cases: &mut [Case], regions: &[u8], largeur: usize, gr
 }
 
 /// Taille minimale (en cases) d'un vrai pays pour etre jouable.
-pub const MIN_CASES: usize = 30;
+/// Seuil pour qu'un vrai pays soit jouable (carte fine de 2124 cases de
+/// large : la Belgique en a ~126, le Luxembourg ~11).
+pub const MIN_CASES: usize = 50;
 
 fn hauteur_monde_reel(largeur: usize) -> usize {
     let c = monde_reel();
@@ -978,6 +996,19 @@ impl Monde {
         }
     }
 
+    /// Finesse de la carte : 1 pour la carte de reference (708 cases de
+    /// large), 3 pour la carte fine (2124). Les grandeurs comptees en cases
+    /// (portees, couts par case, vitesses) s'y adaptent pour que le jeu se
+    /// joue a l'identique sur la meme geographie.
+    pub fn echelle(&self) -> f64 {
+        if self.monde_reel { (self.largeur as f64 / 708.0).max(1.0) } else { 1.0 }
+    }
+
+    /// Une portee en cases de la carte de reference, sur cette carte.
+    pub fn portee(&self, cases: f64) -> i64 {
+        (cases * self.echelle()).round() as i64
+    }
+
     /// Position normalisee (0..1) du centre de la case sur la carte du monde.
     pub fn uv_case(&self, i: usize) -> (f64, f64) {
         let (x, y) = (i % self.largeur, i / self.largeur);
@@ -1054,6 +1085,8 @@ impl Monde {
             histos: BTreeMap::new(),
             demo_acc: 0.0,
             occ_acc: 0.0,
+            journal: VecDeque::new(),
+            nb_cases: HashMap::new(),
         };
 
         // La mer cotiere est la mer qui touche une terre ; le reste
@@ -1173,7 +1206,7 @@ mod tests_monde_reel {
 
     #[test]
     fn chaque_vrai_pays_a_sa_place() {
-        let m = Monde::generer_monde_reel(708, 3);
+        let m = Monde::generer_monde_reel(2124, 3);
         assert!(m.monde_reel);
         assert_eq!(m.bots_admin, Some(0), "pas d'ordinateur sur la carte du monde");
         let n = pays_reels().len();
@@ -1183,7 +1216,12 @@ mod tests_monde_reel {
             taille[r as usize] += 1;
         }
         let jouables = (1..=n).filter(|&k| m.pays_reel_jouable(k as u8)).count();
-        assert!((90..140).contains(&jouables), "{jouables} pays jouables");
+        assert!((140..185).contains(&jouables), "{jouables} pays jouables");
+        // Carte fine : la Belgique, les Pays-Bas, la Suisse, l'Irlande et les
+        // pays baltes sont jouables.
+        for code in ["BE", "NL", "CH", "IE", "EE", "LV", "LT", "SK", "HR"] {
+            assert!(m.pays_reel_jouable(index_pays(code)), "{code} jouable");
+        }
         // Plus aucune terre sans pays.
         let orphelines = (0..m.cases.len()).filter(|&i| est_terre(m.cases[i].terrain) && m.region(i) == 0).count();
         assert_eq!(orphelines, 0, "terres sans pays");
@@ -1226,8 +1264,8 @@ mod tests_monde_reel {
     #[test]
     fn un_joueur_prend_un_vrai_pays_libre() {
         use crate::jeu::{commande, Joueur, Regles};
-        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 708 };
-        let mut m = Monde::generer_monde_reel(708, 9);
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 2124 };
+        let mut m = Monde::generer_monde_reel(2124, 9);
         let fr = index_pays("FR");
         let ja = Joueur { user_id: 1, nom: "Alice", admin: false, triche: false };
         let jb = Joueur { user_id: 2, nom: "Bob", admin: false, triche: false };
@@ -1253,8 +1291,8 @@ mod tests_monde_reel {
     #[test]
     fn habitants_religions_et_revoltes_du_monde() {
         use crate::jeu::{commande, tick, Joueur, Regles};
-        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 708 };
-        let mut m = Monde::generer_monde_reel(708, 3);
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 2124 };
+        let mut m = Monde::generer_monde_reel(2124, 3);
         // Les vraies religions aux vrais endroits.
         let rel = |m: &Monde, lon: f64, lat: f64| m.cases[case_de(m, lon, lat)].rel;
         for (lieu, lon, lat, r) in [
@@ -1320,8 +1358,8 @@ mod tests_monde_reel {
     #[test]
     fn on_ne_construit_pas_en_montagne() {
         use crate::jeu::{commande, Joueur, Regles};
-        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 708 };
-        let mut m = Monde::generer_monde_reel(708, 5);
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 2124 };
+        let mut m = Monde::generer_monde_reel(2124, 5);
         let j = Joueur { user_id: 7, nom: "Nora", admin: false, triche: false };
         commande(&mut m, &j, &serde_json::json!({"action": "rejoindre", "pays_reel": index_pays("NP"), "couleur": "#ef4444", "spe": "militaire"}), &regles).unwrap();
         let pid = m.pays.values().find(|p| p.user_id == 7).unwrap().id;
@@ -1351,7 +1389,7 @@ mod statistiques_monde_reel {
     #[ignore]
     fn statistiques() {
         use crate::defs::*;
-        let m = super::Monde::generer_monde_reel(708, 1);
+        let m = super::Monde::generer_monde_reel(2124, 1);
         let n = super::pays_reels().len();
         let mut t = vec![(0usize, [0usize; 4]); n + 1];
         for (i, c) in m.cases.iter().enumerate() {
@@ -1367,5 +1405,155 @@ mod statistiques_monde_reel {
         for (c, nom, g) in &v {
             println!("{:>5} cases  petrole {:>3}  commun {:>3}  radioactif {:>3}  rare {:>3}  {}", c, g[0], g[1], g[2], g[3], nom);
         }
+    }
+}
+
+/// Compression par suites : paires (longueur 1..255, octet), en base64.
+pub fn rle_b64(v: &[u8]) -> String {
+    use base64::Engine as _;
+    let mut out = Vec::with_capacity(v.len() / 8);
+    let mut i = 0;
+    while i < v.len() {
+        let x = v[i];
+        let mut n = 1;
+        while i + n < v.len() && v[i + n] == x && n < 255 {
+            n += 1;
+        }
+        out.push(n as u8);
+        out.push(x);
+        i += n;
+    }
+    base64::engine::general_purpose::STANDARD.encode(out)
+}
+
+pub fn rle_depuis_b64(s: &str, n: usize) -> Option<Vec<u8>> {
+    use base64::Engine as _;
+    let b = base64::engine::general_purpose::STANDARD.decode(s).ok()?;
+    let mut v = Vec::with_capacity(n);
+    for p in b.chunks_exact(2) {
+        v.extend(std::iter::repeat(p[1]).take(p[0] as usize));
+    }
+    (v.len() == n).then_some(v)
+}
+
+/// Sauvegarde des cases en colonnes compactes (terrain et gisements par
+/// suites, proprietaires par suites, batiments et etats rares en listes,
+/// habitants des terres en binaire) au lieu d'un objet JSON par case : la
+/// carte fine compte plus de deux millions de cases. Relit aussi l'ancien
+/// format (une liste d'objets).
+mod cases_compactes {
+    use super::{est_terre, rle_b64, rle_depuis_b64, Case};
+    use base64::Engine as _;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    #[derive(Serialize, Deserialize)]
+    struct Compact {
+        n: usize,
+        terrain: String,
+        depot: String,
+        /// Suites de proprietaires : [debut, longueur, id].
+        proprio: Vec<[u32; 3]>,
+        /// Batiments : (case, type, niveau).
+        bats: Vec<(usize, String, u8)>,
+        irradiee: Vec<(usize, f32)>,
+        degats: Vec<(usize, f32)>,
+        revolte: Vec<usize>,
+        /// Habitants des cases de terre, dans l'ordre (f32, base64).
+        hab: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Forme {
+        Compact(Compact),
+        Liste(Vec<Case>),
+    }
+
+    pub fn serialize<S: Serializer>(cases: &Vec<Case>, s: S) -> Result<S::Ok, S::Error> {
+        let n = cases.len();
+        let mut proprio: Vec<[u32; 3]> = Vec::new();
+        let mut i = 0;
+        while i < n {
+            match cases[i].proprio {
+                None => i += 1,
+                Some(p) => {
+                    let mut k = 1;
+                    while i + k < n && cases[i + k].proprio == Some(p) {
+                        k += 1;
+                    }
+                    proprio.push([i as u32, k as u32, p]);
+                    i += k;
+                }
+            }
+        }
+        let mut hab = Vec::new();
+        for c in cases.iter().filter(|c| est_terre(c.terrain)) {
+            hab.extend_from_slice(&c.hab.to_le_bytes());
+        }
+        let compact = Compact {
+            n,
+            terrain: rle_b64(&cases.iter().map(|c| c.terrain).collect::<Vec<_>>()),
+            depot: rle_b64(&cases.iter().map(|c| c.depot).collect::<Vec<_>>()),
+            proprio,
+            bats: cases.iter().enumerate().filter_map(|(i, c)| c.bat.as_ref().map(|b| (i, b.to_string(), c.niv))).collect(),
+            irradiee: cases.iter().enumerate().filter(|(_, c)| c.irradiee > 0.0).map(|(i, c)| (i, c.irradiee)).collect(),
+            degats: cases.iter().enumerate().filter(|(_, c)| c.degats > 0.0).map(|(i, c)| (i, c.degats)).collect(),
+            revolte: cases.iter().enumerate().filter(|(_, c)| c.revolte).map(|(i, _)| i).collect(),
+            hab: base64::engine::general_purpose::STANDARD.encode(hab),
+        };
+        compact.serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Case>, D::Error> {
+        let c = match Forme::deserialize(d)? {
+            Forme::Liste(v) => return Ok(v),
+            Forme::Compact(c) => c,
+        };
+        let erreur = |q: &str| serde::de::Error::custom(format!("cases compactes : {} invalide", q));
+        let terrain = rle_depuis_b64(&c.terrain, c.n).ok_or_else(|| erreur("terrain"))?;
+        let depot = rle_depuis_b64(&c.depot, c.n).ok_or_else(|| erreur("depot"))?;
+        let mut cases: Vec<Case> = terrain.iter().zip(&depot).map(|(&t, &dp)| Case { terrain: t, depot: dp, ..Default::default() }).collect();
+        for [debut, long, id] in c.proprio {
+            for i in debut as usize..(debut as usize + long as usize).min(c.n) {
+                cases[i].proprio = Some(id);
+            }
+        }
+        for (i, b, niv) in c.bats {
+            if i < c.n {
+                cases[i].bat = Some(b.into());
+                cases[i].niv = niv;
+            }
+        }
+        for (i, x) in c.irradiee {
+            if i < c.n {
+                cases[i].irradiee = x;
+            }
+        }
+        for (i, x) in c.degats {
+            if i < c.n {
+                cases[i].degats = x;
+            }
+        }
+        for i in c.revolte {
+            if i < c.n {
+                cases[i].revolte = true;
+            }
+        }
+        // Les clients recoivent les cases « modifiees » : tout ce qui n'est
+        // pas une case vierge l'est apres un chargement.
+        for cs in cases.iter_mut() {
+            if cs.proprio.is_some() || cs.bat.is_some() || cs.irradiee > 0.0 || cs.revolte {
+                cs.rev = 1;
+            }
+        }
+        let hab = base64::engine::general_purpose::STANDARD.decode(&c.hab).map_err(|_| erreur("hab"))?;
+        let mut k = 0;
+        for cs in cases.iter_mut().filter(|c| est_terre(c.terrain)) {
+            if k + 4 <= hab.len() {
+                cs.hab = f32::from_le_bytes([hab[k], hab[k + 1], hab[k + 2], hab[k + 3]]);
+            }
+            k += 4;
+        }
+        Ok(cases)
     }
 }

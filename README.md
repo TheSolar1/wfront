@@ -161,7 +161,7 @@ The VEX session lasts one hour (`datecra` in `loginc`). A game already open keep
 | `session_duree_s` | `3600` | Same duration as VEX |
 | `verifier_ip`, `verifier_navigateur` | `true` | Same checks as VEX's `verifier_session` |
 | `carte` | `monde` | `monde` = real world map where each player takes a real country (no computer nations), `aleatoire` = invented continents. Used for a new world (first launch, or admin "New map") |
-| `largeur_monde` | `708` | Width of the world map (708 × 370 = 262,000 hexes); the height follows real proportions |
+| `largeur_monde` | `2124` | Width of the world map (2124 × 1111 = 2.36 million hexes); the height follows real proportions. Admin "new map" also accepts `{"largeur": n}` |
 | `carte_largeur`, `carte_hauteur`, `graine` | `384`, `240`, `0` | Size of the random map (`aleatoire`). `graine` changes deposits, and the whole map with `aleatoire` (0: random) |
 | `vitesse` | `1.0` | Speeds up the whole game (tests) |
 | `protection_heures` | `2` | How long a new country cannot be attacked |
