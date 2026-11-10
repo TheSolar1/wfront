@@ -214,8 +214,8 @@ function majBarre() {
   const res = [0, 2, 5, 4, 3].map(i => {
     const r = S.defs.ressources[i];
     const net = bl.prod[i] - bl.conso[i];
-    const cap = i === 0 ? bl.stock * 20 : bl.stock;
-    const plein = m.res[i] >= cap * 0.98;
+    // Pas de limite aux credits : seuls les minerais ont un stockage.
+    const plein = i !== 0 && m.res[i] >= bl.stock * 0.98;
     return `<div class="wf-res ${net < 0 && m.res[i] < 50 ? 'critique' : ''} ${plein ? 'plein' : ''} ${S.resPop === i ? 'ouvert' : ''}" data-res="${i}" tabindex="0">
       ${ico(r.icone, '', `color:${r.couleur}`)}<span class="wf-res-txt"><span><b>${fmt(m.res[i])}</b><small class="${net >= 0 ? 'pos' : 'neg'}">${signe(net * S.vitesse)}</small></span><em>${esc(r.court || r.nom)}</em></span></div>`;
   }).join('');
@@ -246,15 +246,15 @@ function majPopRes() {
   if (!el || !S.moi) { if (pop) pop.hidden = true; return; }
   if (!pop) { pop = document.createElement('div'); pop.id = 'wf-res-pop'; pop.className = 'wf-res-pop'; document.body.appendChild(pop); }
   const r = S.defs.ressources[i], m = S.moi, bl = m.bilan;
-  const cap = i === 0 ? bl.stock * 20 : bl.stock;
+  const cap = i === 0 ? Infinity : bl.stock;
   const net = bl.prod[i] - bl.conso[i];
   const prod = (PRODUCTEURS[i] || []).filter(b => bl.niv?.[b]).map(b => {
     const d = S.defs.batiments.find(x => x.id === b);
     return d ? `<span>${ico(d.icone)} ${esc(d.nom)} <b>${bl.niv[b]}</b></span>` : '';
   }).join('');
   const prix = r.prix_base > 0 && S.prix?.[i] ? `<div class="wf-res-pop-l">${ico('scale-balanced')} Prix au marché : <b>${fmt(S.prix[i], 1)}</b> crédits</div>` : '';
-  pop.innerHTML = `<div class="wf-res-pop-tete">${ico(r.icone, 'grand')}<div><b>${esc(r.nom)}</b><small>${fmt(m.res[i])} / ${fmt(cap)} en stock</small></div></div>
-    <div class="wf-barre"><div style="width:${Math.min(100, m.res[i] / Math.max(1, cap) * 100).toFixed(1)}%;background:${r.couleur}"></div></div>
+  pop.innerHTML = `<div class="wf-res-pop-tete">${ico(r.icone, 'grand')}<div><b>${esc(r.nom)}</b><small>${i === 0 ? `${fmt(m.res[i])} en caisse · sans limite` : `${fmt(m.res[i])} / ${fmt(cap)} en stock`}</small></div></div>
+    ${i === 0 ? '' : `<div class="wf-barre"><div style="width:${Math.min(100, m.res[i] / Math.max(1, cap) * 100).toFixed(1)}%;background:${r.couleur}"></div></div>`}
     <div class="wf-res-pop-chiffres"><span>Production <b class="pos">${signe(bl.prod[i] * S.vitesse)}</b></span><span>Consommation <b class="neg">${bl.conso[i] ? '-' + fmt(bl.conso[i] * S.vitesse, 1) : '0'}</b></span><span>Solde <b class="${net >= 0 ? 'pos' : 'neg'}">${signe(net * S.vitesse)}</b></span><small>par minute</small></div>
     ${r.contenu ? `<div class="wf-res-pop-l"><em>Contient</em>${esc(r.contenu)}</div>` : ''}
     ${r.usage ? `<div class="wf-res-pop-l"><em>Sert à</em>${esc(r.usage)}</div>` : ''}

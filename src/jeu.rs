@@ -1565,14 +1565,19 @@ fn pertes_frappe(m: &mut Monde, zone: &[(usize, f64)]) -> f64 {
             *touches.entry(o).or_insert(0.0) += letal;
         }
     }
+    // Les habitants des cases touchees meurent (en milliers ; la population
+    // des nations suit au prochain calcul demographique).
     let mut morts = 0.0;
+    for &(v, letal) in zone {
+        let c = &mut m.cases[v];
+        let tues = c.hab as f64 * letal.clamp(0.0, 1.0);
+        c.hab = (c.hab as f64 - tues).max(0.0) as f32;
+        morts += tues / 1000.0;
+    }
     for (o, poids) in touches {
         let cases = m.cases.iter().filter(|c| c.proprio == Some(o)).count().max(1) as f64;
         if let Some(p) = m.pays.get_mut(&o) {
-            let tues = (p.pop / cases * poids).min(p.pop - 10.0).max(0.0);
-            p.pop -= tues;
             p.troupes = (p.troupes - p.troupes / cases * poids).max(0.0);
-            morts += tues;
         }
     }
     morts
@@ -1670,7 +1675,8 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
         // est deja au-dessus (dons de l'admin, achats, butin) n'est pas perdu.
         for i in 0..NB_RES {
             let delta = (b.prod[i] - b.conso[i]) * dm;
-            let plafond = if i == CR { b.stock * 20.0 } else { b.stock };
+            // Pas de limite a l'argent : seuls les minerais ont un stockage.
+            let plafond = if i == CR { f64::INFINITY } else { b.stock };
             p.res[i] = if delta > 0.0 {
                 if p.res[i] >= plafond { p.res[i] } else { (p.res[i] + delta).min(plafond) }
             } else {
