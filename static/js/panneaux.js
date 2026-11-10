@@ -308,8 +308,8 @@ function panneauConstruction(S) {
 // Menu de la case (inspecteur) : tout se fait depuis la case cliquée
 // ══════════════════════════════════════════════════════════════════
 const BAT_PRODUCTION = {
-  ferme: [1, 'nourriture'], mine: [2, 'minerai commun'], carriere: [2, 'minerai commun'], puits_petrole: [2, 'minerai commun'],
-  foreuse: [3, 'minerai légendaire'], mine_uranium: [4, 'minerai radioactif'], extracteur_tr: [5, 'minerai rare'],
+  ferme: [1, 'nourriture'], mine: [2, 'minerais'], carriere: [2, 'minerais'], puits_petrole: [2, 'minerais'],
+  foreuse: [3, 'fragments de météorite'], mine_uranium: [4, 'uranium'], extracteur_tr: [5, 'minéraux rares'],
 };
 
 export function menuCase(S, i) {
@@ -355,9 +355,9 @@ export function menuCase(S, i) {
   } else if (b === 'enrichissement' || b === 'centrale_nucleaire') {
     const sur = m.techs.includes('ind_nucleaire_civil');
     html += `<div class="wf-menu-bloc">
-      <div class="wf-insp-ligne">${ico('radiation')} Minerai radioactif : <b>${fmt(m.res[4], 1)}</b> · uranium enrichi : <b>${fmt(m.ur_enrichi, 1)}</b></div>
+      <div class="wf-insp-ligne">${ico('res-uranium')} Uranium : <b>${fmt(m.res[4], 1)}</b> · uranium enrichi : <b>${fmt(m.ur_enrichi, 1)}</b></div>
       <div class="wf-insp-ligne petit">${esc(d.desc)}</div>
-      ${m.res[4] < 1 && b === 'enrichissement' ? `<div class="wf-insp-ligne petit">${ico('scale-balanced')} Pas de minerai radioactif : achetez-en au marché ou construisez une mine radioactive.</div>` : ''}
+      ${m.res[4] < 1 && b === 'enrichissement' ? `<div class="wf-insp-ligne petit">${ico('scale-balanced')} Pas d'uranium : achetez-en au marché ou construisez une mine d'uranium.</div>` : ''}
       ${b === 'centrale_nucleaire' && !sur ? `<div class="wf-insp-ligne neg">${ico('triangle-exclamation')} Sans « Nucléaire civil », chaque amélioration a 25 % de risque d'accident.</div>` : ''}
     </div>`;
   } else if (b === 'usine') {
@@ -1098,9 +1098,9 @@ function panneauAide(S) {
   <h3>${ico('map-location-dot')} Faire grandir son pays</h3>
   <p>Comme dans OpenFront, votre pays grandit avec vos <b>troupes</b>. Faites un <b>clic droit</b> sur une case : une part de votre réserve (curseur « Envoyer » en bas à gauche de la carte) part s'en emparer, case par case, en commençant par celle que vous avez visée. Sur une terre neutre, votre pays s'agrandit ; chez une nation avec qui vous êtes en guerre, vous l'envahissez (son relief, ses forts et ses troupes résistent) ; sur une côte lointaine, vos troupes débarquent depuis un chantier naval. Le <b>clic gauche</b> sert à construire.</p>
   <h4>${ico('gears')} Minerais et fabrication</h4>
-  <p>Les <b>carrières</b> (partout) et les mines extraient quatre minerais : commun, rare (gisements de terres rares), radioactif (gisements d'uranium) et légendaire (cratères de météorite, très rares). La <b>raffinerie</b> les transforme en métal, terres rares, uranium, ou en n'importe lequel des 118 éléments du tableau périodique. La <b>fabrique</b> assemble ensuite plus de 100 produits, de l'acier jusqu'au trou noir : son niveau fixe la complexité des recettes. Les éléments légendaires se désintègrent vite, comme dans la réalité : utilisez-les sans attendre.</p>
+  <p>Les <b>carrières</b> (partout) et les mines extraient quatre ressources : les minerais (fer, cuivre, bauxite, charbon), les minéraux rares (terres rares, lithium, cobalt, or), l'uranium et les fragments de météorite (cratères, très rares). La <b>raffinerie</b> les transforme en métal, terres rares, uranium, ou en n'importe lequel des 118 éléments du tableau périodique. La <b>fabrique</b> assemble ensuite plus de 100 produits, de l'acier jusqu'au trou noir : son niveau fixe la complexité des recettes. Les éléments légendaires se désintègrent vite, comme dans la réalité : utilisez-les sans attendre.</p>
   <h3>${ico('gem')} Ressources</h3>
-  <p>Chaque région a ses gisements : filons de minerai commun (collines, montagnes, déserts), minerai radioactif (montagnes, toundra), minerai rare (forêts, collines), cratères de météorite (minerai légendaire, très rares) et sols fertiles. Une carrière extrait du minerai commun n'importe où. Ce qui vous manque s'achète au <b>marché mondial</b> ou se négocie avec vos alliés. L'<b>électricité</b> n'est pas stockée : si la consommation dépasse la production, tous les bâtiments consommateurs tournent au ralenti.</p>
+  <p>Chaque région a ses gisements : filons de minerais (collines, montagnes, déserts), uranium (montagnes, toundra), minéraux rares (forêts, collines), cratères de météorite (très rares) et sols fertiles. Une carrière extrait des minerais n'importe où. Ce qui vous manque s'achète au <b>marché mondial</b> ou se négocie avec vos alliés. L'<b>électricité</b> n'est pas stockée : si la consommation dépasse la production, tous les bâtiments consommateurs tournent au ralenti.</p>
   <h3>${ico('flask')} Recherche</h3>
   <p>Quatre branches (militaire, économie, diplomatie, industrie) débloquent bâtiments, unités et bonus. Les branches se croisent : les chars demandent la sidérurgie, les missiles l'aérospatiale, le nucléaire militaire le nucléaire civil.</p>
   <h3>${ico('person-military-rifle')} Armées et combat</h3>
@@ -1199,7 +1199,8 @@ function panneauAdmin(S) {
 // ══════════════════════════════════════════════════════════════════
 // Fabrication : raffinerie (tableau periodique), fabrique, produits
 // ══════════════════════════════════════════════════════════════════
-const FAMILLES = { 1: ['Commun', '#94a3b8'], 2: ['Rare', '#a855f7'], 3: ['Radioactif', '#22c55e'], 4: ['Légendaire', '#f43f5e'] };
+// Famille d'un element : la ressource dont on le tire.
+const FAMILLES = { 1: ['Minerais', '#94a3b8'], 2: ['Minéraux rares', '#a855f7'], 3: ['Uranium', '#22c55e'], 4: ['Météorite', '#f43f5e'] };
 
 export function nomObjet(S, id) {
   return S.defs.elements.find(e => e.id === id)?.nom || S.defs.minerais.find(x => x.id === id)?.nom

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><!-- Minerais : bloc de roche avec veines de fer, cuivre et charbon -->
+<path d="M8 40 16 18l18-8 20 10 4 22-14 14H20z" fill="#8b929c" stroke="#4b5260" stroke-width="2.2" stroke-linejoin="round"/>
+<path d="M16 18l18-8 20 10-16 6z" fill="#b3b9c2"/><path d="M38 26l16-6 4 22-18 4z" fill="#6c7380"/><path d="M38 26l2 20-20 10-12-16 8-22z" fill="#9aa1ab" opacity=".55"/>
+<path d="M20 30l8 3 5 9M24 44l7-2" stroke="#c0622a" stroke-width="3" stroke-linecap="round" fill="none"/>
+<path d="M44 33l6 1" stroke="#d98a4a" stroke-width="3" stroke-linecap="round"/>
+<circle cx="29" cy="20" r="3" fill="#2d2f33"/><circle cx="46" cy="44" r="2.6" fill="#2d2f33"/><circle cx="17" cy="38" r="2.2" fill="#2d2f33"/>
+</svg>

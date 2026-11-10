@@ -216,8 +216,8 @@ function majBarre() {
     const net = bl.prod[i] - bl.conso[i];
     const cap = i === 0 ? bl.stock * 20 : bl.stock;
     const plein = m.res[i] >= cap * 0.98;
-    return `<div class="wf-res ${net < 0 && m.res[i] < 50 ? 'critique' : ''} ${plein ? 'plein' : ''}" title="${esc(r.nom)} : ${fmt(m.res[i])} / ${fmt(cap)}\nProduction ${signe(bl.prod[i])}/min · consommation ${fmt(bl.conso[i], 1)}/min">
-      ${ico(r.icone, '', `color:${r.couleur}`)}<span class="wf-res-txt"><span><b>${fmt(m.res[i])}</b><small class="${net >= 0 ? 'pos' : 'neg'}">${signe(net * S.vitesse)}</small></span><em>${esc(r.nom.replace('Minerai ', ''))}</em></span></div>`;
+    return `<div class="wf-res ${net < 0 && m.res[i] < 50 ? 'critique' : ''} ${plein ? 'plein' : ''} ${S.resPop === i ? 'ouvert' : ''}" data-res="${i}" tabindex="0">
+      ${ico(r.icone, '', `color:${r.couleur}`)}<span class="wf-res-txt"><span><b>${fmt(m.res[i])}</b><small class="${net >= 0 ? 'pos' : 'neg'}">${signe(net * S.vitesse)}</small></span><em>${esc(r.court || r.nom)}</em></span></div>`;
   }).join('');
   const elecOk = bl.elec_ratio >= 0.999;
   const protection = Math.max(0, m.protection - Date.now() / 1000);
@@ -233,7 +233,54 @@ function majBarre() {
     <div class="wf-res" title="Troupes : ${fmt(m.troupes)} / ${fmt(bl.troupes_max)} (clic droit sur une case pour en envoyer)">${ico('person-military-rifle')}<b>${fmt(m.troupes)}</b></div>
     <span class="wf-espace"></span>
     ${protection > 0 ? `<div class="wf-res bleu" title="Aucune nation ne peut vous déclarer la guerre (sauf si vous attaquez)">${ico('shield-halved')}<b>${duree(protection)}</b></div>` : ''}`;
+  majPopRes();
 }
+
+// ── Detail d'une ressource au survol (ou au toucher) ──────────────
+// Batiments qui produisent chaque ressource (index des ressources).
+const PRODUCTEURS = { 0: ['capitale', 'ville', 'usine', 'puits_petrole', 'banque'], 2: ['capitale', 'mine', 'carriere'], 3: ['foreuse', 'carriere'], 4: ['mine_uranium', 'carriere'], 5: ['extracteur_tr', 'carriere'] };
+function majPopRes() {
+  let pop = document.getElementById('wf-res-pop');
+  const i = S.resPop;
+  const el = i != null ? document.querySelector(`#wf-resbar [data-res="${i}"]`) : null;
+  if (!el || !S.moi) { if (pop) pop.hidden = true; return; }
+  if (!pop) { pop = document.createElement('div'); pop.id = 'wf-res-pop'; pop.className = 'wf-res-pop'; document.body.appendChild(pop); }
+  const r = S.defs.ressources[i], m = S.moi, bl = m.bilan;
+  const cap = i === 0 ? bl.stock * 20 : bl.stock;
+  const net = bl.prod[i] - bl.conso[i];
+  const prod = (PRODUCTEURS[i] || []).filter(b => bl.niv?.[b]).map(b => {
+    const d = S.defs.batiments.find(x => x.id === b);
+    return d ? `<span>${ico(d.icone)} ${esc(d.nom)} <b>${bl.niv[b]}</b></span>` : '';
+  }).join('');
+  const prix = r.prix_base > 0 && S.prix?.[i] ? `<div class="wf-res-pop-l">${ico('scale-balanced')} Prix au marché : <b>${fmt(S.prix[i], 1)}</b> crédits</div>` : '';
+  pop.innerHTML = `<div class="wf-res-pop-tete">${ico(r.icone, 'grand')}<div><b>${esc(r.nom)}</b><small>${fmt(m.res[i])} / ${fmt(cap)} en stock</small></div></div>
+    <div class="wf-barre"><div style="width:${Math.min(100, m.res[i] / Math.max(1, cap) * 100).toFixed(1)}%;background:${r.couleur}"></div></div>
+    <div class="wf-res-pop-chiffres"><span>Production <b class="pos">${signe(bl.prod[i] * S.vitesse)}</b></span><span>Consommation <b class="neg">${bl.conso[i] ? '-' + fmt(bl.conso[i] * S.vitesse, 1) : '0'}</b></span><span>Solde <b class="${net >= 0 ? 'pos' : 'neg'}">${signe(net * S.vitesse)}</b></span><small>par minute</small></div>
+    ${r.contenu ? `<div class="wf-res-pop-l"><em>Contient</em>${esc(r.contenu)}</div>` : ''}
+    ${r.usage ? `<div class="wf-res-pop-l"><em>Sert à</em>${esc(r.usage)}</div>` : ''}
+    ${prod ? `<div class="wf-res-pop-l"><em>Vos producteurs</em><div class="wf-res-pop-bats">${prod}</div></div>` : ''}
+    ${prix}`;
+  pop.hidden = false;
+  const b = el.getBoundingClientRect(), w = pop.offsetWidth;
+  pop.style.left = Math.max(8, Math.min(innerWidth - w - 8, b.left + b.width / 2 - w / 2)) + 'px';
+  pop.style.top = (b.bottom + 6) + 'px';
+}
+$('#wf-resbar').addEventListener('mouseover', e => {
+  const r = e.target.closest('[data-res]');
+  const i = r ? +r.dataset.res : null;
+  if (i !== S.resPop) { S.resPop = i; majPopRes(); }
+});
+$('#wf-resbar').addEventListener('mouseleave', () => { S.resPop = null; majPopRes(); });
+// Ecran tactile : un toucher ouvre ou ferme le detail.
+$('#wf-resbar').addEventListener('click', e => {
+  const r = e.target.closest('[data-res]');
+  if (!r) return;
+  S.resPop = S.resPop === +r.dataset.res ? null : +r.dataset.res;
+  majPopRes();
+});
+document.addEventListener('pointerdown', e => {
+  if (S.resPop != null && !e.target.closest('#wf-resbar') && !e.target.closest('#wf-res-pop')) { S.resPop = null; majPopRes(); }
+});
 
 // ══════════════════════════════════════════════════════════════════
 // Menu lateral
@@ -1120,8 +1167,8 @@ function dirigeant(k) {
   return null;
 }
 
-/** Gisements d'un vrai pays (petrole, minerai commun, radioactif, rare), en icones. */
-const GISEMENTS = [['oil-well', 'pétrole'], ['mountain', 'minerai commun'], ['radiation', 'minerai radioactif'], ['gem', 'minerai rare']];
+/** Gisements d'un vrai pays (petrole, minerais, uranium, mineraux rares), en logos. */
+const GISEMENTS = [['res-petrole', 'pétrole'], ['res-minerais', 'minerais'], ['res-uranium', 'uranium'], ['res-mineraux-rares', 'minéraux rares']];
 function gisementsHtml(p, long = false) {
   const g = p.gisements || [0, 0, 0, 0];
   const l = GISEMENTS.map(([ic, nom], k) => g[k] ? `<span class="wf-gis g${k}" title="${g[k]} gisement${g[k] > 1 ? 's' : ''} de ${nom}">${ico(ic)}${long ? `${g[k]} ${nom}` : g[k]}</span>` : '').join('');
@@ -1134,10 +1181,10 @@ function ouvrirChoixPays(refonder = false) {
   const couleur = d.couleurs[Math.floor(Math.random() * d.couleurs.length)];
   const liste = [...S.reel.pays].sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
   const libres = liste.filter(p => !dirigeant(p.k)).length;
-  modale(`<div class="wf-modale-tete">${ico('earth-europe')}<div><h2>${refonder ? 'Reprendre un pays' : 'Choisissez votre pays'}</h2><p>Vous dirigez un vrai pays et tout son territoire, outre-mer compris, face aux autres joueurs. Un pays déjà dirigé ne peut pas être pris. ${libres} pays libres sur ${liste.length}. Les ressources sont celles du vrai pays : pétrole, minerai commun (fer, charbon, cuivre), radioactif (uranium) et rare (terres rares, or, cobalt, lithium).</p></div></div>
+  modale(`<div class="wf-modale-tete">${ico('earth-europe')}<div><h2>${refonder ? 'Reprendre un pays' : 'Choisissez votre pays'}</h2><p>Vous dirigez un vrai pays et tout son territoire, outre-mer compris, face aux autres joueurs. Un pays déjà dirigé ne peut pas être pris. ${libres} pays libres sur ${liste.length}. Les ressources sont celles du vrai pays : pétrole, minerais (fer, charbon, cuivre), uranium et minéraux rares (terres rares, or, cobalt, lithium).</p></div></div>
     <div class="wf-form">
       <div class="wf-pays-outils"><input id="f-recherche" placeholder="Rechercher un pays (ex. : France, Japon…)" autocomplete="off">
-        <select id="f-tri" aria-label="Trier les pays"><option value="nom">Trier par nom</option><option value="cases">Les plus grands</option><option value="0">Le plus de pétrole</option><option value="1">Le plus de minerai commun</option><option value="2">Le plus d'uranium</option><option value="3">Le plus de minerai rare</option></select></div>
+        <select id="f-tri" aria-label="Trier les pays"><option value="nom">Trier par nom</option><option value="cases">Les plus grands</option><option value="0">Le plus de pétrole</option><option value="1">Le plus de minerais</option><option value="2">Le plus d'uranium</option><option value="3">Le plus de minéraux rares</option></select></div>
       <div class="wf-pays-liste" id="f-liste">${liste.map(p => {
         const chef = dirigeant(p.k);
         return `<button class="wf-pays-choix ${chef ? 'pris' : ''}" data-act="choisir_pays" data-k="${p.k}" data-nom="${esc(p.nom.toLowerCase())}" ${chef ? 'disabled' : ''}>
