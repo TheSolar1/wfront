@@ -646,7 +646,8 @@ mod tests {
         assurer(&mut m, 1, &regles, 0.0);
         let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
         let avant = m.cases.iter().filter(|c| c.proprio == Some(a)).count();
-        for _ in 0..240 {
+        // Les recrues passent 10 minutes en formation avant de servir.
+        for _ in 0..1200 {
             let bl = jeu::tick(&mut m, 1.0);
             jouer(&mut m, &regles, &bl, 1.0);
         }

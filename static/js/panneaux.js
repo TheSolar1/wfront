@@ -1547,8 +1547,192 @@ function panneauFabrication(S) {
   return html;
 }
 
+
+// ══════════════════════════════════════════════════════════════════
+// Population : main-d'oeuvre, armee de citoyens, natalite, ages,
+// religions et revoltes (demographie.rs). 1 jour reel = 1 an de jeu.
+// ══════════════════════════════════════════════════════════════════
+const COUL_POP = { travail: '#4fa553', chomage: '#a3c9a5', soldats: '#c0392b', recrues: '#e67e22', enfants: '#3b82f6', retraites: '#9ca3af' };
+
+function nb(n) { return fmt(Math.round(n || 0)); }
+
+/** Bonus de fecondite d'une prime (meme formule que le serveur). */
+function bonusPrime(v) { return 0.8 * (1 - Math.exp(-Math.max(0, v) / 15)); }
+
+/** Apercu d'une prime de natalite : naissances et cout par jour. */
+export function apercuPrime(S, v) {
+  const m = S.moi;
+  if (!m) return '';
+  const actuel = m.prime_natalite || 0;
+  const active = actuel > 0 && (m.cout_natalite || 0) > 0;
+  const base = active ? m.naissances / (1 + bonusPrime(actuel)) : m.naissances;
+  const n = base * (1 + bonusPrime(v));
+  return v > 0
+    ? `Environ <b>${nb(n)}</b> naissances par jour (+${Math.round(bonusPrime(v) * 100)} %), pour <b>${nb(n * v)}</b> crédits par jour.`
+    : `Environ <b>${nb(base)}</b> naissances par jour, sans dépense.`;
+}
+
+/** Courbes (SVG) : series = [{ nom, couleur, valeurs: [[t, v]...] }]. */
+function courbes(series, unite = '') {
+  const pts = series.flatMap(x => x.valeurs);
+  if (pts.length < 2) return '';
+  const W = 400, H = 150, g = 46, d = 8, h = 10, b = 22;
+  const t0 = Math.min(...pts.map(p => p[0])), t1 = Math.max(...pts.map(p => p[0]));
+  let v0 = Math.min(...pts.map(p => p[1])), v1 = Math.max(...pts.map(p => p[1]));
+  if (v1 - v0 < Math.max(1, v1 * 0.02)) { const c = (v0 + v1) / 2, e = Math.max(1, Math.abs(c) * 0.02); v0 = c - e; v1 = c + e; }
+  const X = t => g + (t - t0) / Math.max(1, t1 - t0) * (W - g - d);
+  const Y = v => H - b - (v - v0) / (v1 - v0) * (H - b - h);
+  const graduations = [v0, (v0 + v1) / 2, v1].map(v => `<line x1="${g}" x2="${W - d}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" class="wf-graph-grille"/>
+    <text x="${g - 6}" y="${(Y(v) + 3).toFixed(1)}" text-anchor="end">${fmt(v)}${unite}</text>`).join('');
+  const date = t => new Date(t * 1000).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const lignes = series.map(x => x.valeurs.length < 2 ? '' : `<polyline points="${x.valeurs.map(p => `${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ')}" fill="none" stroke="${x.couleur}" stroke-width="2" stroke-linejoin="round"/>`).join('');
+  return `<svg class="wf-graph" viewBox="0 0 ${W} ${H}" role="img">${graduations}${lignes}
+    <text x="${g}" y="${H - 6}">${date(t0)}</text><text x="${W - d}" y="${H - 6}" text-anchor="end">${date(t1)}</text></svg>
+    ${series.length > 1 ? `<div class="wf-graph-legende">${series.map(x => `<span><i style="background:${x.couleur}"></i>${esc(x.nom)}</span>`).join('')}</div>` : ''}`;
+}
+
+/** Pyramide des ages par tranches de 5 ans (hommes a gauche, femmes a droite). */
+function pyramideAges(ages) {
+  if (!ages || !ages.length) return '';
+  const tr = [];
+  for (let a = 0; a < 100; a += 5) tr.push(ages.slice(a, a + 5).reduce((x, y) => x + y, 0));
+  // Les femmes vivent un peu plus longtemps : leur part monte apres 50 ans.
+  const part = a => Math.min(0.75, 0.49 + 0.004 * Math.max(0, a - 50));
+  const max = Math.max(...tr.map((v, k) => Math.max(v * (1 - part(k * 5)), v * part(k * 5)))) || 1;
+  const W = 400, H = 230, m = W / 2, lh = (H - 24) / 20, demi = m - 40;
+  const barres = tr.map((v, k) => {
+    const y = H - 24 - (k + 1) * lh, f = v * part(k * 5), hm = v - f;
+    const wh = hm / max * demi, wf = f / max * demi;
+    return `<rect x="${(m - 20 - wh).toFixed(1)}" y="${(y + 1).toFixed(1)}" width="${wh.toFixed(1)}" height="${(lh - 2).toFixed(1)}" fill="#3b82f6" rx="1.5"/>
+      <rect x="${m + 20}" y="${(y + 1).toFixed(1)}" width="${wf.toFixed(1)}" height="${(lh - 2).toFixed(1)}" fill="#ec4899" rx="1.5"/>
+      ${k % 2 === 0 ? `<text x="${m}" y="${(y + lh - 3).toFixed(1)}" text-anchor="middle">${k * 5}</text>` : ''}`;
+  }).join('');
+  return `<svg class="wf-graph" viewBox="0 0 ${W} ${H}" role="img">${barres}
+    <text x="${m - 20}" y="${H - 6}" text-anchor="end">Hommes</text><text x="${m + 20}" y="${H - 6}">Femmes</text></svg>`;
+}
+
+/** Barre empilee : parts = [[nom, valeur, couleur]...]. */
+function empilee(parts) {
+  const total = parts.reduce((a, p) => a + Math.max(0, p[1]), 0) || 1;
+  return `<div class="wf-empile">${parts.filter(p => p[1] > 0).map(([n, v, c]) => `<i style="flex:${v};background:${c}" title="${esc(n)} : ${nb(v)}"></i>`).join('')}</div>
+    <div class="wf-graph-legende">${parts.map(([n, v, c]) => `<span><i style="background:${c}"></i>${esc(n)} <b>${nb(v)}</b> <small>${Math.round(v / total * 100)} %</small></span>`).join('')}</div>`;
+}
+
+function etapeFormation(k) {
+  return k < 0.15 ? 'Incorporation : visite médicale et paquetage' : k < 0.55 ? 'Classes : formation de base' : k < 0.9 ? 'Exercices sur le terrain' : 'Affectation dans les unités';
+}
+
+function panneauPopulation(S) {
+  const m = S.moi;
+  if (!m) return vide('Vous ne dirigez encore aucune nation.<br><button class="wf-btn" data-act="fonder">Fonder ma nation</button>', 'people-group');
+  const b = m.bilan;
+  const D = S.defs.demographie || { emplois_par_niveau: 800, prime_max: 50 };
+  const total = m.sync || m.pop * 1000;
+  const religions = new Map((S.defs.religions || []).map(r => [r.id, r]));
+  const etat = religions.get(m.religion);
+  const histo = (S.histo || []).slice();
+  const maint = Date.now() / 1000;
+  histo.push([maint, total, b.actifs, b.soldats + b.recrues, m.naissances, m.deces]);
+  const serie = (k, f = x => x) => histo.map(x => [x[0], f(x[k])]);
+  const peu = (S.histo || []).length < 2;
+
+  // ── Recrues en formation ──
+  const vit = S.vitesse || 1;
+  const formation = (m.formation || []).map(l => {
+    const reste = Math.max(0, (l.fin - (S.temps || 0)) / vit);
+    const k = Math.min(1, Math.max(0, 1 - reste * vit / Math.max(1, b.duree_formation)));
+    return `<div class="wf-ligne"><span class="wf-ligne-ic">${ico('person-rifle')}</span><div class="wf-ligne-corps"><b>${nb(l.n)} recrues</b>
+      <small>${etapeFormation(k)} · prêtes dans ${duree(reste)}</small>${barre(k)}</div></div>`;
+  }).join('');
+
+  // ── Revoltes ──
+  const revoltes = (S.revoltes || []).filter(r => r.pays === m.id).map(r => {
+    const rel = religions.get(r.religion);
+    const reste = r.limite - maint;
+    const besoin = Math.ceil((r.rebelles || 0) * 1.15) - (r.forces || 0);
+    const defaut = Math.min(Math.floor(m.troupes), Math.max(10, Math.ceil((r.rebelles || 0) * 1.4)));
+    return `<div class="wf-revolte">
+      <div class="wf-revolte-tete">${ico('fire')}<b>Révolte ${rel ? '(' + esc(rel.nom.toLowerCase()) + ')' : ''}</b><span>${r.cases.length} provinces</span>
+        <button class="wf-btn-ic" data-act="voir" data-case="${r.cases[0]}" title="Voir sur la carte">${ico('location-crosshairs')}</button></div>
+      <div class="wf-stats petit">
+        <div class="wf-stat"><b>${nb(r.rebelles)}</b><span>Rebelles</span></div>
+        <div class="wf-stat"><b>${nb(r.forces)}</b><span>Vos soldats sur place</span></div>
+        <div class="wf-stat ${reste < 86400 ? 'alerte' : ''}"><b>${duree(reste)}</b><span>Avant que la région ne devienne neutre</span></div>
+      </div>
+      <p class="wf-aide">Les rebelles se battent chez eux : il faut plus de <b>${nb(Math.ceil(r.rebelles * 1.15))}</b> soldats pour l'emporter. ${besoin > 0 ? `Il en manque environ <b>${nb(besoin)}</b>.` : 'Vos forces suffisent : le combat est en cours.'}</p>
+      <div class="wf-form ligne"><input type="number" id="rev-${r.id}" data-garder min="10" step="10" value="${defaut}">
+        <button class="wf-btn" data-act="reprimer" data-id="${r.id}">${ico('shield-halved')} Rétablir l'ordre</button></div>
+    </div>`;
+  }).join('');
+
+  const religionsPays = (b.religions || []).map(([id, h]) => {
+    const r = religions.get(id);
+    const tot = (b.religions || []).reduce((a, x) => a + x[1], 0) || 1;
+    return r ? `<div class="wf-rel-ligne"><span class="wf-rel-pastille" style="--rc:${r.couleur}"></span><span>${esc(r.nom)}${id === m.religion ? ' <small>(religion d\'État)</small>' : ''}</span>
+      <div class="wf-barre"><div style="width:${(h / tot * 100).toFixed(1)}%;background:${r.couleur}"></div></div><b>${Math.round(h / tot * 100)} %</b></div>` : '';
+  }).join('');
+
+  const prime = m.prime_natalite || 0;
+  const pourvus = b.emplois ? Math.round(b.travail * 100) : 100;
+  return `
+  <div class="wf-stats">
+    <div class="wf-stat">${ico('people-group')}<b>${nb(total)}</b><span>Habitants · capacité d'accueil ${nb(b.pop_cap * 1000)}</span>${barre(total / Math.max(1, b.pop_cap * 1000))}</div>
+    <div class="wf-stat">${ico('baby')}<b>${nb(m.naissances)}</b><span>Naissances par jour</span></div>
+    <div class="wf-stat">${ico('cross')}<b>${nb(m.deces)}</b><span>Décès par jour</span></div>
+    <div class="wf-stat ${pourvus < 100 ? 'alerte' : ''}">${ico('helmet-safety')}<b>${pourvus} %</b><span>Emplois pourvus · ${nb(b.emplois)} postes</span>${barre(pourvus / 100, pourvus < 100 ? 'rouge' : '')}</div>
+  </div>
+  <p class="wf-aide">${ico('clock')} 1 jour réel = 1 an dans le jeu : les enfants nés aujourd'hui travailleront dans 18 jours.</p>
+
+  ${titre('Qui fait quoi', 'users')}
+  ${empilee([['Travailleurs', b.travailleurs, COUL_POP.travail], ['Sans emploi', b.chomeurs, COUL_POP.chomage], ['Soldats', b.soldats, COUL_POP.soldats],
+    ['En formation', b.recrues, COUL_POP.recrues], ['Enfants (0-17 ans)', b.enfants, COUL_POP.enfants], ['Retraités (65 ans et +)', b.retraites, COUL_POP.retraites]])}
+  <p class="wf-aide">Chaque niveau de bâtiment (sauf les villes) emploie <b>${nb(D.emplois_par_niveau)}</b> ouvriers, pris parmi les actifs (18-64 ans) qui ne sont pas soldats.
+    ${pourvus < 100 ? `<b class="neg">Il manque des ouvriers : vos bâtiments ne tournent qu'à ${pourvus} %.</b> Démobilisez des soldats ou augmentez la natalité.` : ''}</p>
+
+  ${titre('Armée de citoyens', 'person-military-rifle', `<small>${nb(m.troupes)} soldats prêts</small>`)}
+  <p class="wf-aide">Un soldat est un habitant. Les recrues passent par la caserne (formation de ${duree(b.duree_formation / vit)}, plus courte avec des casernes) avant de rejoindre votre réserve. Un soldat tué au combat est un habitant en moins.</p>
+  <label class="wf-case-a-cocher"><input type="checkbox" data-act="recrut_auto" ${m.recrut_auto !== false ? 'checked' : ''}> Recrutement automatique parmi les sans-emploi (n'enlève personne aux usines)</label>
+  <div class="wf-form grille2">
+    <label>Recruter (civils disponibles : ${nb(Math.max(0, b.actifs - b.soldats - b.recrues))})
+      <span class="wf-form ligne"><input type="number" id="pop-recruter" data-garder min="1" step="100" value="500"><button class="wf-btn" data-act="recruter">${ico('user-plus')} Recruter</button></span></label>
+    <label>Démobiliser (rendre à la vie civile)
+      <span class="wf-form ligne"><input type="number" id="pop-demob" data-garder min="1" step="100" value="500"><button class="wf-btn secondaire" data-act="demobiliser">${ico('user-minus')} Démobiliser</button></span></label>
+  </div>
+  ${formation ? `<div class="wf-liste">${formation}</div>` : ''}
+
+  ${titre('Campagne de natalité', 'baby-carriage')}
+  <p class="wf-aide">Versez une prime aux familles pour chaque naissance : plus elle est élevée, plus les familles font d'enfants. Elle est payée à chaque nouveau-né, en crédits.</p>
+  <div class="wf-form">
+    <label>Prime par naissance : <b id="pop-prime-val">${prime ? prime + ' crédits par naissance' : 'Aucune prime'}</b>
+      <input type="range" id="pop-prime" data-garder min="0" max="${D.prime_max}" step="1" value="${prime}"></label>
+    <p class="wf-aide" id="pop-prime-apercu">${apercuPrime(S, prime)}</p>
+    <button class="wf-btn" data-act="natalite">${ico('check')} Appliquer</button>
+    ${prime > 0 ? `<p class="wf-aide">Coût actuel : <b>${nb(m.cout_natalite)}</b> crédits par jour.${(m.cout_natalite || 0) <= 0 ? ' <b class="neg">Caisses insuffisantes : la prime n\'est pas versée.</b>' : ''}</p>` : ''}
+  </div>
+
+  ${titre('Pyramide des âges', 'chart-simple')}
+  ${pyramideAges(m.ages)}
+
+  ${titre('Évolution', 'chart-line')}
+  ${peu ? `<p class="wf-aide">${ico('circle-info')} Les courbes se remplissent avec le temps (un point toutes les 2 heures).</p>` : ''}
+  <h4 class="wf-graph-titre">Habitants et actifs</h4>
+  ${courbes([{ nom: 'Habitants', couleur: '#4fa553', valeurs: serie(1) }, { nom: 'Actifs (18-64 ans)', couleur: '#3b82f6', valeurs: serie(2) }])}
+  <h4 class="wf-graph-titre">Naissances et décès par jour</h4>
+  ${courbes([{ nom: 'Naissances', couleur: '#ec4899', valeurs: serie(4) }, { nom: 'Décès', couleur: '#6b7280', valeurs: serie(5) }])}
+  <h4 class="wf-graph-titre">Soldats et recrues</h4>
+  ${courbes([{ nom: 'Soldats', couleur: COUL_POP.soldats, valeurs: serie(3) }])}
+
+  ${titre('Religions', 'place-of-worship', etat ? `<small>Religion d'État : ${esc(etat.nom)}</small>` : '')}
+  ${religionsPays || vide('Aucune donnée.', 'place-of-worship')}
+  <p class="wf-aide">Les provinces prises hors de votre pays d'origine gardent leur religion. Si elle diffère de la vôtre, elles ont une très faible chance de se révolter (encore plus faible pour les terres neutres annexées). Au bout de 50 à 80 jours, elles adoptent votre religion.</p>
+
+  ${titre('Révoltes', 'fire', revoltes ? '' : '<small>aucune</small>')}
+  ${revoltes || `<p class="wf-aide">${ico('circle-check')} Le calme règne. En cas de révolte, vous aurez 3 jours pour envoyer des troupes rétablir l'ordre ; sinon la région devient neutre et annexable par tous.</p>`}`;
+}
+
 export const PANNEAUX = {
   pays: { titre: 'Mon pays', icone: 'flag', rendre: panneauPays },
+  population: { titre: 'Population', icone: 'people-group', rendre: panneauPopulation },
   construction: { titre: 'Construction', icone: 'helmet-safety', rendre: panneauConstruction },
   fabrication: { titre: 'Fabrication', icone: 'gears', rendre: panneauFabrication },
   armee: { titre: 'Armées', icone: 'person-military-rifle', rendre: panneauArmee },

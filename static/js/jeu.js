@@ -6,7 +6,7 @@
 
 import { Carte } from './carte.js';
 import { ico, esc, fmt, fmtPop, duree, signe, Grille, coutBatiment, contraste } from './util.js';
-import { PANNEAUX, drapeau, cout, nomCase, statutArmee, listeChat, ICONES_EVT, menuCase, menuTroupes, menuDiplomatie, nomObjet, recetteDeTable, actionsRadiales } from './panneaux.js';
+import { PANNEAUX, apercuPrime, drapeau, cout, nomCase, statutArmee, listeChat, ICONES_EVT, menuCase, menuTroupes, menuDiplomatie, nomObjet, recetteDeTable, actionsRadiales } from './panneaux.js';
 
 const $ = s => document.querySelector(s);
 const corps = document.body;
@@ -105,7 +105,14 @@ function recevoirInit(m) {
     S.carte.cotes = m.carte.cotes;
     S.carte.vitesseJeu = S.vitesse;
     dejaInit = true;
+  } else {
+    // Reconnexion : religions et habitants a jour.
+    const octets = b64 => Uint8Array.from(atob(b64 || ''), ch => ch.charCodeAt(0));
+    if (m.religions) { S.carte.rel = octets(m.religions); S.carte.relSales = true; S.carte.couleursSales = S.carte.labelsSales = true; }
+    if (m.habitants) S.carte.habLog = octets(m.habitants);
   }
+  // Historique de population : le serveur renvoie tout apres un init.
+  S.histo = [];
   // Carte du monde : vrais pays jouables (index k -> S.reel.pays[k - 1]).
   S.reel = null;
   if (m.monde_reel && S.carte.regions) {
@@ -135,6 +142,9 @@ function recevoirEtat(e) {
   S.missions = e.missions || [];
   S.missiles = e.missiles || [];
   S.attaques = e.attaques || [];
+  S.revoltes = e.revoltes || [];
+  S.temps = e.temps;
+  if (e.histo && e.histo.length) { S.histo = (S.histo || []).concat(e.histo); if (S.histo.length > 400) S.histo.splice(0, S.histo.length - 400); }
   S.cours = e.cours || {};
   if (e.graine != null) {
     if (S.graine != null && e.graine !== S.graine) { location.reload(); return; }
@@ -231,7 +241,7 @@ function majBarre() {
 const MENU = [
   // Construire : clic gauche sur une case. Diplomatie : clic sur un pays.
   // Recherche : plans au marché. Journal : notifications.
-  ['carte', 'Carte du monde', 'earth-europe'], ['pays', 'Mon pays', 'landmark-flag'], ['fabrication', 'Usines', 'industry'],
+  ['carte', 'Carte du monde', 'earth-europe'], ['pays', 'Mon pays', 'landmark-flag'], ['population', 'Population', 'people-group'], ['fabrication', 'Usines', 'industry'],
   ['armee', 'Armées', 'person-military-rifle'], ['blocs', 'Alliances', 'handshake'], ['marche', 'Marché', 'store'],
   ['classement', 'Classement', 'trophy'], ['chat', 'Messages', 'comments'], ['aide', 'Guide', 'book-open'],
 ];
@@ -472,6 +482,8 @@ function majTroupes() {
   if (el.hidden) return;
   const max = Math.max(1, m.bilan.troupes_max);
   $('#wf-troupes-n').textContent = fmt(m.troupes);
+  const form = $('#wf-troupes-form');
+  if (form) form.textContent = m.bilan.recrues >= 1 ? `+ ${fmt(m.bilan.recrues)} en formation` : '';
   $('#wf-troupes-max').textContent = fmt(max);
   $('#wf-troupes-barre').style.width = (Math.min(1, m.troupes / max) * 100).toFixed(1) + '%';
   $('#wf-ratio-envoi').textContent = fmt(Math.floor(m.troupes * S.ratio));
@@ -512,12 +524,23 @@ function survolCarte(i, e) {
     ${S.reel && !p && !reel && S.carte.terrain[i] >= 2 && S.carte.terrain[i] <= 7 ? `<div>${ico('map-location-dot')} Terre libre : clic droit pour l'annexer</div>` : ''}
     ${b ? `<div>${ico(S.defs.batiments.find(x => x.id === b)?.icone)} ${esc(S.defs.batiments.find(x => x.id === b)?.nom)} ${S.carte.niv[i]}</div>` : ''}
     ${d ? `<div>${ico(S.defs.depots[d].icone)} ${esc(S.defs.depots[d].nom)}</div>` : ''}
+    ${ligneHabitants(i)}
+    ${S.carte.enRevolte.has(i) ? `<div class="neg">${ico('fire')} En révolte</div>` : ''}
     ${S.carte.irr[i] ? `<div class="neg">${ico('radiation')} Zone irradiée</div>` : ''}
     ${nb ? `<div>${ico('flag')} ${nb} armée${nb > 1 ? 's' : ''}</div>` : ''}`;
   t.hidden = false;
   const r = $('#wf-carte').getBoundingClientRect();
   t.style.left = Math.min(r.width - 230, e.clientX - r.left + 16) + 'px';
   t.style.top = Math.min(r.height - 120, e.clientY - r.top + 14) + 'px';
+}
+
+/** Habitants (approximatifs) et religion d'une case de terre. */
+function ligneHabitants(i, cls = '') {
+  if (!S.defs.terrains[S.carte.terrain[i]].terre) return '';
+  const h = S.carte.habitants(i);
+  const r = S.carte.relDefs.get(S.carte.rel[i]);
+  const n = h >= 1000 ? `${(h / 1000).toFixed(h >= 10000 ? 0 : 1).replace('.', ',')} k` : `${Math.round(h / 10) * 10}`;
+  return `<div class="${cls}">${ico('people-group')} ${n} habitants${r ? ` · <span class="wf-rel-pastille" style="--rc:${r.couleur}"></span>${esc(r.nom)}` : ''}</div>`;
 }
 
 function choisirCase(i) {
@@ -585,6 +608,8 @@ function majInspecteur(force) {
       <div class="wf-insp-ligne">${p ? `${drapeau(p, 20)} <b>${esc(p.nom)}</b> ${m && p.id === m.id ? '<span class="wf-puce accent">vous</span>' : rel ? `<span class="wf-rel ${rel}">${rel === 'guerre' ? 'En guerre' : rel === 'pna' ? 'Pacte' : 'Paix'}</span>` : ''}` : `${ico('flag')} <i>Territoire neutre</i>`}</div>
       ${d ? `<div class="wf-insp-ligne">${ico(S.defs.depots[d].icone, '', `color:${S.defs.depots[d].couleur}`)} ${esc(S.defs.depots[d].nom)}</div>` : ''}
       ${bd ? `<div class="wf-insp-ligne">${ico(bd.icone)} ${esc(bd.nom)} <b>niv. ${S.carte.niv[i]}</b></div>` : ''}
+      ${ligneHabitants(i, 'wf-insp-ligne')}
+      ${S.carte.enRevolte.has(i) ? `<div class="wf-insp-ligne neg">${ico('fire')} Province en révolte : <button class="wf-lien" data-act="ouvrir" data-panneau="population">rétablir l'ordre</button></div>` : ''}
       ${S.carte.irr[i] ? `<div class="wf-insp-ligne neg">${ico('radiation')} Zone irradiée</div>` : ''}
       ${t.terre ? `<div class="wf-insp-ligne petit">${ico('person-hiking')} Déplacement ×${String(t.cout_mvt).replace('.', ',')} · ${ico('shield-halved')} défense +${Math.round(t.defense * 100)} %</div>` : ''}
       ${!vue ? `<div class="wf-insp-ligne petit">${ico('eye-slash')} Hors de votre champ de vision</div>` : ''}
@@ -1011,6 +1036,8 @@ const TUTO = [
     liste: listeBatimentsTuto },
   { cible: '#wf-troupes', ico: 'person-military-rifle', titre: () => 'Vos troupes',
     texte: () => `Votre réserve de troupes se remplit toute seule. <b>Clic droit</b> sur une case : une partie de vos troupes y part (réglez la part avec le curseur).<br>• Terre libre : vous l'annexez.<br>• Pays en guerre avec vous : vous l'envahissez.` },
+  { cible: '[data-panneau="population"]', ico: 'people-group', titre: () => 'Votre population',
+    texte: () => `Chaque case a des <b>habitants</b>, même avant d'être annexée : en la prenant, vous les récupérez.<br>• Vos bâtiments ont besoin d'<b>ouvriers</b>.<br>• Un <b>soldat est un habitant</b> : il passe par la caserne avant de servir.<br>• Une <b>prime de natalité</b> fait naître plus d'enfants.<br>• Les provinces d'une autre <b>religion</b> peuvent se révolter (mode de carte « Religions »).<br>1 jour réel = 1 an dans le jeu.` },
   { cible: '#wf-menu', ico: 'bars', titre: () => 'Le menu',
     texte: () => `<b>Mon pays</b> : économie et recherche. <b>Usines</b> : fabriquer des produits. <b>Armées</b>, <b>Alliances</b> (blocs), <b>Marché</b> pour acheter et vendre, <b>Classement</b> et <b>Messages</b>.` },
   { cible: '#wf-objectifs', ico: 'bullseye', titre: () => 'Vos objectifs',
@@ -1260,6 +1287,13 @@ const ACTIONS = {
       'Lancer', () => agir('arme_speciale', { objet: d.objet, cible: +d.case }), true);
   },
   rappeler: d => agir('rappeler', { id: +d.id }),
+  // Population : recrutement, natalite, revoltes.
+  recruter: () => agir('recruter', { n: Math.floor(+val('pop-recruter') || 0) }),
+  demobiliser: () => agir('demobiliser', { n: Math.floor(+val('pop-demob') || 0) }),
+  recrut_auto: (d, el) => agir('recrutement_auto', { actif: el.checked }),
+  natalite: () => agir('natalite', { prime: +val('pop-prime') || 0 }),
+  pop_qte: d => { const i = document.getElementById(d.champ); if (i) i.value = d.v; },
+  reprimer: d => agir('reprimer', { revolte: +d.id, troupes: Math.floor(+val('rev-' + d.id) || 0) }),
   fab_onglet: d => { S.fabOnglet = d.onglet; majPanneau(true); },
   fab_element: d => { S.qteRaf = Math.max(1, Math.min(1000, +val('qte-raf') || S.qteRaf || 10)); S.fabElement = d.objet; majPanneau(true); },
   fab_niveau: d => { S.qteFab = Math.max(1, Math.min(1000, +val('qte-fab') || S.qteFab || 1)); S.fabNiveau = +d.niveau; majPanneau(true); },
@@ -1483,6 +1517,16 @@ document.addEventListener('input', e => {
   if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (x) {} }
 });
 
+// Campagne de natalite : apercu en direct du curseur de prime.
+document.addEventListener('input', e => {
+  if (e.target.id !== 'pop-prime') return;
+  const v = +e.target.value;
+  const o = document.getElementById('pop-prime-val');
+  if (o) o.textContent = v ? `${v} crédits par naissance` : 'Aucune prime';
+  const a = document.getElementById('pop-prime-apercu');
+  if (a) a.innerHTML = apercuPrime(S, v);
+});
+
 // Part des troupes envoyee par un clic droit (memorisee sur ce navigateur).
 $('#wf-ratio')?.addEventListener('input', e => choisirRatio(+e.target.value));
 // Boutons 10 / 25 / 50 / 75 / 100 % du curseur de troupes.
@@ -1543,7 +1587,22 @@ document.addEventListener('keydown', e => {
 document.querySelectorAll('[data-mode-carte]').forEach(b => b.addEventListener('click', () => {
   document.querySelectorAll('[data-mode-carte]').forEach(x => x.classList.toggle('actif', x === b));
   S.carte?.setMode(b.dataset.modeCarte);
+  majLegende();
 }));
+
+/** Mode religions : legende des couleurs (religions presentes sur la carte). */
+function majLegende() {
+  const el = $('#wf-legende');
+  if (!el) return;
+  if (!S.carte || S.carte.mode !== 'religions') { el.hidden = true; return; }
+  const n = new Map();
+  for (let i = 0; i < S.carte.rel.length; i++) { const r = S.carte.rel[i]; if (r) n.set(r, (n.get(r) || 0) + S.carte.habitants(i)); }
+  const total = [...n.values()].reduce((a, b) => a + b, 0) || 1;
+  el.innerHTML = `<b>${ico('place-of-worship')} Religions du monde</b>` + S.defs.religions.filter(r => n.has(r.id)).sort((a, b) => n.get(b.id) - n.get(a.id))
+    .map(r => `<div><span class="wf-rel-pastille" style="--rc:${r.couleur}"></span>${esc(r.nom)}<small>${Math.round(n.get(r.id) / total * 100)} %</small></div>`).join('')
+    + `<div class="wf-legende-rev"><span class="wf-rel-pastille" style="--rc:#ef4444"></span>Province en révolte</div>`;
+  el.hidden = false;
+}
 // Case au centre de la carte (ligne du milieu, colonne du milieu).
 const caseCentre = () => Math.floor(S.g.h / 2) * S.g.l + Math.floor(S.g.l / 2);
 $('#wf-recentrer').addEventListener('click', () => { if (S.moi) S.carte.centrerSur(S.moi.capitale, 30); else S.carte.centrerSur(caseCentre(), 70); });

@@ -19,6 +19,8 @@ pub struct Suivi {
     pub evt: i64,
     pub chat: u64,
     pub premier: bool,
+    /// Dernier point d'historique de population envoye (unix).
+    pub histo: f64,
 }
 
 pub struct Visions {
@@ -134,8 +136,19 @@ pub fn init(m: &Monde, nom: &str, admin: bool, vitesse: f64, vex_url: &str) -> S
     } else {
         Value::Null
     };
+    // Religion (un octet) et habitants (un octet, echelle log2 x 16) de
+    // chaque case, en base64.
+    let (religions, habitants) = {
+        use base64::Engine as _;
+        let r: Vec<u8> = m.cases.iter().map(|c| c.rel).collect();
+        let h: Vec<u8> = m.cases.iter().map(|c| ((1.0 + c.hab.max(0.0) as f64).log2() * 16.0).round().min(255.0) as u8).collect();
+        let b = &base64::engine::general_purpose::STANDARD;
+        (b.encode(&r), b.encode(&h))
+    };
     json!({
         "t": "init",
+        "religions": religions,
+        "habitants": habitants,
         "joueur": { "nom": nom, "admin": admin },
         "vitesse": vitesse,
         "vex_url": vex_url,
@@ -172,6 +185,8 @@ pub fn init(m: &Monde, nom: &str, admin: bool, vitesse: f64, vex_url: &str) -> S
             }).collect::<Vec<_>>(),
             "index_minerais": fab::MINERAIS.iter().map(|mi| (mi.id, fab::index_minerai(mi.id))).collect::<HashMap<_, _>>(),
             "troupes": { "cout_neutre": crate::front::COUT_NEUTRE, "portee_bateau": crate::front::PORTEE_BATEAU, "portee_cote": crate::front::PORTEE_COTE },
+            "religions": crate::demographie::RELIGIONS,
+            "demographie": { "emplois_par_niveau": crate::demographie::EMPLOIS_PAR_NIVEAU, "prime_max": crate::demographie::PRIME_MAX, "age_actif": crate::demographie::AGE_ACTIF, "age_retraite": crate::demographie::AGE_RETRAITE },
             "file_fabrication": jeu::FILE_FABRICATION,
             "lignes_max": jeu::LIGNES_MAX,
             "prix_plan": jeu::PRIX_PLAN,
@@ -293,7 +308,8 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
                 c.niv,
                 if c.irradiee > m.temps { 1 } else { 0 },
                 // Terrain : change seulement sous un cratere d'antimatiere.
-                c.terrain
+                c.terrain,
+                c.rel
             ])
         })
         .collect();
@@ -424,8 +440,30 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
         None => Value::Null,
     };
 
+    // Revoltes : les siennes en detail, celles des autres (zone seulement).
+    let revoltes: Vec<Value> = m
+        .revoltes
+        .values()
+        .map(|r| {
+            let mien = Some(r.pays) == pid;
+            json!({ "id": r.id, "pays": r.pays, "cases": r.cases, "religion": r.religion, "limite": r.limite, "debut": r.debut,
+                "rebelles": if mien { json!(r.rebelles.round()) } else { Value::Null },
+                "forces": if mien { json!(r.forces.round()) } else { Value::Null } })
+        })
+        .collect();
+    // Historique de population : seulement les nouveaux points.
+    let histo: Vec<[f64; 6]> = pid
+        .and_then(|id| m.histos.get(&id))
+        .map(|h| h.iter().filter(|x| x[0] > suivi.histo).copied().collect())
+        .unwrap_or_default();
+    if let Some(x) = histo.last() {
+        suivi.histo = x[0];
+    }
+
     let mut out = json!({
         "t": "etat",
+        "revoltes": revoltes,
+        "histo": histo,
         "temps": m.temps,
         "now": chrono::Utc::now().timestamp_millis(),
         "cases": cases,
