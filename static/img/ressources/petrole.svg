@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><!-- Petrole : goutte noire brillante -->
+<defs><linearGradient id="p" x1="0" x2="1"><stop offset="0" stop-color="#3a3f47"/><stop offset=".6" stop-color="#14161a"/><stop offset="1" stop-color="#000"/></linearGradient></defs>
+<path d="M32 4C28 16 12 30 12 42a20 20 0 0 0 40 0C52 30 36 16 32 4z" fill="url(#p)" stroke="#7b8494" stroke-width="2"/>
+<path d="M22 40c0 6 4 10 9 11" stroke="#9aa4b2" stroke-width="3.2" stroke-linecap="round" fill="none" opacity=".8"/>
+<ellipse cx="25" cy="31" rx="2.6" ry="4" fill="#cbd5e1" opacity=".6" transform="rotate(25 25 31)"/>
+</svg>

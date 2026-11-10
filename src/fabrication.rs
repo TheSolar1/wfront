@@ -37,13 +37,13 @@ pub struct MineraiDef {
 }
 
 pub const MINERAIS: [MineraiDef; 4] = [
-    MineraiDef { id: "minerai_commun", nom: "Minerai commun", categorie: COMMUN, icone: "mountain", couleur: "#94a3b8",
-        desc: "Roche ordinaire : fer, aluminium, cuivre, silicium… On en trouve partout." },
-    MineraiDef { id: "minerai_rare", nom: "Minerai rare", categorie: RARE, icone: "gem", couleur: "#a855f7",
-        desc: "Terres rares et métaux précieux, en quantité limitée : seulement sur les gisements de terres rares." },
-    MineraiDef { id: "minerai_radioactif", nom: "Minerai radioactif", categorie: RADIOACTIF, icone: "radiation", couleur: "#22c55e",
+    MineraiDef { id: "minerai_commun", nom: "Minerais", categorie: COMMUN, icone: "res-minerais", couleur: "#94a3b8",
+        desc: "Fer, cuivre, bauxite (aluminium), charbon, silicium… On en trouve partout." },
+    MineraiDef { id: "minerai_rare", nom: "Minéraux rares", categorie: RARE, icone: "res-mineraux-rares", couleur: "#a855f7",
+        desc: "Terres rares, lithium, cobalt, or, argent, platine : seulement sur les gisements de minéraux rares." },
+    MineraiDef { id: "minerai_radioactif", nom: "Uranium", categorie: RADIOACTIF, icone: "res-uranium", couleur: "#22c55e",
         desc: "Uranium, thorium, radium… Seulement sur les gisements d'uranium." },
-    MineraiDef { id: "minerai_legendaire", nom: "Minerai légendaire", categorie: LEGENDAIRE, icone: "meteor", couleur: "#f43f5e",
+    MineraiDef { id: "minerai_legendaire", nom: "Fragments de météorite", categorie: LEGENDAIRE, icone: "res-meteorite", couleur: "#f43f5e",
         desc: "Fragments de météorite d'où l'on tire les éléments superlourds. Introuvable ailleurs que dans les cratères." },
 ];
 

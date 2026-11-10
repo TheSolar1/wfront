@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><!-- Uranium : roche verte luminescente et symbole radioactif -->
+<defs><radialGradient id="l" cx=".45" cy=".45" r=".6"><stop offset="0" stop-color="#d9ff8a"/><stop offset=".55" stop-color="#5fd13a"/><stop offset="1" stop-color="#1f7a26"/></radialGradient></defs>
+<circle cx="30" cy="34" r="27" fill="#7cf05a" opacity=".22"/>
+<path d="M9 40l6-18 16-9 17 7 6 19-12 14H19z" fill="url(#l)" stroke="#185c1d" stroke-width="2.2" stroke-linejoin="round"/>
+<path d="M15 22l16-9 17 7-15 6z" fill="#b6f57a" opacity=".7"/>
+<circle cx="46" cy="46" r="13" fill="#facc15" stroke="#1f2328" stroke-width="2"/>
+<g fill="#1f2328"><circle cx="46" cy="46" r="2.2"/>
+<path d="M46 46 39.5 34.7a13 13 0 0 1 13 0z" transform="rotate(0 46 46) scale(1)" transform-origin="46 46"/>
+<path d="M46 46 39.5 34.7a13 13 0 0 1 13 0z" transform="rotate(120 46 46)"/>
+<path d="M46 46 39.5 34.7a13 13 0 0 1 13 0z" transform="rotate(240 46 46)"/></g>
+<circle cx="46" cy="46" r="4.2" fill="none" stroke="#facc15" stroke-width="2.2"/>
+</svg>

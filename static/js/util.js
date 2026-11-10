@@ -10,6 +10,8 @@ export const BASE = location.pathname.replace(/[^/]*$/, '');
  *  CSS se resout par rapport a la feuille de style, pas a la page. */
 export function ico(nom, cls = '', style = '') {
   if (!nom) return '';
+  // Logos en couleur des ressources (static/img/ressources).
+  if (nom.startsWith('res-')) return `<i class="ico ico-img ${cls}" style="--img:url('${BASE}static/img/ressources/${nom.slice(4)}.svg')" aria-hidden="true"></i>`;
   return `<i class="ico ${cls}" style="--ic:url('${BASE}static/img/solid/${nom}.svg');${style}" aria-hidden="true"></i>`;
 }
 
