@@ -190,6 +190,9 @@ pub struct Pays {
     /// Taux de TVA (0 a 0,6).
     #[serde(default = "tva_defaut")]
     pub tva: f64,
+    /// Materiel militaire national (armee.rs) : type -> nombre.
+    #[serde(default)]
+    pub materiel: BTreeMap<String, u32>,
 }
 
 fn tva_defaut() -> f64 {
@@ -1037,7 +1040,7 @@ impl Monde {
             nuages: Vec::new(),
             trous_noirs: Vec::new(),
             attaques: BTreeMap::new(),
-            version: 7,
+            version: 8,
             bots_admin: None,
             cours: BTreeMap::new(),
             effets: Vec::new(),

@@ -289,7 +289,7 @@ const MENU = [
   // Construire : clic gauche sur une case. Diplomatie : clic sur un pays.
   // Recherche : plans au marché. Journal : notifications.
   ['carte', 'Carte du monde', 'earth-europe'], ['pays', 'Mon pays', 'landmark-flag'], ['population', 'Population', 'people-group'], ['fabrication', 'Usines', 'industry'],
-  ['armee', 'Armées', 'person-military-rifle'], ['blocs', 'Alliances', 'handshake'], ['marche', 'Marché', 'store'],
+  ['armee', 'Armée', 'person-military-rifle'], ['blocs', 'Alliances', 'handshake'], ['marche', 'Marché', 'store'],
   ['classement', 'Classement', 'trophy'], ['chat', 'Messages', 'comments'], ['aide', 'Guide', 'book-open'],
 ];
 
@@ -1322,11 +1322,11 @@ const ACTIONS = {
   infos_case: d => choisirCase(+d.case),
   // Tir direct depuis le menu radial de la case visee (sans choisir la cible apres).
   tirer_ici: d => {
-    const a = S.armees.find(x => x.id === +d.armee);
-    if (!a) return;
-    if (d.genre === 'missile_nucleaire') lancerNucleaire(a, d.genre, +d.case);
-    else agir('missile', { armee: a.id, genre: d.genre, cible: +d.case });
+    // Le serveur choisit le depart : silo a portee, ou bombardier.
+    if (d.genre === 'missile_nucleaire') lancerNucleaire({ id: 0 }, d.genre, +d.case);
+    else agir('missile', { genre: d.genre, cible: +d.case });
   },
+  raid_ici: d => agir('mission', { cible: +d.case }),
   arme_ici: d => {
     const cible = S.pays.get(S.carte.proprio[+d.case]);
     confirmer(`${ico('circle')} Lancer la ${esc(nomObjet(S, d.objet).toLowerCase())} ?`,
