@@ -6,9 +6,9 @@
 // ══════════════════════════════════════════════════════════════════
 
 import * as THREE from '../vendor/three.module.min.js';
-import { Grille, melanger, BASE } from './util.js';
+import { Grille, melanger, BASE, rle } from './util.js';
 import { geometrieBatiment, materielBatiments } from './modeles.js';
-import { Sol, R, LX, LZ, T_NEANT, bruit, fbm, mulberry } from './sol.js';
+import { Sol, R, LX, LZ, T_NEANT, bruit, fbm, mulberry, definirEchelle } from './sol.js';
 
 // Téléphone / tablette : écran tactile ou petit écran -> rendu allégé.
 const MOBILE = matchMedia('(pointer: coarse)').matches || window.innerWidth < 760;
@@ -59,19 +59,23 @@ export class Carte {
     this.el = el;
     this.defs = init.defs;
     this.rappels = rappels;
+    // Carte fine : cases 3 fois plus petites, monde de meme taille.
+    definirEchelle(init.defs.echelle || 1);
+    this.rCase = R;
+    // Zoom au plus pres : plus pres quand les cases sont plus petites.
+    this.zoomMin = Math.max(2.5, 7 * R);
     const c = init.carte;
     this.g = new Grille(c.largeur, c.hauteur);
     const n = this.g.n;
-    this.terrain = Uint8Array.from(c.terrain, ch => +ch);
-    this.depot = Uint8Array.from(c.depot, ch => +ch);
+    this.terrain = rle(c.terrain, n);
+    this.depot = rle(c.depot, n);
     this.proprio = new Int32Array(n).fill(-1);
     // Carte du monde : vrai pays de chaque case (0 = mer).
-    this.regions = init.monde_reel ? Uint8Array.from(atob(init.monde_reel.regions), ch => ch.charCodeAt(0)) : null;
+    this.regions = init.monde_reel ? rle(init.monde_reel.regions, n) : null;
     // Religion (un octet par case) et habitants (echelle log2 x 16) de
     // chaque case, envoyes une fois au chargement.
-    const octets = b64 => b64 ? Uint8Array.from(atob(b64), ch => ch.charCodeAt(0)) : new Uint8Array(n);
-    this.rel = octets(init.religions);
-    this.habLog = octets(init.habitants);
+    this.rel = rle(init.religions, n);
+    this.habLog = rle(init.habitants, n);
     this.relDefs = new Map((init.defs.religions || []).map(r => [r.id, r]));
     this.enRevolte = new Set();
     this.bat = new Array(n).fill('');
@@ -259,41 +263,57 @@ export class Carte {
     this.teintes.magFilter = this.teintes.minFilter = THREE.NearestFilter;
     this.teintes.needsUpdate = true;
     const [vr, vg, vb] = sombre ? [0.06, 0.08, 0.1] : [0.86, 0.89, 0.92];
-    const uniformes = { tCases: { value: this.teintes }, uVoile: { value: new THREE.Vector3(vr, vg, vb) } };
+    const uniformes = this.uniformesSol = {
+      tCases: { value: this.teintes }, uVoile: { value: new THREE.Vector3(vr, vg, vb) },
+      uR: { value: R }, uL: { value: this.g.l }, uH: { value: this.g.h },
+      uGrille: { value: 0 }, uGrilleCoul: { value: new THREE.Color(sombre ? 0xffffff : 0x1c2a1c) },
+    };
     this.matSol = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, metalness: 0 });
     this.matSol.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, uniformes);
       sh.vertexShader = sh.vertexShader
         .replace('#include <common>', `#include <common>
-attribute float aCase;
-uniform sampler2D tCases;
-varying vec4 vTeinte;
-varying float vBrume;
+varying vec3 vPosMonde;
 varying float vHaut;`)
         .replace('#include <begin_vertex>', `#include <begin_vertex>
-vHaut = position.y; vTeinte = vec4(0.0); vBrume = 0.0;
-if (aCase >= 0.0) {
-  int ci = int(aCase + 0.5);
-  vec4 t = texelFetch(tCases, ivec2(ci % 1024, ci / 1024), 0);
-  float v = floor(t.a * 255.0 + 0.5);
-  vBrume = v >= 128.0 ? 1.0 : 0.0;
-  vTeinte = vec4(t.rgb, mod(v, 128.0) / 127.0);
-}`);
+vHaut = position.y;
+vPosMonde = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
+      // Teinte de chaque case (pays, ressources, religions, brouillard) et
+      // grille, calculees par pixel depuis la position : nettes meme avec
+      // des cases plus petites que les sommets du maillage, et sans aucune
+      // geometrie de grille.
       sh.fragmentShader = sh.fragmentShader
         .replace('#include <common>', `#include <common>
+uniform sampler2D tCases;
 uniform vec3 uVoile;
-varying vec4 vTeinte;
-varying float vBrume;
+uniform float uR, uL, uH, uGrille;
+uniform vec3 uGrilleCoul;
+varying vec3 vPosMonde;
 varying float vHaut;`)
         .replace('#include <color_fragment>', `#include <color_fragment>
 if (vHaut > -0.05) {
-  diffuseColor.rgb = mix(diffuseColor.rgb, vTeinte.rgb, vTeinte.a);
-  // Brouillard : on garde les vraies couleurs, juste ternies (avant, tout
-  // le monde devenait gris uniforme). Le fond de la mer n'est pas voile :
-  // sinon il ne raccordait plus avec le fond autour de la carte.
-  if (vBrume > 0.5) {
-    float l = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
-    diffuseColor.rgb = mix(mix(diffuseColor.rgb, vec3(l), 0.25), uVoile, 0.1);
+  vec2 p = vPosMonde.xz / uR;
+  float q = 0.5773503 * p.x - p.y / 3.0, r = 0.6666667 * p.y;
+  vec3 c = vec3(q, -q - r, r), rc = floor(c + 0.5), dd = abs(rc - c);
+  if (dd.x > dd.y && dd.x > dd.z) rc.x = -rc.y - rc.z; else if (dd.y > dd.z) rc.y = -rc.x - rc.z; else rc.z = -rc.x - rc.y;
+  float row = rc.z, col = rc.x + (row - mod(row, 2.0)) * 0.5;
+  if (col >= 0.0 && row >= 0.0 && col < uL && row < uH) {
+    float ci = row * uL + col;
+    vec4 t = texelFetch(tCases, ivec2(int(mod(ci, 1024.0)), int(floor(ci / 1024.0))), 0);
+    float v = floor(t.a * 255.0 + 0.5);
+    diffuseColor.rgb = mix(diffuseColor.rgb, t.rgb, mod(v, 128.0) / 127.0);
+    // Brouillard : vraies couleurs, juste ternies. Le fond de la mer n'est
+    // pas voile (il ne raccordait plus avec le fond autour de la carte).
+    if (v >= 128.0) {
+      float l = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+      diffuseColor.rgb = mix(mix(diffuseColor.rgb, vec3(l), 0.25), uVoile, 0.1);
+    }
+    if (uGrille > 0.0 && vHaut > 0.02) {
+      vec2 lp = abs(p - vec2(1.7320508 * (col + 0.5 * mod(row, 2.0)), 1.5 * row));
+      float sdf = max(lp.x, lp.x * 0.5 + lp.y * 0.8660254) - 0.8660254;
+      float w = fwidth(sdf);
+      diffuseColor.rgb = mix(diffuseColor.rgb, uGrilleCoul, (1.0 - smoothstep(0.0, w * 1.5, -sdf)) * uGrille);
+    }
   }
 }`);
     };
@@ -320,7 +340,7 @@ if (vHaut > -0.05) {
       this.travailleur = new Worker(new URL('./sol-worker.js', import.meta.url), { type: 'module' });
       this.travailleur.onmessage = e => this.recevoirSol(e.data);
       this.travailleur.onerror = () => this.sansTravailleur();
-      this.travailleur.postMessage({ t: 'init', terrain: this.terrain.slice(), l: this.g.l, h: this.g.h, sombre, mobile: MOBILE, reel: !!this.regions, pasLoin: this.pasLoin });
+      this.travailleur.postMessage({ t: 'init', terrain: this.terrain.slice(), l: this.g.l, h: this.g.h, sombre, mobile: MOBILE, reel: !!this.regions, pasLoin: this.pasLoin, echelle: this.defs.echelle || 1 });
     } catch (x) {
       this.sansTravailleur();
     }
@@ -518,10 +538,9 @@ if (vHaut > -0.05) {
       if (place-- <= 0) break;
       this.demanderTuile(t, u);
     }
-    const grilleVue = this.cam.d < 60;
-    const op = (this.theme === 'dark' ? 0.05 : 0.06) * Math.min(1, (60 - this.cam.d) / 25);
-    this.matGrille.opacity = op;
-    for (const tu of this.tuiles.values()) tu.groupe.children.forEach(o => { if (o.userData.grille) o.visible = grilleVue; });
+    // Grille dessinee par le shader : visible de pres (en nombre de cases).
+    const dCases = this.cam.d / R;
+    this.uniformesSol.uGrille.value = dCases < 60 ? (this.theme === 'dark' ? 0.16 : 0.2) * Math.min(1, (60 - dCases) / 25) : 0;
     // Memoire : on garde les tuiles proches, on jette les plus lointaines.
     const max = MOBILE ? 70 : 180;
     if (this.tuiles.size > max) {
@@ -548,33 +567,59 @@ if (vHaut > -0.05) {
   }
 
   // ── Couleurs : teinte de la nation, brouillard, zone de tir ───────
-  recolorer() {
-    const n = this.g.n, d = this.teintes.image.data;
-    const cache = this._teintesPays ??= new Map(), c = new THREE.Color();
-    const rgb = hex => { let v = cache.get(hex); if (!v) { c.set(hex); v = [c.r * 255, c.g * 255, c.b * 255]; cache.set(hex, v); } return v; };
-    for (let i = 0; i < n; i++) {
-      let a = 0, col = null;
-      const t = this.defs.terrains[this.terrain[i]];
-      if (this.mode === 'politique' && this.proprio[i] >= 0) {
-        const pa = this.pays.get(this.proprio[i]);
-        if (pa) { col = rgb(pa._teinte ??= melanger(pa.couleur, '#ffffff', 0.12)); a = 0.42; }
-      } else if (this.mode === 'religions' && t.terre) {
-        const r = this.relDefs.get(this.rel[i]);
-        if (r) { col = rgb(r.couleur); a = 0.62; }
-      } else if (this.mode === 'ressources' && t.terre) {
-        const dd = this.depot[i];
-        if (dd > 0) { col = rgb(this.defs.depots[dd].couleur); a = 0.7; } else { col = rgb('#9ca3af'); a = 0.45; }
-      }
-      if (this.irr[i]) { col = rgb('#b6ff3b'); a = 0.55; }
-      if (this.enRevolte.has(i)) { col = rgb('#ef4444'); a = 0.6; }
-      if (this.zone && this.zone.has(i)) { col = rgb(this.zoneCouleur); a = Math.max(a, 0.4); }
-      const brume = this.vision && !this.vision[i] ? 128 : 0;
-      const o = 4 * i;
-      if (col) { d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; }
-      d[o + 3] = Math.round(a * 127) + brume;
+  /** Teinte d'une case dans la petite image lue par le shader du sol. */
+  teinteCase(i, d, rgb) {
+    let a = 0, col = null;
+    const t = this.defs.terrains[this.terrain[i]];
+    if (this.mode === 'politique' && this.proprio[i] >= 0) {
+      const pa = this.pays.get(this.proprio[i]);
+      if (pa) { col = rgb(pa._teinte ??= melanger(pa.couleur, '#ffffff', 0.12)); a = 0.42; }
+    } else if (this.mode === 'religions' && t.terre) {
+      const r = this.relDefs.get(this.rel[i]);
+      if (r) { col = rgb(r.couleur); a = 0.62; }
+    } else if (this.mode === 'ressources' && t.terre) {
+      const dd = this.depot[i];
+      if (dd > 0) { col = rgb(this.defs.depots[dd].couleur); a = 0.7; } else { col = rgb('#9ca3af'); a = 0.45; }
     }
+    if (this.irr[i]) { col = rgb('#b6ff3b'); a = 0.55; }
+    if (this.enRevolte.has(i)) { col = rgb('#ef4444'); a = 0.6; }
+    if (this.zone && this.zone.has(i)) { col = rgb(this.zoneCouleur); a = Math.max(a, 0.4); }
+    const brume = this.vision && !this.vision[i] ? 128 : 0;
+    const o = 4 * i;
+    if (col) { d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; }
+    d[o + 3] = Math.round(a * 127) + brume;
+  }
+
+  couleurRgb() {
+    const cache = this._teintesPays ??= new Map(), c = new THREE.Color();
+    return hex => { let v = cache.get(hex); if (!v) { c.set(hex); v = [c.r * 255, c.g * 255, c.b * 255]; cache.set(hex, v); } return v; };
+  }
+
+  // ── Couleurs : teinte de la nation, brouillard, zone de tir ───────
+  recolorer() {
+    const n = this.g.n, d = this.teintes.image.data, rgb = this.couleurRgb();
+    for (let i = 0; i < n; i++) this.teinteCase(i, d, rgb);
     this.teintes.needsUpdate = true;
     this.couleursSales = false;
+    this.casesSales = null;
+    this.derniereTeinte = performance.now();
+  }
+
+  /** Seulement les cases modifiees : on ne renvoie a la carte graphique que
+   *  leurs lignes de l'image (quelques Ko au lieu de 9 Mo sur la carte fine). */
+  recolorerCases(liste) {
+    const d = this.teintes.image.data, rgb = this.couleurRgb();
+    const lignes = new Set();
+    for (const i of liste) { this.teinteCase(i, d, rgb); lignes.add(i >> 10); }
+    const gl = this.renderer.getContext();
+    const tex = this.renderer.properties.get(this.teintes).__webglTexture;
+    if (!tex) { this.teintes.needsUpdate = true; return; }
+    this.renderer.state.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    for (const r of lignes) gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, r, 1024, 1, gl.RGBA, gl.UNSIGNED_BYTE, d.subarray(r * 4096, (r + 1) * 4096));
     this.derniereTeinte = performance.now();
   }
 
@@ -618,7 +663,7 @@ if (vHaut > -0.05) {
       return h;
     };
     const ruban = (x, z, a1, a2, e1, e2, coul) => {
-      const N = 4;
+      const N = R < 1 ? 2 : 4;
       for (let s = 0; s < N; s++) {
         const t1 = s / N, t2 = (s + 1) / N;
         const ext1 = [x + a1[0] + (a2[0] - a1[0]) * t1, z + a1[1] + (a2[1] - a1[1]) * t1];
@@ -640,7 +685,8 @@ if (vHaut > -0.05) {
       this.g.voisins(i).forEach((v, k) => {
         if (v >= 0 && this.proprio[v] === p) return;
         const [a, b] = DIRS_COINS[k];
-        const ep = 0.17;
+        // Epaisseur (fraction de case) : plus large quand les cases sont petites.
+        const ep = R < 1 ? 0.32 : 0.17;
         ruban(x, z, this.coin(a), this.coin(b), this.coin(a, 1 - ep), this.coin(b, 1 - ep), c);
         if (bloc && (v < 0 || this.proprio[v] < 0 || this.pays.get(this.proprio[v])?.bloc !== pa.bloc)) {
           bc.set(bloc.couleur);
@@ -812,18 +858,26 @@ if (vHaut > -0.05) {
       }
       // Cratere : le sol s'enfonce juste apres l'eclair de l'antimatiere.
       if (terrains.length) this.reformer(terrains, 700);
-      this.couleursSales = true;
+      // Seules ces cases changent de couleur (pas toute la carte).
+      (this.casesSales ??= []).push(...e.cases.map(x => x[0]));
     }
     if (e.vision !== undefined) {
       const avant = this.visionHex;
       if (e.vision && e.vision !== avant) {
+        // Suites alternees (cachee, visible, cachee...) : envoyee seulement
+        // quand elle change.
         const v = new Uint8Array(this.g.n);
-        for (let k = 0; k < e.vision.length; k++) {
-          const x = parseInt(e.vision[k], 16);
-          for (let b = 0; b < 4; b++) if (4 * k + b < this.g.n) v[4 * k + b] = (x >> b) & 1;
-        }
+        let k = 0, vis = 0;
+        for (const n of e.vision) { if (vis) v.fill(1, k, Math.min(this.g.n, k + n)); k += n; vis ^= 1; }
+        // Cases dont la visibilite change : seulement elles sont recolorees.
+        const ancienne = this.vision;
+        if (ancienne) {
+          const changees = [];
+          for (let i = 0; i < v.length; i++) if (v[i] !== ancienne[i]) changees.push(i);
+          if (changees.length < 200000) (this.casesSales ??= []).push(...changees);
+          else this.couleursSales = true;
+        } else this.couleursSales = true;
         this.vision = v;
-        this.couleursSales = true;
         this.appliquerVision();
       } else if (!e.vision && this.vision) {
         this.vision = null;
@@ -884,14 +938,15 @@ if (vHaut > -0.05) {
     const modele = new THREE.Mesh(geometrieBatiment(b, couleur), materielBatiments);
     modele.castShadow = true;
     // Modeles detailles et plus petits que la case ; ils grandissent un peu avec le niveau.
-    const echelle = (b === 'capitale' ? 1.2 : 1) * (0.92 + 0.04 * Math.min(niv, 8));
+    // Taille de case : plus petites sur la carte fine (R).
+    const echelle = (b === 'capitale' ? 1.2 : 1) * (0.92 + 0.04 * Math.min(niv, 8)) * R;
     modele.scale.setScalar(echelle);
     // Orientation variée mais stable d'une case à l'autre.
     modele.rotation.y = ((i * 7919) % 6) * Math.PI / 3 + 0.3;
     groupe.add(modele);
     if (niv > 1 && b !== 'capitale') {
-      const s = this.sprite(this.texNiveau(niv, couleur), 0.3);
-      s.position.set(0.42, 0.62, 0.3);
+      const s = this.sprite(this.texNiveau(niv, couleur), 0.3 * R);
+      s.position.set(0.42 * R, 0.62 * R, 0.3 * R);
       s.renderOrder = 3;
       groupe.add(s);
     }
@@ -1098,16 +1153,27 @@ if (vHaut > -0.05) {
     const ressources = this.mode === 'ressources';
     const montrer = ressources || this.cam.d < 24;
     this.groupes.depots.visible = montrer;
-    if (!montrer || this.spritesDepot.size) return;
-    for (let i = 0; i < this.g.n; i++) {
+    if (!montrer) return;
+    // Seulement autour de la camera (la carte fine compte des dizaines de
+    // milliers de gisements) : refait quand on s'eloigne de la zone.
+    const rayon = Math.max(30, this.cam.d * 1.6);
+    const c0 = this._depotsCentre;
+    if (this.spritesDepot.size && c0 && Math.hypot(this.cam.x - c0.x, this.cam.z - c0.z) < rayon * 0.4 && c0.r >= rayon * 0.8) return;
+    this.spritesDepot.forEach(sp => this.groupes.depots.remove(sp));
+    this.spritesDepot.clear();
+    this._depotsCentre = { x: this.cam.x, z: this.cam.z, r: rayon };
+    const ya = Math.max(0, Math.floor((this.cam.z - rayon) / LZ)), yb = Math.min(this.g.h - 1, Math.ceil((this.cam.z + rayon) / LZ));
+    const xa = Math.max(0, Math.floor((this.cam.x - rayon) / LX)), xb = Math.min(this.g.l - 1, Math.ceil((this.cam.x + rayon) / LX));
+    for (let yy = ya; yy <= yb; yy++) for (let xx = xa; xx <= xb; xx++) {
+      const i = yy * this.g.l + xx;
       const d = this.depot[i];
       // Les sols fertiles, tres nombreux, ne s'affichent qu'en mode Ressources.
       if (!d || (d === 5 && !ressources)) continue;
       const def = this.defs.depots[d];
       const tex = this.texture(`d|${d}`, 96, 96, (ctx, w) => this.dessinerBadge(ctx, w / 2, w / 2, 34, def.couleur, def.icone, 'rgba(255,255,255,0.9)'));
-      const s = this.sprite(tex, 0.62);
+      const s = this.sprite(tex, 0.62 * R);
       const [x, z] = this.pos(i);
-      s.position.set(x + 0.42, this.haut(i) + 0.32, z + 0.3);
+      s.position.set(x + 0.42 * R, this.haut(i) + 0.32 * R, z + 0.3 * R);
       s.material.opacity = 0.9;
       s.visible = !this.vision || !!this.vision[i];   // caché sous le brouillard
       this.groupes.depots.add(s);
@@ -1241,8 +1307,8 @@ if (vHaut > -0.05) {
     for (const [pid, s] of sommes) {
       const p = this.pays.get(pid);
       if (!p) continue;
-      const sp = this.sprite(this.texTexte(p.nom.toUpperCase(), '#ffffff', 46), 3.2 + Math.min(4, Math.sqrt(s.n) * 0.55), 1, 0.1875);
-      sp.position.set(s.x / s.n, 4.2, s.z / s.n);
+      const sp = this.sprite(this.texTexte(p.nom.toUpperCase(), '#ffffff', 46), 3.2 + Math.min(4, Math.sqrt(s.n) * 0.55 * R), 1, 0.1875);
+      sp.position.set(s.x / s.n, 2.2, s.z / s.n);
       sp.renderOrder = 9;
       sp.material.depthTest = false;
       this.groupes.labels.add(sp);
@@ -1290,7 +1356,7 @@ if (vHaut > -0.05) {
             if (v >= 0 && !vu[v] && this.rel[v] === r && this.defs.terrains[this.terrain[v]].terre) { vu[v] = 1; pile.push(v); }
           }
         }
-        if (k >= 150) zones.push({ r, x: sx / k, z: sz / k, n: k });
+        if (k >= 150 / (R * R)) zones.push({ r, x: sx / k, z: sz / k, n: k * R * R });
       }
       this._zonesRel = zones;
       this.relSales = false;
@@ -1305,7 +1371,7 @@ if (vHaut > -0.05) {
       const mesure = (this._mesure ??= document.createElement('canvas').getContext('2d'));
       mesure.font = "800 46px 'Segoe UI', Arial, sans-serif";
       sp.userData = { n: zn.n, part: Math.min(1, (mesure.measureText(d.nom).width + 24) / 512) };
-      sp.position.set(zn.x, 4.2, zn.z);
+      sp.position.set(zn.x, 2.2, zn.z);
       sp.renderOrder = 9;
       sp.material.depthTest = false;
       this.groupes.labels.add(sp);
@@ -1389,7 +1455,7 @@ if (vHaut > -0.05) {
       fumee(1.8, 3, 3400, 500);
     } else if (genre === 'nucleaire') {
       // Champignon atomique a la taille de l'explosion.
-      const R = Math.min(30, Math.max(2.5, (rayon || 4) * 1.5));
+      const R = Math.min(30, Math.max(2.5, (rayon ? rayon * this.rCase : 4) * 1.5));
       this.rappels.flash?.();
       gonfle(boule(0xffffff, 1), 900, R * 0.55, 1, 0.6, 0, 0.3);
       gonfle(anneau(0xfff8e1, 1, 0.9), 2600, R * 1.15, 0.9, 0.15, 100, 0.6);
@@ -1433,7 +1499,7 @@ if (vHaut > -0.05) {
     } else if (genre === 'trou_noir') {
       // Formation : eclair violet, onde, matiere aspiree vers le centre.
       // Le trou noir permanent (majTrousNoirs) reste ensuite sur la carte.
-      const R = Math.max(3, (rayon || 3) * 1.6);
+      const R = Math.max(3, (rayon ? rayon * this.rCase : 3) * 1.6);
       this.rappels.flash?.();
       gonfle(boule(0xe040fb), 900, R * 0.6, 1, R * 0.2, 0, 0.3);
       gonfle(anneau(0xb388ff, 0.9, 0.9), 2200, R * 1.8, 0.9, 0.15, 100, 0.6);
@@ -1453,7 +1519,7 @@ if (vHaut > -0.05) {
       }, 200);
     } else if (genre === 'antimatiere') {
       // Implosion, eclair d'annihilation, puis le cratere se creuse (reformer).
-      const R = Math.max(3, (rayon || 3) * 1.6);
+      const R = Math.max(3, (rayon ? rayon * this.rCase : 3) * 1.6);
       const implo = place(boule(0x18ffff, 0.9), 0.8);
       anim(implo, 700, k => { implo.scale.setScalar(R * 0.9 * (1 - k) + 0.05); implo.material.opacity = 0.3 + 0.6 * k; });
       const lignes = new T.BufferGeometry(), lp = new Float32Array(60 * 6), dirs = [];
@@ -1544,7 +1610,7 @@ if (vHaut > -0.05) {
         // glisser ensemble vers le haut / le bas = incliner.
         const [a, b] = [...pointeurs.values()];
         const d = Math.hypot(a.x - b.x, a.y - b.y);
-        this.cam.d = Math.min(this.dMax, Math.max(7, bas.cam.d * bas.pinch / Math.max(1, d)));
+        this.cam.d = Math.min(this.dMax, Math.max(this.zoomMin, bas.cam.d * bas.pinch / Math.max(1, d)));
         const angle = Math.atan2(b.y - a.y, b.x - a.x);
         // La carte tourne dans le meme sens que les doigts.
         this.cam.lacet = bas.cam.lacet + (angle - bas.angle);
@@ -1589,7 +1655,7 @@ if (vHaut > -0.05) {
     cv.addEventListener('wheel', e => {
       e.preventDefault();
       this.anim = null;
-      this.cam.d = Math.min(this.dMax, Math.max(7, this.cam.d * (1 + Math.sign(e.deltaY) * Math.min(SENSI.zoomMax, Math.abs(e.deltaY) * SENSI.zoom))));
+      this.cam.d = Math.min(this.dMax, Math.max(this.zoomMin, this.cam.d * (1 + Math.sign(e.deltaY) * Math.min(SENSI.zoomMax, Math.abs(e.deltaY) * SENSI.zoom))));
     }, { passive: false });
     cv.addEventListener('dblclick', e => {
       const i = this.caseSous(e.clientX, e.clientY);
@@ -1627,7 +1693,7 @@ if (vHaut > -0.05) {
     }
     if (t.has('e')) this.cam.lacet -= SENSI.rotationClavier * dt;
     if (t.has('r')) this.cam.lacet += SENSI.rotationClavier * dt;
-    if (t.has('+') || t.has('=')) this.cam.d = Math.max(7, this.cam.d * (1 - SENSI.zoomClavier * dt));
+    if (t.has('+') || t.has('=')) this.cam.d = Math.max(this.zoomMin, this.cam.d * (1 - SENSI.zoomClavier * dt));
     if (t.has('-') || t.has('6')) this.cam.d = Math.min(this.dMax, this.cam.d * (1 + SENSI.zoomClavier * dt));
   }
 
@@ -1706,7 +1772,10 @@ if (vHaut > -0.05) {
     this.animerTrousNoirs(t);
     // Teintes : au plus 4 fois par seconde (les messages du serveur arrivent
     // chaque seconde, les offensives changent des cases en continu).
-    if (this.couleursSales && performance.now() - (this.derniereTeinte || 0) > 250) this.recolorer();
+    if (performance.now() - (this.derniereTeinte || 0) > 250) {
+      if (this.couleursSales) this.recolorer();
+      else if (this.casesSales && this.casesSales.length) { const l = this.casesSales; this.casesSales = null; this.recolorerCases(l); }
+    }
     // Avec les offensives, des cases changent de main chaque seconde : on
     // regroupe les reconstructions (frontieres, noms) au lieu de tout
     // refaire a chaque message du serveur.
