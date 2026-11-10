@@ -4,7 +4,7 @@
 // Chaque case de terre a des habitants, meme sans proprietaire : celui
 // qui l'annexe les recupere. La population d'une nation est la somme de
 // ses cases ; sa pyramide des ages (0 a 99 ans) evolue avec le temps :
-// 1 jour reel = 1 an de jeu.
+// 1 jour reel = 2 ans de jeu.
 //
 // Carte du monde : la population suit la vraie, mais avec des ecarts
 // ecrases (habitants = 3,9 x vraie population ^ 2/3 : France ~650 000,
@@ -23,8 +23,16 @@ use rand::Rng;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-/// Une annee de jeu, en secondes de jeu : un jour reel.
-pub const UN_AN: f64 = 86_400.0;
+/// Une annee de jeu, en secondes de jeu : un demi-jour reel (1 jour = 2 ans).
+pub const UN_AN: f64 = 43_200.0;
+/// TVA maximale.
+pub const TVA_MAX: f64 = 0.6;
+
+/// Part des actifs prets a travailler selon la TVA : tout le monde jusqu'a
+/// 20 %, puis de moins en moins (40 % de TVA : un peu plus de la moitie).
+pub fn participation(tva: f64) -> f64 {
+    (1.0 - 2.2 * (tva - 0.2).max(0.0)).clamp(0.15, 1.0)
+}
 pub const NB_AGES: usize = 100;
 pub const AGE_ACTIF: usize = 18;
 pub const AGE_RETRAITE: usize = 65;
@@ -286,7 +294,7 @@ fn hachage(i: usize, sel: u64) -> u64 {
 }
 
 /// Apres la generation ou le chargement d'un monde : habitants naturels et
-/// religion de chaque case ; a la premiere fois (version < 5), peuple les
+/// religion de chaque case ; a la premiere fois, peuple les
 /// cases et donne a chaque nation sa pyramide des ages.
 pub fn preparer(m: &mut Monde) {
     let n = m.cases.len();
@@ -370,15 +378,16 @@ pub fn preparer(m: &mut Monde) {
             m.cases[i].rel = r;
         }
     }
-    if m.version < 5 {
+    // Premiere fois (nouveau monde ou ancienne sauvegarde) : on peuple les
+    // cases, puis chaque nation recoit sa pyramide des ages.
+    if m.cases.iter().all(|c| c.hab == 0.0) {
         for i in 0..n {
             m.cases[i].hab = m.hab_base[i];
         }
-        let ids: Vec<u32> = m.pays.keys().copied().collect();
-        for pid in ids {
-            installer(m, pid);
-        }
-        m.version = 5;
+    }
+    let ids: Vec<u32> = m.pays.values().filter(|p| p.ages.len() != NB_AGES && !p.elimine).map(|p| p.id).collect();
+    for pid in ids {
+        installer(m, pid);
     }
 }
 
@@ -501,7 +510,9 @@ pub fn evoluer(m: &mut Monde, bl: &HashMap<u32, Bilan>, dt: f64) {
         // Naissances (campagne de natalite : la prime est versee pour chaque
         // naissance, et fait monter la fecondite).
         let femmes = 0.5 * entre(p, 15, 50);
-        let naturelles = femmes * fec / 35.0 * ans;
+        // Les hopitaux font naitre plus d'enfants (+10 % par niveau, +80 % au plus).
+        let hopitaux = 1.0 + (0.1 * b.map(|b| b.n("hopital")).unwrap_or(0.0)).min(0.8);
+        let naturelles = femmes * fec / 35.0 * ans * hopitaux;
         let prime = p.prime_natalite.clamp(0.0, PRIME_MAX);
         let mut naissances = naturelles;
         let mut cout = 0.0;
@@ -550,11 +561,11 @@ pub fn evoluer(m: &mut Monde, bl: &HashMap<u32, Bilan>, dt: f64) {
             }
         }
     }
-    historique(m);
+    historique(m, bl);
 }
 
 /// Un point d'historique toutes les 2 heures (400 points : un mois).
-fn historique(m: &mut Monde) {
+fn historique(m: &mut Monde, bl: &HashMap<u32, Bilan>) {
     let maint = chrono::Utc::now().timestamp();
     let ids: Vec<u32> = m.pays.values().filter(|p| !p.elimine).map(|p| p.id).collect();
     for pid in ids {
@@ -564,7 +575,12 @@ fn historique(m: &mut Monde) {
         }
         let (sold, form) = soldats(m, pid);
         let p = &m.pays[&pid];
-        let point = [maint as f64, p.sync.round(), entre(p, AGE_ACTIF, AGE_RETRAITE).round(), (sold + form).round(), p.naissances.round(), p.deces.round()];
+        let b = bl.get(&pid).cloned().unwrap_or_default();
+        let arr = |x: f64, k: f64| (x * k).round() / k;
+        let point = vec![
+            maint as f64, p.sync.round(), entre(p, AGE_ACTIF, AGE_RETRAITE).round(), (sold + form).round(), p.naissances.round(), p.deces.round(),
+            arr(b.chomage * 100.0, 10.0), arr(b.tva * 100.0, 1.0), arr(b.recettes_tva, 10.0), p.res[CR].round(), arr(b.prod[CR] - b.conso[CR], 10.0),
+        ];
         let h = m.histos.entry(pid).or_default();
         h.push(point);
         if h.len() > 400 {
@@ -620,8 +636,20 @@ pub fn religions(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
     maintien_ordre(m, dt);
 }
 
+/// Niveaux de commissariats par nation.
+fn polices(m: &Monde) -> HashMap<u32, f64> {
+    let mut n = HashMap::new();
+    for c in &m.cases {
+        if let (Some(p), Some("commissariat")) = (c.proprio, c.bat.as_deref()) {
+            *n.entry(p).or_insert(0.0) += c.niv as f64;
+        }
+    }
+    n
+}
+
 fn occupations(m: &mut Monde, pas: f64, rng: &mut impl Rng) {
     let maint = chrono::Utc::now().timestamp();
+    let police = polices(m);
     let mut departs: Vec<(u32, usize)> = Vec::new();
     let mut deja: HashSet<u32> = m.revoltes.values().map(|r| r.pays).collect();
     let mut conversions: Vec<(usize, u8)> = Vec::new();
@@ -654,7 +682,9 @@ fn occupations(m: &mut Monde, pas: f64, rng: &mut impl Rng) {
         if c.revolte || tenue < 12 * 3600 || p.protection > maint || deja.contains(&pid) {
             continue;
         }
-        let taux = if o.conquise { TAUX_CONQUISE } else { TAUX_NEUTRE };
+        // Chaque niveau de commissariat : -15 % de risque (jusqu'a -90 %).
+        let ordre = (1.0 - 0.15 * police.get(&pid).copied().unwrap_or(0.0)).max(0.1);
+        let taux = if o.conquise { TAUX_CONQUISE } else { TAUX_NEUTRE } * ordre;
         if rng.gen::<f64>() < taux * pas {
             departs.push((pid, i));
             deja.insert(pid);
@@ -690,7 +720,9 @@ pub fn demarrer_revolte(m: &mut Monde, pid: u32, i: usize) {
         }
     }
     let hab: f64 = zone.iter().map(|&k| m.cases[k].hab as f64).sum();
-    let rebelles = (hab * 0.06).max(50.0).round();
+    // La police affaiblit les revoltes (-5 % de rebelles par niveau, -50 % au plus).
+    let police = polices(m).get(&pid).copied().unwrap_or(0.0);
+    let rebelles = (hab * 0.06 * (1.0 - 0.05 * police).max(0.5)).max(50.0).round();
     for &k in &zone {
         m.cases[k].revolte = true;
         m.toucher(k);
@@ -733,6 +765,7 @@ fn maintien_ordre(m: &mut Monde, dt: f64) {
         return;
     }
     let maint = chrono::Utc::now().timestamp();
+    let police = polices(m);
     let ids: Vec<u32> = m.revoltes.keys().copied().collect();
     for id in ids {
         let mut r = m.revoltes.remove(&id).unwrap();
@@ -752,7 +785,9 @@ fn maintien_ordre(m: &mut Monde, dt: f64) {
         // Combat : les rebelles se battent chez eux (+30 %).
         if r.forces > 0.0 && r.rebelles > 0.0 {
             const K: f64 = 0.004;
-            let dr = (K * r.forces * dt).min(r.rebelles);
+            // La police aide les soldats (+10 % par niveau, +100 % au plus).
+            let aide = 1.0 + (0.1 * police.get(&r.pays).copied().unwrap_or(0.0)).min(1.0);
+            let dr = (K * r.forces * aide * dt).min(r.rebelles);
             let df = (K * 1.3 * r.rebelles * dt).min(r.forces);
             r.rebelles -= dr;
             r.forces -= df;

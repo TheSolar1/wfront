@@ -250,15 +250,17 @@ const MODELES = {
     ...voiture(-0.2, 0.05, 0, C.rouge), ...voiture(0.1, 0.06, Math.PI, C.blanc), ...voiture(0.02, -0.18, Math.PI / 2, C.toleBleu),
     ...arbre(0.27, -0.02, 0.9), ...arbre(-0.28, 0.0, 0.9), ...arbre(-0.02, -0.27, 0.8),
   ],
-  // Ministère : long bâtiment néoclassique, fronton à la couleur du pays.
-  centre_admin: () => [
-    dalle(0.62, 0.5, C.pierre),
-    ...immeuble(0.5, 0.16, 0.2, C.pierre, 0, -0.06, 3, { clim: false, toit: C.ardoise }),
-    boite(0.22, 0.012, 0.06, C.pierre, 0, 0, 0.07),
-    ...[-0.08, -0.048, -0.016, 0.016, 0.048, 0.08].map(x => cyl(0.007, 0.008, 0.15, C.blanc, x, 0.012, 0.08, 8)),
-    boite(0.21, 0.016, 0.05, C.creme, 0, 0.162, 0.08), toit2(0.05, 0.045, 0.21, PAYS, 0, 0.178, 0.08, Math.PI / 2),
-    ...drapeau(-0.24, 0, 0.18), ...drapeau(0.24, 0, 0.18), ...arbre(-0.2, 0.18), ...arbre(0.2, 0.18), ...voiture(0.08, 0.2, 0, C.noir),
-  ],
+  // Commissariat : bâtiment moderne à bandeau bleu, gyrophares, voitures de police.
+  commissariat: () => {
+    const p = [dalle(0.58, 0.52, C.dalle), boite(0.58, 0.012, 0.12, C.asphalte, 0, 0, 0.17)];
+    p.push(...immeuble(0.34, 0.16, 0.2, C.blanc, -0.04, -0.08, 4, { vitre: C.vitre, toit: C.sombre }));
+    p.push(boite(0.345, 0.03, 0.205, '#1d4ed8', -0.04, 0.13, -0.08), boite(0.1, 0.06, 0.04, C.vitre, -0.04, 0, 0.04));
+    p.push(...immeuble(0.12, 0.24, 0.12, C.beton, 0.2, -0.12, 6, { toit: C.sombre }), cyl(0.004, 0.004, 0.08, C.metal, 0.2, 0.24, -0.12, 4));
+    const police = (x, z, ry) => [...voiture(x, z, ry, C.blanc), boite(0.025, 0.008, 0.012, '#2563eb', x, 0.04, z)];
+    p.push(...police(-0.16, 0.17, 0), ...police(0.0, 0.17, 0), ...police(0.16, 0.17, Math.PI));
+    p.push(...drapeau(0.22, 0, 0.06, 0.18), ...arbre(-0.25, -0.2, 0.8));
+    return p;
+  },
   // Ambassade : villa dans un parc clos, grille, deux drapeaux.
   ambassade: () => [
     dalle(0.58, 0.54, C.herbe),
@@ -268,15 +270,6 @@ const MODELES = {
     ...drapeau(-0.07, 0, 0.12, 0.18), ...drapeau(0.07, 0, 0.12, 0.18),
     ...arbre(-0.2, 0.15), ...arbre(0.2, 0.15), ...arbre(-0.21, -0.18, 1, true), ...arbre(0.21, -0.18, 1, true),
   ],
-  // Ferme (ancienne) : grange, silo, champs en sillons, tracteur.
-  ferme: () => {
-    const p = [dalle(0.62, 0.56, C.terreClaire)];
-    for (let k = 0; k < 7; k++) p.push(boite(0.26, 0.014, 0.022, k % 2 ? '#9cbf4f' : '#c9b25a', -0.16, 0, -0.22 + k * 0.035));
-    for (let k = 0; k < 6; k++) p.push(boite(0.022, 0.014, 0.24, '#7fa646', 0.06 + k * 0.035, 0, 0.12));
-    p.push(boite(0.16, 0.09, 0.11, C.rouge, 0.15, 0, -0.14), toit2(0.17, 0.06, 0.12, C.ardoise, 0.15, 0.09, -0.14), boite(0.04, 0.05, 0.005, C.blanc, 0.15, 0, -0.084));
-    p.push(...cuve(0.035, 0.2, C.metal, 0.27, -0.03), ...camion(-0.05, 0.2, 0.4, C.vert));
-    return p;
-  },
   // Mine commune : fosse à gradins, chevalement, convoyeur, tas de minerai, camion.
   mine: () => {
     const p = [dalle(0.62, 0.58, C.gravier)];
@@ -362,18 +355,6 @@ const MODELES = {
     p.push(...immeuble(0.1, 0.06, 0.06, C.creme, 0.17, 0.05, 2));
     return p;
   },
-  // Fabrique : atelier à toit en sheds, quai de chargement, cheminée.
-  fabrique: () => {
-    const p = [dalle(0.6, 0.54, C.beton)];
-    p.push(boite(0.36, 0.1, 0.26, C.brique, -0.04, 0, -0.04), ...fenetres(0.36, 0.1, 0.26, -0.04, 0, -0.04, 1, 8));
-    for (let k = 0; k < 4; k++) {
-      const s = new THREE.Shape(); s.moveTo(0, 0); s.lineTo(0.09, 0); s.lineTo(0, 0.05); s.closePath();
-      const g = new THREE.ExtrudeGeometry(s, { depth: 0.26, bevelEnabled: false }); g.translate(-0.22 + k * 0.09, 0, -0.17);
-      p.push(piece(g, k % 2 ? C.toleGris : C.vitreClair, 0, 0.1, 0));
-    }
-    p.push(...cheminee(0.022, 0.3, 0.2, -0.16), boite(0.12, 0.03, 0.06, C.betonFonce, -0.04, 0, 0.13), ...camion(0.1, 0.18, 0, C.toleBleu), ...conteneur(-0.2, 0.012, 0.18, C.conteneurs[0]));
-    return p;
-  },
   // Centrale thermique : salle des chaudières, deux cheminées, stock de charbon, convoyeur.
   centrale_thermique: () => {
     const p = [dalle(0.64, 0.6, C.beton)];
@@ -449,13 +430,17 @@ const MODELES = {
     p.push(...camion(-0.1, 0.18, 0, C.blanc), ...camion(0.08, 0.18, 0, C.rouge));
     return p;
   },
-  // Place financière : gratte-ciel de verre, socle à colonnes, couronne dorée.
-  banque: () => {
-    const p = [dalle(0.56, 0.54, C.pierre)];
-    p.push(...immeuble(0.18, 0.5, 0.16, C.vitre, 0, -0.04, 16, { vitre: C.vitreClair, toit: C.sombre, clim: false }));
-    p.push(boite(0.26, 0.06, 0.22, C.pierre, 0, 0, -0.04), ...[-0.09, -0.03, 0.03, 0.09].map(x => cyl(0.008, 0.009, 0.06, C.blanc, x, 0, 0.075, 8)));
-    p.push(boite(0.14, 0.03, 0.12, C.or, 0, 0.5, -0.04), cone(0.05, 0.06, C.or, 0, 0.53, -0.04, 4, Math.PI / 4), cyl(0.002, 0.002, 0.06, C.metal, 0, 0.59, -0.04, 4));
-    p.push(...arbre(-0.2, 0.18), ...arbre(0.2, 0.18), ...voiture(0.0, 0.2, 0, C.noir), ...drapeau(-0.2, 0, -0.18, 0.18));
+  // Centre commercial : grande galerie vitrée, enseigne aux couleurs du pays,
+  // parking plein de voitures.
+  centre_commercial: () => {
+    const p = [dalle(0.64, 0.58, C.asphalte)];
+    p.push(...immeuble(0.46, 0.12, 0.24, C.creme, 0, -0.13, 2, { vitre: C.vitreClair, toit: C.toleGris }));
+    p.push(boite(0.47, 0.035, 0.03, PAYS, 0, 0.1, -0.005), boite(0.14, 0.09, 0.05, C.vitreClair, 0, 0, 0.0), boite(0.16, 0.012, 0.07, C.blanc, 0, 0.09, 0.01));
+    p.push(boite(0.08, 0.02, 0.08, C.toleGris, -0.14, 0.12, -0.15), boite(0.06, 0.02, 0.06, C.toleGris, 0.15, 0.12, -0.12));
+    const coul = [C.rouge, C.blanc, C.toleBleu, C.noir, C.jaune, C.metal];
+    let k = 0;
+    for (const z of [0.1, 0.2]) for (let x = -0.26; x <= 0.27; x += 0.075) { if ((k * 7) % 5 !== 0) p.push(...voiture(x, z, Math.PI / 2, coul[k % coul.length])); k++; }
+    p.push(boite(0.6, 0.004, 0.006, C.blanc, 0, 0.007, 0.15), ...arbre(-0.29, -0.24, 0.8), ...arbre(0.29, -0.24, 0.8));
     return p;
   },
   // Hôpital : bâtiment en H, croix rouge, héliport sur le toit, ambulances.
