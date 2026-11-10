@@ -61,6 +61,7 @@
             <button class="actif" data-mode-carte="politique" title="Carte politique"><i class="ico" style="--ic:url('__P__/static/img/solid/flag.svg')"></i><span>Politique</span></button>
             <button data-mode-carte="terrain" title="Relief et terrains"><i class="ico" style="--ic:url('__P__/static/img/solid/mountain.svg')"></i><span>Terrain</span></button>
             <button data-mode-carte="ressources" title="Gisements"><i class="ico" style="--ic:url('__P__/static/img/solid/gem.svg')"></i><span>Ressources</span></button>
+            <button data-mode-carte="religions" title="Religions"><i class="ico" style="--ic:url('__P__/static/img/solid/place-of-worship.svg')"></i><span>Religions</span></button>
           </div>
           <button class="wf-outil" id="wf-recentrer" title="Revenir à ma capitale"><i class="ico" style="--ic:url('__P__/static/img/solid/house-flag.svg')"></i></button>
           <button class="wf-outil" id="wf-vue-globale" title="Vue d'ensemble"><i class="ico" style="--ic:url('__P__/static/img/solid/earth-europe.svg')"></i></button>
@@ -70,6 +71,7 @@
           <div class="wf-troupes-tete">
             <i class="ico" style="--ic:url('__P__/static/img/solid/person-military-rifle.svg')"></i>
             <b id="wf-troupes-n">0</b><span>/ <span id="wf-troupes-max">0</span></span>
+            <span class="wf-troupes-form" id="wf-troupes-form"></span>
             <span class="wf-troupes-off" id="wf-troupes-off"></span>
             <button class="wf-btn-ic wf-troupes-replier" data-act="reduire_troupes" title="Réduire / agrandir"><i class="ico" style="--ic:url('__P__/static/img/solid/chevron-down.svg')"></i></button>
           </div>
@@ -83,6 +85,7 @@
           </div>
           <small>Clic gauche : actions de la case · clic droit : s'étendre ou attaquer</small>
         </div>
+        <div class="wf-legende" id="wf-legende" hidden></div>
         <div class="wf-objectifs" id="wf-objectifs" hidden></div>
         <div class="wf-propositions" id="wf-propositions" hidden></div>
         <div class="wf-consigne" id="wf-consigne" hidden></div>

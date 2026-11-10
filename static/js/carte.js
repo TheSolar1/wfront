@@ -67,6 +67,13 @@ export class Carte {
     this.proprio = new Int32Array(n).fill(-1);
     // Carte du monde : vrai pays de chaque case (0 = mer).
     this.regions = init.monde_reel ? Uint8Array.from(atob(init.monde_reel.regions), ch => ch.charCodeAt(0)) : null;
+    // Religion (un octet par case) et habitants (echelle log2 x 16) de
+    // chaque case, envoyes une fois au chargement.
+    const octets = b64 => b64 ? Uint8Array.from(atob(b64), ch => ch.charCodeAt(0)) : new Uint8Array(n);
+    this.rel = octets(init.religions);
+    this.habLog = octets(init.habitants);
+    this.relDefs = new Map((init.defs.religions || []).map(r => [r.id, r]));
+    this.enRevolte = new Set();
     this.bat = new Array(n).fill('');
     this.niv = new Uint8Array(n);
     this.irr = new Uint8Array(n);
@@ -551,11 +558,15 @@ if (vHaut > -0.05) {
       if (this.mode === 'politique' && this.proprio[i] >= 0) {
         const pa = this.pays.get(this.proprio[i]);
         if (pa) { col = rgb(pa._teinte ??= melanger(pa.couleur, '#ffffff', 0.12)); a = 0.42; }
+      } else if (this.mode === 'religions' && t.terre) {
+        const r = this.relDefs.get(this.rel[i]);
+        if (r) { col = rgb(r.couleur); a = 0.62; }
       } else if (this.mode === 'ressources' && t.terre) {
         const dd = this.depot[i];
         if (dd > 0) { col = rgb(this.defs.depots[dd].couleur); a = 0.7; } else { col = rgb('#9ca3af'); a = 0.45; }
       }
       if (this.irr[i]) { col = rgb('#b6ff3b'); a = 0.55; }
+      if (this.enRevolte.has(i)) { col = rgb('#ef4444'); a = 0.6; }
       if (this.zone && this.zone.has(i)) { col = rgb(this.zoneCouleur); a = Math.max(a, 0.4); }
       const brume = this.vision && !this.vision[i] ? 128 : 0;
       const o = 4 * i;
@@ -778,12 +789,20 @@ if (vHaut > -0.05) {
     }
   }
 
+  /** Habitants approximatifs d'une case (chiffre recu au chargement). */
+  habitants(i) { return Math.max(0, Math.pow(2, this.habLog[i] / 16) - 1); }
+
   majEtat(e) {
     this.recu = performance.now();
+    if (e.revoltes) {
+      const cases = new Set(e.revoltes.flatMap(r => r.cases));
+      if (cases.size !== this.enRevolte.size || [...cases].some(k => !this.enRevolte.has(k))) { this.enRevolte = cases; this.couleursSales = true; }
+    }
     if (e.cases && e.cases.length) {
       const terrains = [];
-      for (const [i, p, b, nv, ir, t] of e.cases) {
+      for (const [i, p, b, nv, ir, t, r] of e.cases) {
         if (t !== undefined && this.terrain[i] !== t) { this.terrain[i] = t; terrains.push(i); }
+        if (r !== undefined && this.rel[i] !== r) { this.rel[i] = r; this.relSales = true; if (this.mode === 'religions') this.labelsSales = true; }
         if (this.proprio[i] !== p) { this.bordSale = true; this.labelsSales = true; }
         this.proprio[i] = p;
         this.bat[i] = b;
@@ -1188,6 +1207,7 @@ if (vHaut > -0.05) {
   majLabels() {
     this.groupes.labels.children.forEach(s => s.material.dispose());
     this.groupes.labels.clear();
+    if (this.mode === 'religions') { this.labelsReligions(); this.labelsSales = false; return; }
     const sommes = new Map();
     for (let i = 0; i < this.g.n; i++) {
       const p = this.proprio[i];
@@ -1210,7 +1230,68 @@ if (vHaut > -0.05) {
     this.labelsSales = false;
   }
 
-  // ── Effets ──────────────────────────────────────────────────────
+  /** Noms des religions : taille en pixels selon la region (70 a 170 px
+   *  de large), et les plus petits qui chevauchent un plus grand sont caches. */
+  placerNomsReligions() {
+    const el = this.renderer.domElement, W = el.clientWidth, H = el.clientHeight;
+    if (!W || !H) return;
+    const f = 2 / (this.camera.projectionMatrix.elements[5] * H);
+    const v = new THREE.Vector3(), places = [];
+    const liste = [...this.groupes.labels.children].sort((a, b) => b.userData.n - a.userData.n);
+    for (const s of liste) {
+      const px = Math.min(170, Math.max(70, 50 + Math.sqrt(s.userData.n) * 2));
+      s.scale.set(px * f, px * 0.1875 * f, 1);
+      v.copy(s.position).project(this.camera);
+      const x = (v.x + 1) / 2 * W, y = (1 - v.y) / 2 * H;
+      const r = { x0: x - px * s.userData.part / 2 - 4, x1: x + px * s.userData.part / 2 + 4, y0: y - px * 0.1 - 3, y1: y + px * 0.1 + 3 };
+      const dehors = v.z > 1 || r.x1 < 0 || r.x0 > W || r.y1 < 0 || r.y0 > H;
+      const chevauche = places.some(q => r.x0 < q.x1 && r.x1 > q.x0 && r.y0 < q.y1 && r.y1 > q.y0);
+      s.visible = !dehors && !chevauche;
+      if (s.visible) places.push(r);
+    }
+  }
+
+  /** Mode religions : le nom de chaque grande region religieuse (regions
+   *  d'un seul tenant d'au moins 40 cases), ecrit en son centre. */
+  labelsReligions() {
+    if (!this._zonesRel || this.relSales) {
+      const n = this.g.n, vu = new Uint8Array(n), zones = [];
+      for (let i0 = 0; i0 < n; i0++) {
+        const r = this.rel[i0];
+        if (vu[i0] || !r || !this.defs.terrains[this.terrain[i0]].terre) continue;
+        const pile = [i0];
+        vu[i0] = 1;
+        let sx = 0, sz = 0, k = 0;
+        while (pile.length) {
+          const i = pile.pop();
+          const [x, z] = this.pos(i);
+          sx += x; sz += z; k++;
+          for (const v of this.g.voisins(i)) {
+            if (v >= 0 && !vu[v] && this.rel[v] === r && this.defs.terrains[this.terrain[v]].terre) { vu[v] = 1; pile.push(v); }
+          }
+        }
+        if (k >= 150) zones.push({ r, x: sx / k, z: sz / k, n: k });
+      }
+      this._zonesRel = zones;
+      this.relSales = false;
+    }
+    for (const zn of this._zonesRel) {
+      const d = this.relDefs.get(zn.r);
+      if (!d) continue;
+      // Taille fixe a l'ecran (placerNomsReligions), plus grande pour les
+      // grandes regions ; les noms qui se chevauchent sont caches.
+      const sp = this.sprite(this.texTexte(d.nom, melanger(d.couleur, '#ffffff', 0.55), 46), 0.1, 1, 0.1875);
+      sp.material.sizeAttenuation = false;
+      const mesure = (this._mesure ??= document.createElement('canvas').getContext('2d'));
+      mesure.font = "800 46px 'Segoe UI', Arial, sans-serif";
+      sp.userData = { n: zn.n, part: Math.min(1, (mesure.measureText(d.nom).width + 24) / 512) };
+      sp.position.set(zn.x, 4.2, zn.z);
+      sp.renderOrder = 9;
+      sp.material.depthTest = false;
+      this.groupes.labels.add(sp);
+    }
+  }
+
   // ── Effets ──────────────────────────────────────────────────────
   /** Animation ponctuelle sur une case. `rayon` (cases) : taille reelle de
    *  l'arme (frappe nucleaire, trou noir, antimatiere). Chaque arme a la
@@ -1389,7 +1470,7 @@ if (vHaut > -0.05) {
   }
 
   // ── Selection / zone ────────────────────────────────────────────
-  setMode(m) { this.mode = m; this.couleursSales = true; this.spritesDepot.forEach(s => this.groupes.depots.remove(s)); this.spritesDepot.clear(); }
+  setMode(m) { this.mode = m; this.couleursSales = true; this.labelsSales = true; this.spritesDepot.forEach(s => this.groupes.depots.remove(s)); this.spritesDepot.clear(); }
   setMoi(id) { this.moi = id; }
   setRelations(r) { this.relations = r; }
   setZone(cases, couleur = '#ffffff') { this.zone = cases ? new Set(cases) : null; this.zoneCouleur = couleur; this.couleursSales = true; }
@@ -1646,6 +1727,7 @@ if (vHaut > -0.05) {
     if (this.scene.fog) { this.scene.fog.near = Math.max(120, c.d * 1.4); this.scene.fog.far = Math.max(280, c.d * 3); }
 
     this.groupes.labels.visible = c.d > 20;
+    if (this.mode === 'religions' && t - (this._nomsRel || 0) > 150) { this._nomsRel = t; this.placerNomsReligions(); }
     this.groupes.labels.children.forEach(s => (s.material.opacity = Math.min(1, (c.d - 20) / 12)));
     this.groupes.bats.visible = c.d < 95;
 

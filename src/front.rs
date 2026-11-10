@@ -48,12 +48,12 @@ pub fn maximum(p: &Pays, b: &Bilan) -> f64 {
     m.round()
 }
 
-/// Troupes gagnees par seconde de jeu.
-pub fn croissance(p: &Pays, max: f64, affame: bool) -> f64 {
+/// Recrues gagnees par seconde de jeu (recrutement automatique).
+pub fn croissance(p: &Pays, max: f64, affame: bool, en_formation: f64) -> f64 {
     if max <= 0.0 {
         return 0.0;
     }
-    let g = (2.0 + max * 0.0025) * (1.0 - p.troupes / max).max(0.0);
+    let g = (2.0 + max * 0.0025) * (1.0 - (p.troupes + en_formation) / max).max(0.0);
     if affame { g * 0.3 } else { g }
 }
 
@@ -183,18 +183,74 @@ pub fn rappeler(m: &mut Monde, pid: u32, id: u32) -> Result<String, String> {
     Ok(format!("{} troupes rappelées.", a.troupes.floor()))
 }
 
-/// Reserve de troupes : remplissage, et retour des troupes au plafond.
+/// Reserve de troupes. Un soldat est un habitant : les recrues sont prises
+/// parmi les actifs, passent par la caserne (formation), puis rejoignent la
+/// reserve. Le recrutement automatique ne prend que des sans-emploi, pour ne
+/// pas vider les usines ; on peut recruter davantage a la main.
 pub fn reserves(m: &mut Monde, bl: &HashMap<u32, Bilan>, dt: f64) {
+    let temps = m.temps;
     for (pid, p) in m.pays.iter_mut() {
         if p.elimine {
             p.troupes = 0.0;
+            p.formation.clear();
             continue;
         }
         let Some(b) = bl.get(pid) else { continue };
-        let affame = p.res[NO] <= 0.0 && b.prod[NO] < b.conso[NO];
-        p.troupes += croissance(p, b.troupes_max, affame) * dt;
+        // Fin de formation.
+        let mut prets = 0.0;
+        p.formation.retain(|l| {
+            if l.fin <= temps {
+                prets += l.n;
+                false
+            } else {
+                true
+            }
+        });
+        p.troupes += prets;
+        if p.recrut_auto {
+            let en_formation: f64 = p.formation.iter().map(|l| l.n).sum();
+            let place = b.troupes_max - p.troupes - en_formation;
+            let affame = p.res[NO] <= 0.0 && b.prod[NO] < b.conso[NO];
+            let n = (croissance(p, b.troupes_max, affame, en_formation) * dt).min(place).min(b.chomeurs);
+            if n > 0.0 {
+                incorporer(p, n, temps + b.duree_formation);
+            }
+        }
         p.troupes = p.troupes.clamp(0.0, b.troupes_max.max(0.0));
     }
+}
+
+/// Ajoute des recrues en formation (regroupees par tranches de 10 s).
+fn incorporer(p: &mut Pays, n: f64, fin: f64) {
+    match p.formation.last_mut() {
+        Some(l) if (fin - l.fin).abs() < 10.0 => {
+            l.n += n;
+            l.total += n;
+        }
+        _ => p.formation.push(Lot { n, fin, total: n }),
+    }
+}
+
+/// Recrute `n` habitants : ils partent en formation a la caserne.
+pub fn recruter(m: &mut Monde, pid: u32, b: &Bilan, n: f64) -> Result<String, String> {
+    if !n.is_finite() || n < 1.0 {
+        return Err("Indiquez combien d'habitants recruter.".into());
+    }
+    let n = n.floor();
+    let civils = (b.actifs - b.soldats - b.recrues).max(0.0).floor();
+    if n > civils {
+        return Err(format!("Pas assez d'habitants en âge de servir : {} civils actifs disponibles.", civils));
+    }
+    let p = m.pays.get_mut(&pid).ok_or("Pays introuvable.")?;
+    let en_formation: f64 = p.formation.iter().map(|l| l.n).sum();
+    let place = (b.troupes_max - p.troupes - en_formation).floor();
+    if n > place {
+        return Err(format!("Casernes pleines : place pour {} recrues de plus (construisez des casernes).", place.max(0.0)));
+    }
+    let fin = m.temps + b.duree_formation;
+    incorporer(p, n, fin);
+    let ouvriers = if n > b.chomeurs { " Des ouvriers quittent leur poste : la production baisse." } else { "" };
+    Ok(format!("{} recrues partent en formation ({} min).{}", n, (b.duree_formation / 60.0).round(), ouvriers))
 }
 
 /// Fait avancer toutes les offensives de `dt` secondes.
@@ -248,6 +304,7 @@ fn avancer_une(m: &mut Monde, a: &mut Attaque, dt: f64) -> bool {
         }
         if !prendre(m, a, plage) {
             m.evenement(Some(a.de), "alerte", "Débarquement repoussé : pas assez de troupes.".into(), Some(plage));
+            tues(m, a.de, a.troupes);
             a.troupes = 0.0;
             return true;
         }
@@ -296,11 +353,16 @@ fn prendre(m: &mut Monde, a: &mut Attaque, i: usize) -> bool {
     }
     a.troupes -= cout;
     match m.cases[i].proprio {
+        // Contre une nation : les soldats tombes des deux cotes sont des
+        // habitants en moins. Sur une terre neutre, les troupes « perdues »
+        // s'installent sur place (elles redeviennent des civils).
         Some(d) => {
-            let pertes = 0.8 * densite(m, d) * 0.7;
+            let pertes = (0.8 * densite(m, d) * 0.7).min(m.pays.get(&d).map(|p| p.troupes).unwrap_or(0.0));
             if let Some(p) = m.pays.get_mut(&d) {
                 p.troupes = (p.troupes - pertes).max(0.0);
             }
+            tues(m, d, pertes);
+            tues(m, a.de, cout);
             capturer(m, a.de, i);
         }
         None => {
@@ -310,6 +372,13 @@ fn prendre(m: &mut Monde, a: &mut Attaque, i: usize) -> bool {
     }
     a.prises += 1;
     true
+}
+
+/// Soldats tues : autant d'habitants en moins (demographie.rs).
+fn tues(m: &mut Monde, pid: u32, n: f64) {
+    if let Some(p) = m.pays.get_mut(&pid) {
+        p.pop = (p.pop - n.max(0.0) / 1000.0).max(0.0);
+    }
 }
 
 #[cfg(test)]
@@ -379,7 +448,8 @@ mod tests {
     fn la_reserve_se_remplit_jusqu_au_maximum() {
         let (mut m, a, _, _) = monde_deux_pays();
         m.pays.get_mut(&a).unwrap().troupes = 0.0;
-        for _ in 0..2000 {
+        for _ in 0..3000 {
+            m.temps += 1.0;
             let bl = jeu::bilans(&m);
             reserves(&mut m, &bl, 1.0);
         }

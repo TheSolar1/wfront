@@ -7,6 +7,7 @@
 // ══════════════════════════════════════════════════════════════════
 
 use crate::defs::*;
+use crate::demographie as demo;
 use crate::fabrication::{self as fab, Fabrication};
 use crate::front;
 use crate::monde::*;
@@ -68,6 +69,22 @@ pub struct Bilan {
     pub fab_max: u8,
     /// Niveaux de carrieres par gisement : rien / rare / radioactif / meteorite.
     pub carrieres: [f64; 4],
+    // ── Main-d'oeuvre (demographie.rs), en habitants ──
+    pub enfants: f64,
+    pub actifs: f64,
+    pub retraites: f64,
+    /// Soldats (reserve, offensives, maintien de l'ordre) et recrues.
+    pub soldats: f64,
+    pub recrues: f64,
+    pub emplois: f64,
+    pub travailleurs: f64,
+    pub chomeurs: f64,
+    /// Part des emplois pourvus (multiplie la production des batiments).
+    pub travail: f64,
+    pub duree_formation: f64,
+    /// Habitants par religion (id, habitants).
+    pub religions: Vec<(u8, f64)>,
+    pub revoltes: u32,
 }
 
 impl Bilan {
@@ -79,11 +96,20 @@ impl Bilan {
 pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
     let mut out: HashMap<u32, Bilan> = m.pays.keys().map(|&k| (k, Bilan::default())).collect();
     let mut fermes: HashMap<u32, f64> = HashMap::new();
+    let mut accueil: HashMap<u32, f64> = HashMap::new();
+    let mut religions: HashMap<u32, BTreeMap<u8, f64>> = HashMap::new();
 
-    for c in &m.cases {
+    for (i, c) in m.cases.iter().enumerate() {
         let Some(p) = c.proprio else { continue };
         let Some(b) = out.get_mut(&p) else { continue };
         b.cases += 1;
+        *accueil.entry(p).or_insert(0.0) += m.hab_base.get(i).copied().unwrap_or(0.0) as f64;
+        *religions.entry(p).or_default().entry(c.rel).or_insert(0.0) += c.hab as f64;
+        // Une case en revolte ou irradiee ne produit plus rien.
+        if c.revolte {
+            b.revoltes += 1;
+            continue;
+        }
         if c.irradiee > m.temps {
             continue;
         }
@@ -152,9 +178,30 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
 
         let spe = p.spe.as_str();
 
-        // ── Population ──
+        // ── Main-d'oeuvre : chaque niveau de batiment (sauf les villes)
+        // emploie des ouvriers, pris parmi les actifs qui ne sont pas soldats.
+        let (sold, recr) = demo::soldats(m, *pid);
+        b.enfants = demo::entre(p, 0, demo::AGE_ACTIF);
+        b.actifs = demo::entre(p, demo::AGE_ACTIF, demo::AGE_RETRAITE);
+        b.retraites = demo::entre(p, demo::AGE_RETRAITE, demo::NB_AGES);
+        b.soldats = sold;
+        b.recrues = recr;
+        b.emplois = b.niv.iter().filter(|(k, _)| k.as_str() != "ville").map(|(_, &n)| n as f64).sum::<f64>() * demo::EMPLOIS_PAR_NIVEAU;
+        let dispo = (b.actifs - sold - recr).max(0.0);
+        b.travailleurs = dispo.min(b.emplois);
+        b.chomeurs = (dispo - b.emplois).max(0.0);
+        b.travail = if b.emplois > 0.0 { (dispo / b.emplois).min(1.0) } else { 1.0 };
+        b.duree_formation = demo::duree_formation(b);
+        let mut rel: Vec<(u8, f64)> = religions.remove(pid).unwrap_or_default().into_iter().filter(|(r, h)| *r > 0 && *h > 0.0).collect();
+        rel.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        b.religions = rel;
+        // Sans ouvriers, les batiments tournent au ralenti (comme sans courant).
+        let ratio = ratio * b.travail;
+
+        // ── Population : capacite d'accueil des terres + logements ──
         let urbanisme = 1.0 + 0.06 * p.niv("urbanisme");
-        b.pop_cap = (200.0 * b.n("capitale") + 140.0 * b.n("ville") * urbanisme + 30.0 * b.n("hopital")) * (1.0 + 0.05 * p.niv("agronomie"));
+        b.pop_cap = accueil.get(pid).copied().unwrap_or(0.0) * 1.3 / 1000.0
+            + (200.0 * b.n("capitale") + 140.0 * b.n("ville") * urbanisme + 30.0 * b.n("hopital")) * (1.0 + 0.05 * p.niv("agronomie"));
         b.croissance = 1.0
             + 0.15 * b.n("hopital") * ratio
             + if p.a("eco_etat_providence") { 0.2 } else { 0.0 }
@@ -164,7 +211,7 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         // ── Production (par minute) ──
         // Le territoire rapporte aussi : 0,15 credit par minute et par case.
         // Le petrole des puits est vendu : +25 credits par minute et par niveau.
-        let mut cr = 40.0 * b.n("capitale") + 6.0 * b.n("ville") * ratio + 3.0 * b.n("usine") * ratio + p.pop * 0.18 + 0.15 * b.cases as f64
+        let mut cr = 40.0 * b.n("capitale") + 6.0 * b.n("ville") * ratio + 3.0 * b.n("usine") * ratio + 2.0 * p.pop.max(0.0).sqrt() + 0.15 * b.cases as f64
             + 25.0 * b.n("puits_petrole") * ratio;
         let mut mult_cr = 1.0 + 0.08 * b.n("banque") * ratio;
         mult_cr += 0.05 * p.niv("fiscalite");
@@ -202,7 +249,7 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         b.conso = conso;
 
         // ── Recherche / influence ──
-        let mut rech = 12.0 * b.n("capitale") + (15.0 * b.n("laboratoire") + 90.0 * b.n("labo_quantique")) * ratio + p.pop * 0.02;
+        let mut rech = 12.0 * b.n("capitale") + (15.0 * b.n("laboratoire") + 90.0 * b.n("labo_quantique")) * ratio + 0.22 * p.pop.max(0.0).sqrt();
         if p.a("ind_electronique") { rech *= 1.10; }
         if spe == "scientifique" { rech *= 1.20; }
         rech *= 1.0 + 0.08 * p.niv("sciences");
@@ -974,6 +1021,9 @@ pub fn capturer(m: &mut Monde, pid: u32, i: usize) {
     }
     m.cases[i].degats = 0.0;
     m.toucher(i);
+    if ancien.is_some() {
+        demo::case_conquise(m, pid, i);
+    }
 
     // Garnisons non combattantes (avions au sol, missiles) perdues.
     if let Some(a) = ancien {
@@ -1181,6 +1231,8 @@ fn initialiser_pays(m: &mut Monde, pid: u32, cap: usize, regles: &Regles) {
     let mut garnison = BTreeMap::new();
     garnison.insert("infanterie".to_string(), 6);
     deposer_unites(m, pid, cap, &garnison);
+    // Habitants des cases prises, pyramide des ages, religion d'Etat.
+    demo::installer(m, pid);
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1628,15 +1680,7 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
         if p.res[CR] <= 0.0 && b.prod[CR] < b.conso[CR] {
             desertion.push(*pid);
         }
-        // Population
-        if p.res[NO] <= 0.0 && b.prod[NO] < b.conso[NO] {
-            p.pop *= 1.0 - 0.02 * dm;
-        } else if p.pop < b.pop_cap {
-            p.pop += (b.pop_cap - p.pop) * 0.04 * b.croissance * dm;
-        } else {
-            p.pop -= (p.pop - b.pop_cap) * 0.1 * dm;
-        }
-        p.pop = p.pop.max(10.0);
+        // Population : voir demographie.rs (appele plus bas).
         p.influence = (p.influence + b.influence * dm).min(1000.0);
 
         // Uranium : enrichissement puis consommation des centrales
@@ -1805,6 +1849,8 @@ pub fn tick(m: &mut Monde, dt: f64) -> HashMap<u32, Bilan> {
     // ── Troupes et offensives (facon OpenFront) ──
     front::reserves(m, &bl, dt);
     front::avancer(m, dt);
+    demo::evoluer(m, &bl, dt);
+    demo::religions(m, dt, &mut rng);
     if (m.temps / 5.0).floor() != ((m.temps - dt) / 5.0).floor() {
         encerclements(m);
     }
@@ -2729,6 +2775,36 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
         "rappeler" => {
             let id = u(cmd, "id").ok_or("Offensive manquante.")? as u32;
             front::rappeler(m, pid, id)
+        }
+        // ── Population, armee de citoyens, revoltes ──
+        "recruter" => front::recruter(m, pid, &b, cmd.get("n").and_then(|v| v.as_f64()).unwrap_or(0.0)),
+        "demobiliser" => {
+            let p = m.pays.get_mut(&pid).unwrap();
+            let n = cmd.get("n").and_then(|v| v.as_f64()).unwrap_or(0.0).floor().min(p.troupes.floor());
+            if n < 1.0 {
+                return Err("Aucun soldat à démobiliser.".into());
+            }
+            p.troupes -= n;
+            Ok(format!("{} soldats rendus à la vie civile.", n))
+        }
+        "recrutement_auto" => {
+            let actif = cmd.get("actif").and_then(|v| v.as_bool()).unwrap_or(true);
+            m.pays.get_mut(&pid).unwrap().recrut_auto = actif;
+            Ok(if actif { "Recrutement automatique activé (parmi les sans-emploi)." } else { "Recrutement automatique arrêté." }.into())
+        }
+        "natalite" => {
+            let prime = cmd.get("prime").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            if !prime.is_finite() {
+                return Err("Prime invalide.".into());
+            }
+            let prime = prime.clamp(0.0, demo::PRIME_MAX).round();
+            m.pays.get_mut(&pid).unwrap().prime_natalite = prime;
+            Ok(if prime > 0.0 { format!("Campagne de natalité : {} crédits par naissance.", prime) } else { "Campagne de natalité arrêtée.".into() })
+        }
+        "reprimer" => {
+            let id = u(cmd, "revolte").ok_or("Révolte manquante.")? as u32;
+            let n = cmd.get("troupes").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            demo::reprimer(m, pid, id, n)
         }
 
         // ── Fabrication ──
@@ -3719,6 +3795,16 @@ fn rejoindre(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Result<
         stock: Default::default(),
         fabrications: vec![],
         pays_reel: 0,
+        ages: vec![],
+        sync: 0.0,
+        fecondite: 0.0,
+        religion: 0,
+        prime_natalite: 0.0,
+        naissances: 0.0,
+        deces: 0.0,
+        cout_natalite: 0.0,
+        recrut_auto: true,
+        formation: vec![],
     });
     let installe = match reel {
         Some(k) => installer_pays_reel(m, pid, k, regles),
@@ -3931,7 +4017,7 @@ pub fn scores(p: &Pays, b: &Bilan) -> Value {
     let eco = (b.prod[CR] - b.conso[CR]).max(0.0);
     let techno: f64 = p.techs.iter().filter_map(|t| tech(t)).map(|t| t.cout).sum::<f64>() / 100.0;
     let diplo = p.influence + b.n("ambassade") * 10.0 + if p.bloc.is_some() { 25.0 } else { 0.0 };
-    let global = b.puissance * 0.6 + eco * 1.5 + b.cases as f64 * 25.0 + techno * 6.0 + p.pop * 0.4 + diplo;
+    let global = b.puissance * 0.6 + eco * 1.5 + b.cases as f64 * 25.0 + techno * 6.0 + 4.4 * p.pop.max(0.0).sqrt() + diplo;
     json!({
         "global": global.round(),
         "militaire": b.puissance.round(),

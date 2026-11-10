@@ -21,6 +21,61 @@ pub struct Case {
     pub degats: f64,
     /// Numero de revision : envoye aux clients quand il change.
     pub rev: u64,
+    /// Habitants de la case (demographie.rs), meme sans proprietaire.
+    #[serde(default, skip_serializing_if = "zero_f32")]
+    pub hab: f32,
+    /// Religion de la case (RELIGIONS, 0 = aucune). Recalculee au
+    /// chargement (+ conversions de Monde::religions_changees).
+    #[serde(skip)]
+    pub rel: u8,
+    /// Case en revolte (ne produit plus rien).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub revolte: bool,
+}
+
+fn zero_f32(v: &f32) -> bool {
+    *v == 0.0
+}
+
+fn vrai() -> bool {
+    true
+}
+
+/// Recrues en formation : `n` soldats prets au temps de jeu `fin`.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Lot {
+    pub n: f64,
+    pub fin: f64,
+    pub total: f64,
+}
+
+/// Case tenue par une nation d'une autre religion (demographie.rs).
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Occupation {
+    pub proprio: u32,
+    /// Horodatage unix de la prise.
+    pub depuis: i64,
+    /// Prise a une autre nation (sinon : terre neutre annexee).
+    pub conquise: bool,
+}
+
+/// Revolte d'une region d'une autre religion.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Revolte {
+    pub id: u32,
+    pub pays: u32,
+    pub cases: Vec<usize>,
+    pub religion: u8,
+    pub rebelles: f64,
+    pub debut: i64,
+    /// Sans maintien de l'ordre gagne avant cette date, la region devient neutre.
+    pub limite: i64,
+    /// Troupes envoyees pour retablir l'ordre.
+    pub forces: f64,
+    #[serde(default)]
+    pub morts_rebelles: f64,
+    #[serde(default)]
+    pub morts_soldats: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -102,6 +157,36 @@ pub struct Pays {
     /// Carte du monde : index du vrai pays dirige (pays_reels(), 0 = aucun).
     #[serde(default)]
     pub pays_reel: u8,
+    // ── Demographie (demographie.rs) ──
+    /// Habitants par age (0 a 99 ans).
+    #[serde(default)]
+    pub ages: Vec<f64>,
+    /// Population (habitants) au dernier calcul demographique : ce que les
+    /// autres regles retirent de `pop` entre deux calculs compte en morts.
+    #[serde(default)]
+    pub sync: f64,
+    /// Enfants par femme (vraie valeur du pays).
+    #[serde(default)]
+    pub fecondite: f64,
+    /// Religion d'Etat (RELIGIONS).
+    #[serde(default)]
+    pub religion: u8,
+    /// Campagne de natalite : credits verses par naissance.
+    #[serde(default)]
+    pub prime_natalite: f64,
+    /// Naissances et deces par jour (moyennes glissantes).
+    #[serde(default)]
+    pub naissances: f64,
+    #[serde(default)]
+    pub deces: f64,
+    /// Cout de la campagne de natalite par jour (moyenne glissante).
+    #[serde(default)]
+    pub cout_natalite: f64,
+    /// Recrutement automatique (parmi les sans-emploi).
+    #[serde(default = "vrai")]
+    pub recrut_auto: bool,
+    #[serde(default)]
+    pub formation: Vec<Lot>,
 }
 
 impl Pays {
@@ -323,6 +408,25 @@ pub struct Monde {
     /// inutilise).
     #[serde(skip)]
     pub capitales_reelles: Vec<usize>,
+    // ── Demographie et religions (demographie.rs) ──
+    /// Habitants « naturels » de chaque case (capacite d'accueil).
+    #[serde(skip)]
+    pub hab_base: Vec<f32>,
+    /// Cases converties a une autre religion que celle d'origine.
+    #[serde(default)]
+    pub religions_changees: BTreeMap<usize, u8>,
+    #[serde(default)]
+    pub occupations: BTreeMap<usize, Occupation>,
+    #[serde(default)]
+    pub revoltes: BTreeMap<u32, Revolte>,
+    /// Historique par nation : [unix, population, actifs, soldats,
+    /// naissances/jour, deces/jour], un point toutes les 2 heures.
+    #[serde(default)]
+    pub histos: BTreeMap<u32, Vec<[f64; 6]>>,
+    #[serde(skip)]
+    pub demo_acc: f64,
+    #[serde(skip)]
+    pub occ_acc: f64,
 }
 
 // ── Geometrie hexagonale ──────────────────────────────────────────
@@ -822,7 +926,9 @@ impl Monde {
                 cases[y * largeur + x].terrain = terrain;
             }
         }
-        Monde::depuis_terrains(largeur, hauteur, graine, cases)
+        let mut m = Monde::depuis_terrains(largeur, hauteur, graine, cases);
+        crate::demographie::preparer(&mut m);
+        m
     }
 
     /// Carte du monde reel (src/monde_reel.bin, fabrique par
@@ -843,6 +949,7 @@ impl Monde {
         m.bots_admin = Some(0);
         m.regions = d.regions;
         m.capitales_reelles = d.capitales;
+        crate::demographie::preparer(&mut m);
         m
     }
 
@@ -858,6 +965,32 @@ impl Monde {
             self.regions.clear();
             self.capitales_reelles.clear();
         }
+    }
+
+    /// Position normalisee (0..1) du centre de la case sur la carte du monde.
+    pub fn uv_case(&self, i: usize) -> (f64, f64) {
+        let (x, y) = (i % self.largeur, i / self.largeur);
+        let (lw, lh) = (self.largeur as f64 + 0.5, (self.hauteur - 1) as f64 * 0.866 + 1.0);
+        let px = x as f64 + if y % 2 == 1 { 0.5 } else { 0.0 };
+        ((px + 0.5) / lw, (y as f64 * 0.866 + 0.5) / lh)
+    }
+
+    /// Case la plus proche d'une position normalisee de la carte du monde.
+    pub fn case_uv(&self, u: f64, v: f64) -> usize {
+        let (lw, lh) = (self.largeur as f64 + 0.5, (self.hauteur - 1) as f64 * 0.866 + 1.0);
+        let y = ((v * lh - 0.5) / 0.866).round().clamp(0.0, self.hauteur as f64 - 1.0) as usize;
+        let dx = if y % 2 == 1 { 0.5 } else { 0.0 };
+        let x = (u * lw - 0.5 - dx).round().clamp(0.0, self.largeur as f64 - 1.0) as usize;
+        y * self.largeur + x
+    }
+
+    /// Vrai pays sous le centre de la case, petits pays compris (0 = mer).
+    pub fn pays_au_centre(&self, i: usize) -> u8 {
+        let c = monde_reel();
+        let (u, v) = self.uv_case(i);
+        let col = ((u * c.largeur as f64) as isize).clamp(0, c.largeur as isize - 1) as usize;
+        let row = ((v * c.hauteur as f64) as isize).clamp(0, c.hauteur as isize - 1) as usize;
+        c.pays[row * c.largeur + col]
     }
 
     /// Vrai pays d'une case (0 = aucun : mer ou terre libre).
@@ -903,6 +1036,13 @@ impl Monde {
             monde_reel: false,
             regions: Vec::new(),
             capitales_reelles: Vec::new(),
+            hab_base: Vec::new(),
+            religions_changees: BTreeMap::new(),
+            occupations: BTreeMap::new(),
+            revoltes: BTreeMap::new(),
+            histos: BTreeMap::new(),
+            demo_acc: 0.0,
+            occ_acc: 0.0,
         };
 
         // La mer cotiere est la mer qui touche une terre ; le reste
@@ -1097,6 +1237,73 @@ mod tests_monde_reel {
         assert!(commande(&mut m, &jb, &cmd(index_pays("LU")), &regles).is_err(), "Luxembourg");
         commande(&mut m, &jb, &cmd(index_pays("DE")), &regles).unwrap();
         assert_eq!(m.pays.values().find(|p| p.user_id == 2).unwrap().nom, "Allemagne");
+    }
+
+    #[test]
+    fn habitants_religions_et_revoltes_du_monde() {
+        use crate::jeu::{commande, tick, Joueur, Regles};
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 708 };
+        let mut m = Monde::generer_monde_reel(708, 3);
+        // Les vraies religions aux vrais endroits.
+        let rel = |m: &Monde, lon: f64, lat: f64| m.cases[case_de(m, lon, lat)].rel;
+        for (lieu, lon, lat, r) in [
+            ("Paris", 2.35, 48.85, 1), ("Riyad", 46.7, 24.7, 4), ("Teheran", 51.4, 35.7, 5), ("Delhi", 77.2, 28.6, 6),
+            ("Bangkok", 100.5, 13.75, 7), ("Tokyo", 139.7, 35.7, 11), ("Moscou", 37.6, 55.75, 3), ("Pekin", 116.4, 39.9, 10),
+            ("Kano", 8.5, 12.0, 4), ("Lagos", 3.4, 6.6, 2), ("Pendjab", 75.8, 31.0, 12), ("Mexico", -99.1, 19.4, 1),
+        ] {
+            assert_eq!(rel(&m, lon, lat), r, "{lieu}");
+        }
+        // Toutes les terres sont peuplees, meme sans proprietaire.
+        let terres = m.cases.iter().filter(|c| est_terre(c.terrain)).count();
+        let peuplees = m.cases.iter().filter(|c| est_terre(c.terrain) && c.hab > 0.0).count();
+        assert!(peuplees * 100 >= terres * 99, "{peuplees}/{terres}");
+        // Population ecrasee : France ~650 000, Inde ~5 millions.
+        let ja = Joueur { user_id: 1, nom: "Alice", admin: false, triche: false };
+        let jb = Joueur { user_id: 2, nom: "Bob", admin: false, triche: false };
+        let cmd = |k: u8| serde_json::json!({"action": "rejoindre", "pays_reel": k, "couleur": "#ef4444", "spe": "militaire"});
+        commande(&mut m, &ja, &cmd(index_pays("FR")), &regles).unwrap();
+        commande(&mut m, &jb, &cmd(index_pays("IN")), &regles).unwrap();
+        let fr = m.pays.values().find(|p| p.user_id == 1).unwrap().id;
+        let ind = m.pays.values().find(|p| p.user_id == 2).unwrap().id;
+        assert!(m.pays[&fr].pop > 600.0 && m.pays[&fr].pop < 1100.0, "France {}", m.pays[&fr].pop);
+        assert!(m.pays[&ind].pop > 4500.0 && m.pays[&ind].pop < 6500.0, "Inde {}", m.pays[&ind].pop);
+        assert_eq!(m.pays[&fr].religion, 1);
+        assert_eq!(m.pays[&ind].religion, 6);
+        // Une journee reelle = une annee : quelques naissances et deces.
+        let avant = m.pays[&fr].pop;
+        let enfants0 = m.pays[&fr].ages[0];
+        for _ in 0..144 {
+            tick(&mut m, 600.0);
+        }
+        let p = &m.pays[&fr];
+        assert!(p.naissances > 1000.0 && p.deces > 1000.0, "naissances {} deces {}", p.naissances, p.deces);
+        assert!((p.pop / avant - 1.0).abs() < 0.03, "{} -> {}", avant, p.pop);
+        assert!(p.ages[0] > 0.0 && (p.ages[0] - enfants0).abs() < enfants0, "nouveaux-nes");
+        let somme: f64 = m.cases.iter().filter(|c| c.proprio == Some(fr)).map(|c| c.hab as f64).sum();
+        assert!((somme / 1000.0 - p.pop).abs() < 1.0, "cases {} pays {}", somme / 1000.0, p.pop);
+        // Une case algerienne (sunnite) prise par la France se revolte ; les
+        // troupes envoyees retablissent l'ordre.
+        let alger = case_de(&m, 3.0, 36.0);
+        let alger = (0..m.cases.len()).filter(|&i| m.cases[i].rel == 4 && est_terre(m.cases[i].terrain)).min_by_key(|&i| m.distance(i, alger)).unwrap();
+        m.cases[alger].proprio = Some(fr);
+        crate::demographie::demarrer_revolte(&mut m, fr, alger);
+        let id = *m.revoltes.keys().next().unwrap();
+        assert!(m.cases[alger].revolte);
+        m.pays.get_mut(&fr).unwrap().troupes = 5000.0;
+        crate::demographie::reprimer(&mut m, fr, id, 3000.0).unwrap();
+        for _ in 0..120 {
+            tick(&mut m, 1.0);
+        }
+        assert!(m.revoltes.is_empty(), "revolte matee");
+        assert!(!m.cases[alger].revolte && m.cases[alger].proprio == Some(fr));
+        // Sans maintien de l'ordre, la region devient neutre au bout du delai.
+        crate::demographie::demarrer_revolte(&mut m, fr, alger);
+        for r in m.revoltes.values_mut() {
+            r.limite = 0;
+        }
+        tick(&mut m, 1.0);
+        assert!(m.revoltes.is_empty());
+        assert_eq!(m.cases[alger].proprio, None, "region neutre apres la revolte");
     }
 
     #[test]

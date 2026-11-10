@@ -13,6 +13,7 @@
 mod admin;
 mod bots;
 mod defs;
+mod demographie;
 mod fabrication;
 mod front;
 mod jeu;
@@ -272,6 +273,7 @@ fn charger_monde(cfg: &Config, racine: &Path) -> monde::Monde {
             Ok(mut m) => {
                 jeu::migrer(&mut m);
                 m.preparer_regions();
+                demographie::preparer(&mut m);
                 println!("[monde] sauvegarde chargee : {} pays, {} armees.", m.pays.len(), m.armees.len());
                 return m;
             }
