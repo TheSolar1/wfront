@@ -517,7 +517,8 @@ pub fn evoluer(m: &mut Monde, bl: &HashMap<u32, Bilan>, dt: f64) {
         let mut naissances = naturelles;
         let mut cout = 0.0;
         if prime > 0.0 {
-            let avec = naturelles * (1.0 + bonus_prime(prime));
+            let famille = if p.a("soc_famille") { 1.3 } else { 1.0 };
+            let avec = naturelles * (1.0 + bonus_prime(prime) * famille);
             let c = avec * prime;
             if p.res[CR] >= c {
                 p.res[CR] -= c;
@@ -528,7 +529,7 @@ pub fn evoluer(m: &mut Monde, bl: &HashMap<u32, Bilan>, dt: f64) {
         // Deces : surpopulation (au-dela de la capacite d'accueil) et soins.
         let cap = b.map(|b| b.pop_cap * 1000.0).unwrap_or(0.0);
         let surpop = if cap > 0.0 && cible > cap { 1.0 + 3.0 * (cible / cap - 1.0) } else { 1.0 };
-        let soins = 1.0 / (1.0 + 0.5 * (b.map(|b| b.croissance).unwrap_or(1.0) - 1.0).max(0.0));
+        let soins = 1.0 / (1.0 + 0.5 * (b.map(|b| b.croissance).unwrap_or(1.0) - 1.0).max(0.0)) * if p.a("soc_vaccination") { 0.85 } else { 1.0 };
         let mut morts = 0.0;
         for a in 0..NB_AGES {
             let d = p.ages[a] * (mortalite(a, fec) * ans * surpop * soins).min(1.0);
@@ -644,6 +645,12 @@ fn polices(m: &Monde) -> HashMap<u32, f64> {
             *n.entry(p).or_insert(0.0) += c.niv as f64;
         }
     }
+    // Police scientifique : commissariats 50 % plus efficaces.
+    for (pid, v) in n.iter_mut() {
+        if m.pays.get(pid).map(|p| p.a("soc_police")).unwrap_or(false) {
+            *v *= 1.5;
+        }
+    }
     n
 }
 
@@ -675,7 +682,9 @@ fn occupations(m: &mut Monde, pas: f64, rng: &mut impl Rng) {
             }
         };
         let tenue = maint - o.depuis;
-        if tenue > duree_conversion(i) {
+        let integration = p.a("soc_integration");
+        let conversion = (duree_conversion(i) as f64 * if integration { 0.7 } else { 1.0 }) as i64;
+        if tenue > conversion {
             conversions.push((i, p.religion));
             continue;
         }
@@ -684,7 +693,7 @@ fn occupations(m: &mut Monde, pas: f64, rng: &mut impl Rng) {
         }
         // Chaque niveau de commissariat : -15 % de risque (jusqu'a -90 %).
         let ordre = (1.0 - 0.15 * police.get(&pid).copied().unwrap_or(0.0)).max(0.1);
-        let taux = if o.conquise { TAUX_CONQUISE } else { TAUX_NEUTRE } * ordre;
+        let taux = if o.conquise { TAUX_CONQUISE } else { TAUX_NEUTRE } * ordre * if integration { 0.6 } else { 1.0 };
         if rng.gen::<f64>() < taux * pas {
             departs.push((pid, i));
             deja.insert(pid);

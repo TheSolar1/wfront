@@ -58,7 +58,7 @@ pub fn forces(m: &Monde, pid: u32) -> Forces {
         if u.domaine == DOM_MISSILE {
             continue;
         }
-        f.equipage += equipage(t) * n as f64;
+        f.equipage += equipage(t) * n as f64 * if p.a("mil_ecoles") { 0.7 } else { 1.0 };
         att += u.att_sol * n as f64;
         def += u.defense * n as f64;
         if u.domaine == DOM_MER {

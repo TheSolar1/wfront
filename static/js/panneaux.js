@@ -674,11 +674,13 @@ export function corpsRecherche(S, branche, compact = false) {
     ${m.file_recherche.length ? `<div class="wf-file">File : ${m.file_recherche.map(t => `<span class="wf-puce">${esc(nomTech(S, t))}<button data-act="annuler_recherche" data-tech="${t}" title="Retirer">${ico('xmark')}</button></span>`).join('')}</div>` : ''}
   </div>
   <div class="wf-onglets">${S.defs.branches.map(b => `<button class="${b.id === branche ? 'actif' : ''}" style="--bc:${b.couleur}" data-act="branche" data-branche="${b.id}">${ico(b.icone)} ${esc(b.nom)}</button>`).join('')}</div>`;
+  const connue = id => m.techs.includes(id) || actuelle === id || enFile(id);
+  const verrouillee = t => !m.techs.includes(t.id) && t.prereq.some(q => !connue(q));
   const cartesTech = techs.map(t => {
     const acquise = m.techs.includes(t.id);
-    const st = acquise ? 'acquise' : etat(t.id);
+    const st = acquise ? 'acquise' : verrouillee(t) ? 'verrou' : etat(t.id);
     return `<div class="wf-tech ${st}" ${st === 'dispo' ? `data-act="rechercher" data-tech="${t.id}"` : ''} title="${esc(t.desc)}">
-      <div class="wf-tech-tete">${ico(acquise ? 'circle-check' : t.icone)}<b>${esc(t.nom)}</b></div>
+      <div class="wf-tech-tete">${ico(acquise ? 'circle-check' : st === 'verrou' ? 'lock' : t.icone)}<b>${esc(t.nom)}</b></div>
       ${compact ? '' : `<p>${esc(t.desc)}</p>`}
       <div class="wf-tech-pied">
         ${acquise ? '<span>Acquise</span>' : `<span>${ico('flask')} ${fmt(t.cout)}</span>`}
@@ -701,10 +703,77 @@ export function corpsRecherche(S, branche, compact = false) {
   }).join('');
   return `${tete}
   <h3 class="wf-rech-titre">${ico('star')} Grandes technologies</h3>
-  <div class="wf-tech-grille" style="--bc:${couleurBranche}">${cartesTech || vide('Aucune technologie dans cette branche.', 'flask')}</div>
+  ${compact ? `<div class="wf-tech-grille" style="--bc:${couleurBranche}">${cartesTech || vide('Aucune technologie dans cette branche.', 'flask')}</div>`
+    : arbreTechs(S, techs, couleurBranche, { etat, verrouillee, actuelle })}
   <h3 class="wf-rech-titre">${ico('arrow-trend-up')} Améliorations</h3>
   <div class="wf-liste" style="--bc:${couleurBranche}">${lignesAmelio}</div>
-  ${compact ? '' : `<p class="wf-note">${ico('circle-info')} Aucun prérequis : cliquez sur ce que vous voulez rechercher. Si une recherche est déjà en cours, elle part en file d'attente.</p>`}`;
+  ${compact ? '' : `<p class="wf-note">${ico('circle-info')} Cliquez sur une technologie disponible pour la rechercher : si une recherche est déjà en cours, elle part en file d'attente. Une technologie verrouillée demande d'abord celles qui y mènent (elles peuvent être dans la file).</p>`}`;
+}
+
+/** Arbre d'une branche : une colonne par niveau, liens courbes vers les
+ *  technologies qui en dependent, etats bien visibles. */
+function arbreTechs(S, techs, couleur, { etat, verrouillee, actuelle }) {
+  const m = S.moi;
+  if (!techs.length) return vide('Aucune technologie dans cette branche.', 'flask');
+  const W0 = 160, H0 = 72, GX = 44, GY = 16, PAD = 16, ENTETE = 26;
+  const rangs = [...new Set(techs.map(t => t.rang))].sort((a, b) => a - b);
+  const ici = new Map(techs.map(t => [t.id, t]));
+  const pos = new Map();
+  // Colonne par colonne, chaque technologie se place pres de ses prerequis
+  // (moyenne de leurs lignes) pour limiter les croisements.
+  rangs.forEach((r, col) => {
+    const colonne = techs.filter(t => t.rang === r).map((t, k) => {
+      const lignes = t.prereq.filter(q => pos.has(q)).map(q => pos.get(q).ligne);
+      return { t, cle: lignes.length ? lignes.reduce((a, b) => a + b, 0) / lignes.length : k };
+    }).sort((a, b) => a.cle - b.cle);
+    const prises = new Set();
+    colonne.forEach(({ t, cle }) => {
+      let l = Math.max(0, Math.round(cle));
+      while (prises.has(l)) l++;
+      prises.add(l);
+      pos.set(t.id, { col, ligne: l });
+    });
+  });
+  const lignesMax = Math.max(...[...pos.values()].map(p => p.ligne)) + 1;
+  const X = p => PAD + p.col * (W0 + GX), Y = p => PAD + ENTETE + p.ligne * (H0 + GY);
+  const W = PAD * 2 + rangs.length * W0 + (rangs.length - 1) * GX, H = PAD * 2 + ENTETE + lignesMax * H0 + (lignesMax - 1) * GY;
+  const liens = [];
+  for (const t of techs) {
+    const b = pos.get(t.id);
+    for (const q of t.prereq) {
+      const a = pos.get(q);
+      if (!a) continue;
+      const x1 = X(a) + W0, y1 = Y(a) + H0 / 2, x2 = X(b), y2 = Y(b) + H0 / 2, mx = (x1 + x2) / 2;
+      const fait = m.techs.includes(q);
+      const vers = actuelle === t.id;
+      liens.push(`<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" class="${fait ? 'fait' : ''} ${vers ? 'actif' : ''}"/>`);
+    }
+  }
+  const noeuds = techs.map(t => {
+    const p = pos.get(t.id);
+    const acquise = m.techs.includes(t.id);
+    const st = acquise ? 'acquise' : verrouillee(t) ? 'verrou' : etat(t.id);
+    const ailleurs = t.prereq.filter(q => !ici.has(q)).map(q => S.defs.techs.find(x => x.id === q)).filter(Boolean);
+    const manque = t.prereq.filter(q => !m.techs.includes(q)).map(q => S.defs.techs.find(x => x.id === q)?.nom).filter(Boolean);
+    const sous = acquise ? `${ico('circle-check')} Acquise` : st === 'encours' ? `${fmt(m.recherche_prog)} / ${fmt(t.cout)} pts`
+      : st === 'file' ? 'En file d\'attente' : st === 'verrou' ? `${ico('lock')} ${esc(manque.join(', '))}` : `${ico('flask')} ${fmt(t.cout)} pts`;
+    return `<div class="wf-noeud ${st}" style="left:${X(p)}px;top:${Y(p)}px;width:${W0}px;height:${H0}px" ${st === 'dispo' ? `data-act="rechercher" data-tech="${t.id}"` : ''}
+      title="${esc(t.nom)} : ${esc(t.desc)}${manque.length ? '\nRequiert : ' + esc(manque.join(', ')) : ''}">
+      <span class="wf-noeud-ic">${ico(acquise ? 'check' : t.icone)}</span>
+      <div class="wf-noeud-txt"><b>${esc(t.nom)}</b><small>${sous}</small></div>
+      ${ailleurs.length ? `<span class="wf-noeud-ext" title="Demande aussi : ${esc(ailleurs.map(x => x.nom).join(', '))}">${ico('link')}</span>` : ''}
+      ${st === 'encours' ? `<div class="wf-noeud-prog"><i style="width:${Math.min(100, m.recherche_prog / t.cout * 100).toFixed(1)}%"></i></div>` : ''}
+    </div>`;
+  }).join('');
+  const entetes = rangs.map((r, col) => `<div class="wf-arbre-col" style="left:${PAD + col * (W0 + GX)}px;width:${W0}px">Niveau ${r}</div>`).join('');
+  const faites = techs.filter(t => m.techs.includes(t.id)).length;
+  return `<div class="wf-arbre-cadre" style="--bc:${couleur}">
+    <div class="wf-arbre-resume">${ico('diagram-project')} ${faites} / ${techs.length} technologies acquises</div>
+    <div class="wf-arbre-defile"><div class="wf-arbre" style="width:${W}px;height:${H}px">
+      <svg class="wf-arbre-liens" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${liens.join('')}</svg>
+      ${entetes}${noeuds}
+    </div></div>
+  </div>`;
 }
 
 /** « +5 % d'attaque » × 3 niveaux -> « +15 % d'attaque ». */
