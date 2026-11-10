@@ -11,8 +11,8 @@
 // ══════════════════════════════════════════════════════════════════
 
 mod admin;
-mod bots;
 mod defs;
+mod essais;
 mod demographie;
 mod fabrication;
 mod front;
@@ -108,8 +108,6 @@ struct Config {
     protection_heures: f64,
     sauvegarde: String,
     intervalle_sauvegarde_s: u64,
-    /// Nombre de nations jouees par l'ordinateur (0 = aucune).
-    bots: usize,
 }
 
 #[derive(Deserialize, Clone, Default)]
@@ -151,7 +149,6 @@ impl Default for Config {
             protection_heures: 2.0,
             sauvegarde: "data/monde.json".into(),
             intervalle_sauvegarde_s: 30,
-            bots: 6,
         }
     }
 }
@@ -520,11 +517,6 @@ fn apercu_carte(cfg: &Config) {
 fn boucle(app: &Partage, dt: f64, avec_publics: bool) {
     let mut m = app.monde.lock().unwrap();
     let bl = jeu::tick(&mut m, dt);
-    let nb_bots = m.bots_admin.unwrap_or(app.cfg.bots);
-    if nb_bots > 0 {
-        bots::jouer(&mut m, &app.regles, &bl, dt);
-    }
-    bots::assurer(&mut m, nb_bots, &app.regles, dt);
     let vis = vue::visions(&m, &bl);
     let publics = vue::publics(&m, &bl);
     {
@@ -806,7 +798,6 @@ fn verifier_cle_vex(pool: &mysql::Pool, cle: &str, cfg_vex: Option<&Path>) -> Op
 const ACTIONS_ADMIN: &[(&str, &str, &str)] = &[
     ("nouvelle_carte", "admin_nouvelle_carte", "Nouvelle carte : efface le monde (irréversible)."),
     ("paix", "admin_paix_mondiale", "Paix mondiale : arrête toutes les guerres."),
-    ("bots", "admin_bots", "Nombre de bots : {\"nb\": 0..16}."),
     ("annonce", "admin_annonce", "Annonce mondiale : {\"texte\": \"...\"} (300 caractères max)."),
     ("donner", "admin_donner", "Donner : {\"pays\": id, \"res\": [..], \"troupes\": n, \"elements\": n}."),
     ("protection", "admin_protection", "Protection : {\"pays\": id, \"minutes\": n}."),

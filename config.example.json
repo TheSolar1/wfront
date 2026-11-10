@@ -16,7 +16,6 @@
   "protection_heures": 2,
   "sauvegarde": "data/monde.json",
   "intervalle_sauvegarde_s": 30,
-  "bots": 6,
   "_aide_admin": "Cle publique de la cle d'administration (32 octets en base64). Seul le detenteur de la cle privee voit et utilise l'administration, via la page /admin. Vide = administration desactivee.",
   "admin_cle_publique": "",
   "_aide_admins": "Comptes VEX administrateurs (\"user_id@node_id\", affiche sur /admin et dans le journal du serveur) : ils ont l'administration des qu'ils se connectent avec VEX.",

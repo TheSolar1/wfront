@@ -22,7 +22,7 @@ A multiplayer strategy and war game in the browser: you lead a country, grow it,
 | **Rankings** | Overall, military, economy, territory, technology, population, diplomacy, victories, blocs. |
 | **Social** | Journal (country events and world news), world and bloc messaging, notifications. |
 
-Computer-controlled nations can fill the game (`"bots"` in `config.json`, 0 for none).
+Every nation is played by a real player (no computer-controlled nations).
 
 ## Real countries (world map)
 
@@ -160,13 +160,12 @@ The VEX session lasts one hour (`datecra` in `loginc`). A game already open keep
 | `vex_db_fichier` / `vex_db` | — | VEX MySQL access (path to `db.json`, or inline credentials) |
 | `session_duree_s` | `3600` | Same duration as VEX |
 | `verifier_ip`, `verifier_navigateur` | `true` | Same checks as VEX's `verifier_session` |
-| `carte` | `monde` | `monde` = real world map where each player takes a real country (no computer nations), `aleatoire` = invented continents with bots. Used for a new world (first launch, or admin "New map") |
+| `carte` | `monde` | `monde` = real world map where each player takes a real country (no computer nations), `aleatoire` = invented continents. Used for a new world (first launch, or admin "New map") |
 | `largeur_monde` | `708` | Width of the world map (708 × 370 = 262,000 hexes); the height follows real proportions |
 | `carte_largeur`, `carte_hauteur`, `graine` | `384`, `240`, `0` | Size of the random map (`aleatoire`). `graine` changes deposits, and the whole map with `aleatoire` (0: random) |
 | `vitesse` | `1.0` | Speeds up the whole game (tests) |
 | `protection_heures` | `2` | How long a new country cannot be attacked |
 | `sauvegarde`, `intervalle_sauvegarde_s` | `data/monde.json`, `30` | World file and save frequency |
-| `bots` | `6` | Computer-controlled nations (0 = none, 16 max). They follow the same rules as players: they grow, annex, research, arm themselves, answer peace proposals and sometimes attack a weaker neighbor (never during its protection). |
 
 To start from a fresh world: stop the server, delete `data/monde.json`, restart.
 
@@ -182,7 +181,7 @@ src/
   front.rs   OpenFront-style troops and offensives (right-click)
   fabrication.rs  ores, 118 elements, refinery, 105 factory recipes
   admin.rs   admin key (Ed25519 signed challenge)
-  bots.rs    computer-controlled nations
+  demographie.rs  inhabitants, ages, births, religions, revolts
   vue.rs     what each player sees (fog of war, hidden data)
 static/
   accueil.html, jeu.html, dev.html

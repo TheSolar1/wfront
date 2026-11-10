@@ -187,6 +187,13 @@ pub struct Pays {
     pub recrut_auto: bool,
     #[serde(default)]
     pub formation: Vec<Lot>,
+    /// Taux de TVA (0 a 0,6).
+    #[serde(default = "tva_defaut")]
+    pub tva: f64,
+}
+
+fn tva_defaut() -> f64 {
+    0.2
 }
 
 impl Pays {
@@ -419,10 +426,11 @@ pub struct Monde {
     pub occupations: BTreeMap<usize, Occupation>,
     #[serde(default)]
     pub revoltes: BTreeMap<u32, Revolte>,
-    /// Historique par nation : [unix, population, actifs, soldats,
-    /// naissances/jour, deces/jour], un point toutes les 2 heures.
+    /// Historique par nation, un point toutes les 2 heures : [unix,
+    /// population, actifs, soldats, naissances/jour, deces/jour, chomage %,
+    /// TVA %, recettes de TVA/min, credits, solde/min].
     #[serde(default)]
-    pub histos: BTreeMap<u32, Vec<[f64; 6]>>,
+    pub histos: BTreeMap<u32, Vec<Vec<f64>>>,
     #[serde(skip)]
     pub demo_acc: f64,
     #[serde(skip)]
@@ -1029,7 +1037,7 @@ impl Monde {
             nuages: Vec::new(),
             trous_noirs: Vec::new(),
             attaques: BTreeMap::new(),
-            version: 4,
+            version: 7,
             bots_admin: None,
             cours: BTreeMap::new(),
             effets: Vec::new(),

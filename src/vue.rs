@@ -249,7 +249,6 @@ pub fn pays_publics(m: &Monde, bl: &HashMap<u32, Bilan>) -> Vec<Value> {
                 "id": p.id,
                 "nom": p.nom,
                 "joueur": p.joueur,
-                "bot": crate::bots::est_bot(p.user_id),
                 "couleur": p.couleur,
                 "embleme": p.embleme,
                 "devise": p.devise,
@@ -452,9 +451,9 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
         })
         .collect();
     // Historique de population : seulement les nouveaux points.
-    let histo: Vec<[f64; 6]> = pid
+    let histo: Vec<Vec<f64>> = pid
         .and_then(|id| m.histos.get(&id))
-        .map(|h| h.iter().filter(|x| x[0] > suivi.histo).copied().collect())
+        .map(|h| h.iter().filter(|x| x.first().copied().unwrap_or(0.0) > suivi.histo).cloned().collect())
         .unwrap_or_default();
     if let Some(x) = histo.last() {
         suivi.histo = x[0];
@@ -484,7 +483,6 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
         // Change avec « Nouvelle carte » (admin) : les clients rechargent.
         "graine": m.graine,
         "cours": m.cours,
-        "bots": m.bots_admin,
     });
     if let Some(p) = ctx.publics {
         out.as_object_mut().unwrap().insert("publics".into(), p.clone());

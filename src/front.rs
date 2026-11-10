@@ -37,7 +37,8 @@ pub fn maximum(p: &Pays, b: &Bilan) -> f64 {
         + 1200.0 * b.n("capitale")
         + 250.0 * b.n("ville")
         + 300.0 * b.n("caserne")
-        + 200.0 * b.n("centre_admin")
+        // La capitale est aussi le centre administratif : +200 par niveau.
+        + 200.0 * b.n("capitale")
         // Anciens bonus de « capacite territoriale » (centres administratifs,
         // villes, ONU, specialisations...) : 40 troupes de plus chacun.
         + 40.0 * b.capacite as f64;
@@ -49,12 +50,12 @@ pub fn maximum(p: &Pays, b: &Bilan) -> f64 {
 }
 
 /// Recrues gagnees par seconde de jeu (recrutement automatique).
-pub fn croissance(p: &Pays, max: f64, affame: bool, en_formation: f64) -> f64 {
+pub fn croissance(p: &Pays, max: f64, en_formation: f64) -> f64 {
     if max <= 0.0 {
         return 0.0;
     }
     let g = (2.0 + max * 0.0025) * (1.0 - (p.troupes + en_formation) / max).max(0.0);
-    if affame { g * 0.3 } else { g }
+    g
 }
 
 /// Cout (troupes) pour prendre la case `i` a son proprietaire actuel.
@@ -210,8 +211,7 @@ pub fn reserves(m: &mut Monde, bl: &HashMap<u32, Bilan>, dt: f64) {
         if p.recrut_auto {
             let en_formation: f64 = p.formation.iter().map(|l| l.n).sum();
             let place = b.troupes_max - p.troupes - en_formation;
-            let affame = p.res[NO] <= 0.0 && b.prod[NO] < b.conso[NO];
-            let n = (croissance(p, b.troupes_max, affame, en_formation) * dt).min(place).min(b.chomeurs);
+            let n = (croissance(p, b.troupes_max, en_formation) * dt).min(place).min(b.chomeurs);
             if n > 0.0 {
                 incorporer(p, n, temps + b.duree_formation);
             }

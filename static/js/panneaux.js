@@ -72,7 +72,7 @@ function composition(S, unites) {
 /** Joueur d'un pays : nom, ou « Ordinateur » avec une icone pour un bot. */
 function joueurDe(p) {
   if (!p) return '';
-  return p.bot ? `${ico('robot')} Ordinateur` : esc(p.joueur);
+  return esc(p.joueur);
 }
 
 function listeChantiers(S) {
@@ -126,7 +126,9 @@ function panneauPays(S) {
   const bloc = m.bloc != null ? S.blocs.get(m.bloc) : null;
   const protection = Math.max(0, m.protection - Date.now() / 1000);
   const elecOk = b.elec_ratio >= 0.999;
+  // La nourriture n'existe plus (case gardee pour les numeros).
   const lignesRes = S.defs.ressources.map((r, i) => {
+    if (r.id === 'nourriture') return '';
     const net = b.prod[i] - b.conso[i];
     return `<tr>
       <td>${ico(r.icone, '', `color:${r.couleur}`)} ${esc(r.nom)}</td>
@@ -161,6 +163,8 @@ function panneauPays(S) {
     <div class="wf-stat">${ico('gears')}<b>×${b.vitesse.toFixed(2).replace('.', ',')}</b><span>Vitesse de construction · chantiers illimités</span></div>
     <div class="wf-stat">${ico('ranking-star')}<b>${fmt(m.scores.global)}</b><span>Score global</span></div>
   </div>
+
+  ${blocTva(S)}
 
   ${titre('Économie (par minute)', 'chart-line')}
   <table class="wf-table">
@@ -307,7 +311,7 @@ function panneauConstruction(S) {
 // Menu de la case (inspecteur) : tout se fait depuis la case cliquée
 // ══════════════════════════════════════════════════════════════════
 const BAT_PRODUCTION = {
-  ferme: [1, 'nourriture'], mine: [2, 'minerais'], carriere: [2, 'minerais'], puits_petrole: [2, 'minerais'],
+  mine: [2, 'minerais'], carriere: [2, 'minerais'], puits_petrole: [2, 'minerais'],
   foreuse: [3, 'fragments de météorite'], mine_uranium: [4, 'uranium'], extracteur_tr: [5, 'minéraux rares'],
 };
 
@@ -985,7 +989,7 @@ function listeServices(S, prefixe) {
 function menuMarche(S) {
   const m = S.moi;
   return `<div class="wf-menu-titre">${ico('scale-balanced')} Marché mondial</div>
-    <div class="wf-menu-liste">${S.defs.ressources.map((r, i) => i === 0 ? '' : `<div class="wf-menu-item">
+    <div class="wf-menu-liste">${S.defs.ressources.map((r, i) => i === 0 || r.id === 'nourriture' ? '' : `<div class="wf-menu-item">
       <span class="wf-bat-ic">${ico(r.icone, '', `color:${r.couleur}`)}</span>
       <div class="wf-ligne-corps"><b>${esc(r.nom)}</b><small>${S.prix[i].toFixed(2).replace('.', ',')} ${ico('coins')} · stock ${fmt(m.res[i])}</small></div>
       <input type="number" min="1" max="5000" value="100" id="bq-${i}" data-garder class="wf-qte">
@@ -1099,7 +1103,7 @@ function panneauAide(S) {
   <h4>${ico('gears')} Minerais et fabrication</h4>
   <p>Les <b>carrières</b> (partout) et les mines extraient quatre ressources : les minerais (fer, cuivre, bauxite, charbon), les minéraux rares (terres rares, lithium, cobalt, or), l'uranium et les fragments de météorite (cratères, très rares). La <b>raffinerie</b> les transforme en métal, terres rares, uranium, ou en n'importe lequel des 118 éléments du tableau périodique. La <b>fabrique</b> assemble ensuite plus de 100 produits, de l'acier jusqu'au trou noir : son niveau fixe la complexité des recettes. Les éléments légendaires se désintègrent vite, comme dans la réalité : utilisez-les sans attendre.</p>
   <h3>${ico('gem')} Ressources</h3>
-  <p>Chaque région a ses gisements : filons de minerais (collines, montagnes, déserts), uranium (montagnes, toundra), minéraux rares (forêts, collines), cratères de météorite (très rares) et sols fertiles. Une carrière extrait des minerais n'importe où. Ce qui vous manque s'achète au <b>marché mondial</b> ou se négocie avec vos alliés. L'<b>électricité</b> n'est pas stockée : si la consommation dépasse la production, tous les bâtiments consommateurs tournent au ralenti.</p>
+  <p>Chaque région a ses gisements : filons de minerais (collines, montagnes, déserts), uranium (montagnes, toundra), minéraux rares (forêts, collines), et cratères de météorite (très rares). Une carrière extrait des minerais n'importe où. Ce qui vous manque s'achète au <b>marché mondial</b> ou se négocie avec vos alliés. L'<b>électricité</b> n'est pas stockée : si la consommation dépasse la production, tous les bâtiments consommateurs tournent au ralenti.</p>
   <h3>${ico('flask')} Recherche</h3>
   <p>Quatre branches (militaire, économie, diplomatie, industrie) débloquent bâtiments, unités et bonus. Les branches se croisent : les chars demandent la sidérurgie, les missiles l'aérospatiale, le nucléaire militaire le nucléaire civil.</p>
   <h3>${ico('person-military-rifle')} Armées et combat</h3>
@@ -1159,18 +1163,13 @@ function blocMaj(S) {
 function panneauAdmin(S) {
   const tous = [...S.pays.values()].sort((a, b) => a.id - b.id);
   const vivants = tous.filter(p => !p.elimine);
-  const bots = vivants.filter(p => p.joueur === 'Ordinateur').length;
   const guerres = Object.keys(S.relations || {}).length;
   return `<div class="wf-admin-grille">
     <div class="wf-admin-stat"><b>${vivants.length}</b><small>nations</small></div>
-    <div class="wf-admin-stat"><b>${vivants.length - bots}</b><small>joueurs</small></div>
-    <div class="wf-admin-stat"><b>${bots}</b><small>bots</small></div>
     <div class="wf-admin-stat"><b>${S.carte.terrain.length}</b><small>cases (graine ${S.graine ?? '?'})</small></div>
   </div>
   ${titre('Monde', 'earth-europe')}
   <div class="wf-admin-actions">
-    <label class="wf-ligne-form">Bots <input type="number" id="admin-bots" min="0" max="16" value="${bots}" class="wf-qte" data-garder></label>
-    <button class="wf-btn petit" data-act="admin_bots">${ico('robot')} Appliquer</button>
     <button class="wf-btn petit secondaire" data-act="admin_paix">${ico('dove')} Paix mondiale</button>
     <button class="wf-btn petit danger" data-act="admin_carte">${ico('arrows-rotate')} Nouvelle carte</button>
   </div>
@@ -1549,8 +1548,68 @@ function panneauFabrication(S) {
 
 
 // ══════════════════════════════════════════════════════════════════
+// TVA : la principale source de credits. Les employes (commerces,
+// services, industrie) creent de l'activite ; l'Etat en preleve la TVA.
+// Au-dela de 20 %, des actifs ne veulent plus travailler : chomage.
+// ══════════════════════════════════════════════════════════════════
+function participationTva(t) { return Math.min(1, Math.max(0.15, 1 - 2.2 * Math.max(0, t - 0.2))); }
+
+/** Estimation (memes formules que le serveur) pour un taux de TVA donne. */
+function estimerTva(S, t) {
+  const b = S.moi.bilan;
+  const civils = Math.max(0, b.actifs - b.soldats - b.recrues);
+  const dispo = civils * participationTva(t);
+  const trav = Math.min(dispo, b.emplois);
+  const prive = (dispo - trav) * 0.92;
+  const cc = b.niv?.centre_commercial || 0;
+  const activite = prive / 1000 * (1 + Math.min(1, 0.05 * cc)) + trav / 1000 * 2 + 12 * cc * (b.emplois > 0 ? Math.min(1, dispo / b.emplois) : 1);
+  return { recettes: activite * t, chomage: civils > 0 ? (civils - trav - prive) / civils : 0, travail: b.emplois > 0 ? Math.min(1, dispo / b.emplois) : 1 };
+}
+
+/** Apercu en direct pendant qu'on deplace le curseur de TVA. */
+export function apercuTva(S, pct) {
+  if (!S.moi) return '';
+  const e = estimerTva(S, pct / 100);
+  return `Recettes : <b>${fmt(e.recettes * S.vitesse, 1)}</b> crédits/min · chômage : <b class="${e.chomage > 0.15 ? 'neg' : ''}">${Math.round(e.chomage * 100)} %</b>${e.travail < 1 ? ` · <b class="neg">bâtiments à ${Math.round(e.travail * 100)} %</b>` : ''}`;
+}
+
+function blocTva(S) {
+  const m = S.moi, b = m.bilan;
+  const pct = Math.round((m.tva ?? 0.2) * 100);
+  // Curseur deplace mais pas encore applique : l'apercu suit le curseur.
+  const champ = typeof document !== 'undefined' && document.getElementById('tva-taux');
+  const vu = champ ? +champ.value : pct;
+  const h = (S.histo || []).filter(x => x.length > 10);
+  const maint = Date.now() / 1000;
+  const point = [maint, 0, 0, 0, 0, 0, b.chomage * 100, b.tva * 100, b.recettes_tva, m.res[0], b.prod[0] - b.conso[0]];
+  const serie = k => h.concat([point]).map(x => [x[0], x[k]]);
+  const faillite = m.res[0] <= 1 && b.prod[0] < b.conso[0];
+  return `${titre('Impôts : TVA', 'percent', `<small>${pct} %</small>`)}
+  <p class="wf-aide">Vos habitants qui travaillent (commerces, services, usines) créent de l'activité ; l'État en prélève la TVA. Plus la TVA est haute, plus vous gagnez… jusqu'à un point : <b>au-delà de 20 %</b>, des gens ne veulent plus travailler pour un salaire trop maigre, le <b>chômage monte</b> et vos bâtiments manquent d'ouvriers. Trop haut, vos recettes s'effondrent : <b>faillite</b>.</p>
+  ${faillite ? `<div class="wf-avert">${ico('triangle-exclamation')} Faillite : les caisses sont vides et vous dépensez plus que vous ne gagnez. Baissez vos dépenses ou ajustez la TVA.</div>` : ''}
+  <div class="wf-stats petit">
+    <div class="wf-stat">${ico('coins', '', 'color:#f59e0b')}<b>${signe(b.recettes_tva * S.vitesse)}</b><span>Recettes de TVA par minute</span></div>
+    <div class="wf-stat">${ico('chart-line')}<b>${fmt(b.activite * S.vitesse, 1)}</b><span>Activité taxable par minute</span></div>
+    <div class="wf-stat ${b.chomage > 0.15 ? 'alerte' : ''}">${ico('user-slash')}<b>${Math.round(b.chomage * 100)} %</b><span>Chômage · ${nb(b.chomeurs)} sans emploi</span>${barre(b.chomage, b.chomage > 0.15 ? 'rouge' : '')}</div>
+    <div class="wf-stat">${ico('briefcase')}<b>${Math.round(b.participation * 100)} %</b><span>Actifs prêts à travailler</span></div>
+  </div>
+  <div class="wf-form">
+    <label>Taux de TVA : <b id="tva-val">${vu} %</b><input type="range" id="tva-taux" data-garder min="0" max="60" step="1" value="${pct}"></label>
+    <p class="wf-aide" id="tva-apercu">${apercuTva(S, vu)}</p>
+    <button class="wf-btn" data-act="tva">${ico('check')} Appliquer</button>
+  </div>
+  <h4 class="wf-graph-titre">Chômage et TVA (%)</h4>
+  ${courbes([{ nom: 'Chômage', couleur: '#dc2626', valeurs: serie(6) }, { nom: 'TVA', couleur: '#f59e0b', valeurs: serie(7) }], ' %')}
+  <h4 class="wf-graph-titre">Recettes de TVA et solde (crédits/min)</h4>
+  ${courbes([{ nom: 'Recettes de TVA', couleur: '#f59e0b', valeurs: serie(8) }, { nom: 'Solde', couleur: '#4fa553', valeurs: serie(10) }])}
+  <h4 class="wf-graph-titre">Crédits en caisse</h4>
+  ${courbes([{ nom: 'Crédits', couleur: '#d99a1e', valeurs: serie(9) }])}
+  ${h.length < 1 ? `<p class="wf-aide">${ico('circle-info')} Les courbes se remplissent avec le temps (un point toutes les 2 heures).</p>` : ''}`;
+}
+
+// ══════════════════════════════════════════════════════════════════
 // Population : main-d'oeuvre, armee de citoyens, natalite, ages,
-// religions et revoltes (demographie.rs). 1 jour reel = 1 an de jeu.
+// religions et revoltes (demographie.rs). 1 jour reel = 2 ans de jeu.
 // ══════════════════════════════════════════════════════════════════
 const COUL_POP = { travail: '#4fa553', chomage: '#a3c9a5', soldats: '#c0392b', recrues: '#e67e22', enfants: '#3b82f6', retraites: '#9ca3af' };
 
@@ -1673,6 +1732,8 @@ function panneauPopulation(S) {
   }).join('');
 
   const prime = m.prime_natalite || 0;
+  const champPrime = typeof document !== 'undefined' && document.getElementById('pop-prime');
+  const primeVue = champPrime ? +champPrime.value : prime;
   const pourvus = b.emplois ? Math.round(b.travail * 100) : 100;
   return `
   <div class="wf-stats">
@@ -1681,10 +1742,10 @@ function panneauPopulation(S) {
     <div class="wf-stat">${ico('cross')}<b>${nb(m.deces)}</b><span>Décès par jour</span></div>
     <div class="wf-stat ${pourvus < 100 ? 'alerte' : ''}">${ico('helmet-safety')}<b>${pourvus} %</b><span>Emplois pourvus · ${nb(b.emplois)} postes</span>${barre(pourvus / 100, pourvus < 100 ? 'rouge' : '')}</div>
   </div>
-  <p class="wf-aide">${ico('clock')} 1 jour réel = 1 an dans le jeu : les enfants nés aujourd'hui travailleront dans 18 jours.</p>
+  <p class="wf-aide">${ico('clock')} 1 jour réel = 2 ans dans le jeu : les enfants nés aujourd'hui travailleront dans 9 jours.</p>
 
   ${titre('Qui fait quoi', 'users')}
-  ${empilee([['Travailleurs', b.travailleurs, COUL_POP.travail], ['Sans emploi', b.chomeurs, COUL_POP.chomage], ['Soldats', b.soldats, COUL_POP.soldats],
+  ${empilee([['Ouvriers des bâtiments', b.travailleurs, COUL_POP.travail], ['Commerces et services', b.prive || 0, '#0ea5e9'], ['Sans emploi', b.chomeurs, COUL_POP.chomage], ['Soldats', b.soldats, COUL_POP.soldats],
     ['En formation', b.recrues, COUL_POP.recrues], ['Enfants (0-17 ans)', b.enfants, COUL_POP.enfants], ['Retraités (65 ans et +)', b.retraites, COUL_POP.retraites]])}
   <p class="wf-aide">Chaque niveau de bâtiment (sauf les villes) emploie <b>${nb(D.emplois_par_niveau)}</b> ouvriers, pris parmi les actifs (18-64 ans) qui ne sont pas soldats.
     ${pourvus < 100 ? `<b class="neg">Il manque des ouvriers : vos bâtiments ne tournent qu'à ${pourvus} %.</b> Démobilisez des soldats ou augmentez la natalité.` : ''}</p>
@@ -1703,9 +1764,9 @@ function panneauPopulation(S) {
   ${titre('Campagne de natalité', 'baby-carriage')}
   <p class="wf-aide">Versez une prime aux familles pour chaque naissance : plus elle est élevée, plus les familles font d'enfants. Elle est payée à chaque nouveau-né, en crédits.</p>
   <div class="wf-form">
-    <label>Prime par naissance : <b id="pop-prime-val">${prime ? prime + ' crédits par naissance' : 'Aucune prime'}</b>
+    <label>Prime par naissance : <b id="pop-prime-val">${primeVue ? primeVue + ' crédits par naissance' : 'Aucune prime'}</b>
       <input type="range" id="pop-prime" data-garder min="0" max="${D.prime_max}" step="1" value="${prime}"></label>
-    <p class="wf-aide" id="pop-prime-apercu">${apercuPrime(S, prime)}</p>
+    <p class="wf-aide" id="pop-prime-apercu">${apercuPrime(S, primeVue)}</p>
     <button class="wf-btn" data-act="natalite">${ico('check')} Appliquer</button>
     ${prime > 0 ? `<p class="wf-aide">Coût actuel : <b>${nb(m.cout_natalite)}</b> crédits par jour.${(m.cout_natalite || 0) <= 0 ? ' <b class="neg">Caisses insuffisantes : la prime n\'est pas versée.</b>' : ''}</p>` : ''}
   </div>

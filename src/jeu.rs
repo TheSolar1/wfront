@@ -82,6 +82,17 @@ pub struct Bilan {
     /// Part des emplois pourvus (multiplie la production des batiments).
     pub travail: f64,
     pub duree_formation: f64,
+    // ── Economie : TVA ──
+    pub tva: f64,
+    /// Part des actifs prets a travailler (baisse quand la TVA est trop haute).
+    pub participation: f64,
+    /// Employes des commerces et services (secteur prive).
+    pub prive: f64,
+    /// Activite taxable (credits/min) et ce que la TVA en preleve.
+    pub activite: f64,
+    pub recettes_tva: f64,
+    /// Taux de chomage (0 a 1).
+    pub chomage: f64,
     /// Habitants par religion (id, habitants).
     pub religions: Vec<(u8, f64)>,
     pub revoltes: u32,
@@ -95,7 +106,6 @@ impl Bilan {
 
 pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
     let mut out: HashMap<u32, Bilan> = m.pays.keys().map(|&k| (k, Bilan::default())).collect();
-    let mut fermes: HashMap<u32, f64> = HashMap::new();
     let mut accueil: HashMap<u32, f64> = HashMap::new();
     let mut religions: HashMap<u32, BTreeMap<u8, f64>> = HashMap::new();
 
@@ -117,12 +127,8 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
             *b.niv.entry(bat.clone()).or_insert(0) += c.niv as u32;
             // La table de fabrication est dans le complexe industriel (et
             // dans les anciennes fabriques).
-            if bat == "usine" || bat == "fabrique" {
+            if bat == "usine" {
                 b.fab_max = b.fab_max.max(c.niv);
-            }
-            if bat == "ferme" {
-                let f = if c.depot == D_FERTILE { 1.5 } else { 1.0 };
-                *fermes.entry(p).or_insert(0.0) += c.niv as f64 * f;
             }
             // Une carriere sur un gisement extrait le minerai de ce gisement.
             if bat == "carriere" {
@@ -187,10 +193,25 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         b.soldats = sold;
         b.recrues = recr;
         b.emplois = b.niv.iter().filter(|(k, _)| k.as_str() != "ville").map(|(_, &n)| n as f64).sum::<f64>() * demo::EMPLOIS_PAR_NIVEAU;
-        let dispo = (b.actifs - sold - recr).max(0.0);
+        // TVA : au-dela de 20 %, une partie des actifs ne veut plus
+        // travailler (le salaire net ne vaut plus la peine).
+        b.tva = p.tva.clamp(0.0, demo::TVA_MAX);
+        b.participation = demo::participation(b.tva);
+        let civils = (b.actifs - sold - recr).max(0.0);
+        let dispo = civils * b.participation;
         b.travailleurs = dispo.min(b.emplois);
-        b.chomeurs = (dispo - b.emplois).max(0.0);
+        // Les autres travaillent dans les commerces et services (8 % de
+        // chomage frictionnel).
+        b.prive = (dispo - b.travailleurs) * 0.92;
+        b.chomeurs = (civils - b.travailleurs - b.prive).max(0.0);
+        b.chomage = if civils > 0.0 { b.chomeurs / civils } else { 0.0 };
         b.travail = if b.emplois > 0.0 { (dispo / b.emplois).min(1.0) } else { 1.0 };
+        // Activite taxable : services (1 credit/min pour 1000 employes,
+        // +5 % par niveau de centre commercial), industrie (2), et les
+        // centres commerciaux eux-memes.
+        let cc = b.n("centre_commercial");
+        b.activite = b.prive / 1000.0 * (1.0 + (0.05 * cc).min(1.0)) + b.travailleurs / 1000.0 * 2.0 + 12.0 * cc * b.travail;
+        b.recettes_tva = b.activite * b.tva;
         b.duree_formation = demo::duree_formation(b);
         let mut rel: Vec<(u8, f64)> = religions.remove(pid).unwrap_or_default().into_iter().filter(|(r, h)| *r > 0 && *h > 0.0).collect();
         rel.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
@@ -211,18 +232,17 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         // ── Production (par minute) ──
         // Le territoire rapporte aussi : 0,15 credit par minute et par case.
         // Le petrole des puits est vendu : +25 credits par minute et par niveau.
-        let mut cr = 40.0 * b.n("capitale") + 6.0 * b.n("ville") * ratio + 3.0 * b.n("usine") * ratio + 2.0 * p.pop.max(0.0).sqrt() + 0.15 * b.cases as f64
+        let mut cr = 40.0 * b.n("capitale") + 6.0 * b.n("ville") * ratio + 3.0 * b.n("usine") * ratio + b.recettes_tva + 0.15 * b.cases as f64
             + 25.0 * b.n("puits_petrole") * ratio;
-        let mut mult_cr = 1.0 + 0.08 * b.n("banque") * ratio;
+        let mut mult_cr = 1.0;
         mult_cr += 0.05 * p.niv("fiscalite");
         if p.a("eco_etat_providence") { mult_cr += 0.10; }
         if spe == "commerciale" { mult_cr += 0.15; }
         mult_cr += fab::effet(&p.stock, "credits");
         cr *= mult_cr;
 
-        // Plus de nourriture dans le jeu.
+        // Plus de nourriture dans le jeu (case gardee pour les numeros).
         let no = 0.0;
-        let _ = fermes.get(pid);
 
         let extraction = if p.a("ind_extraction") { 1.25 } else { 1.0 };
         let car = b.carrieres;
@@ -255,7 +275,7 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         rech *= 1.0 + 0.08 * p.niv("sciences");
         b.recherche = rech;
 
-        let mut infl = 0.3 + 0.5 * b.n("centre_admin") + 1.5 * b.n("ambassade") * ratio;
+        let mut infl = 0.3 + 0.5 * b.n("capitale") + 1.5 * b.n("ambassade") * ratio;
         if p.a("dip_traites") { infl += 1.0; }
         if p.a("dip_onu") { infl += 5.0; }
         let mut mult_i = 1.0;
@@ -265,7 +285,7 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
 
         // ── Capacites ──
         b.stock = (3000.0 + 4000.0 * b.n("entrepot")) * (1.0 + 0.12 * p.niv("stockage"));
-        let mut cap = 10.0 + 6.0 * b.n("centre_admin") + 2.0 * b.n("ville");
+        let mut cap = 10.0 + 6.0 * b.n("capitale") + 2.0 * b.n("ville");
         cap += 2.0 * p.niv("administration");
         if p.a("dip_onu") { cap += 10.0; }
         if spe == "diplomatique" { cap += 4.0; }
@@ -545,6 +565,44 @@ pub fn migrer(m: &mut Monde) {
         }
         m.version = 3;
     }
+    // Version 7 : la capitale est l'unique centre administratif (les anciens
+    // deviennent des commissariats), la place financiere devient un centre
+    // commercial (la TVA remplace son bonus).
+    if m.version < 7 {
+        for i in 0..m.cases.len() {
+            let nouveau = match m.cases[i].bat.as_deref() {
+                Some("centre_admin") => "commissariat",
+                Some("banque") => "centre_commercial",
+                _ => continue,
+            };
+            m.cases[i].bat = Some(nouveau.into());
+            m.toucher(i);
+        }
+        for p in m.pays.values_mut() {
+            p.chantiers.retain(|c| c.bat != "centre_admin" && c.bat != "banque");
+        }
+    }
+    // Version 6 : plus de fermes, d'anciennes fabriques ni de sols fertiles.
+    if m.version < 6 {
+        for i in 0..m.cases.len() {
+            let c = &mut m.cases[i];
+            let mut change = false;
+            match c.bat.as_deref() {
+                Some("ferme") => { c.bat = None; c.niv = 0; change = true; }
+                Some("fabrique") => { c.bat = Some("usine".into()); change = true; }
+                _ => {}
+            }
+            if c.depot == D_FERTILE {
+                c.depot = D_AUCUN;
+            }
+            if change {
+                m.toucher(i);
+            }
+        }
+        for p in m.pays.values_mut() {
+            p.chantiers.retain(|c| c.bat != "ferme" && c.bat != "fabrique");
+        }
+    }
     // Version 4 : duree des lots en qte^0,75 (avant : proportionnelle).
     if m.version < 4 {
         for p in m.pays.values_mut() {
@@ -558,6 +616,7 @@ pub fn migrer(m: &mut Monde) {
         }
         m.version = 4;
     }
+    m.version = m.version.max(7);
 }
 
 fn cout_recherche_valide(id: &String) -> bool {
@@ -1127,34 +1186,8 @@ fn apparition(m: &Monde) -> Option<usize> {
     None
 }
 
-/// Plus de terre libre : on prend une case d'une nation jouee par
-/// l'ordinateur, la plus eloignee de toutes les capitales, avec ses voisines
-/// tenues par des bots. Un joueur peut ainsi toujours rejoindre la partie.
-fn apparition_chez_un_bot(m: &mut Monde) -> Option<usize> {
-    let capitales: Vec<usize> = m.pays.values().filter(|p| !p.elimine).map(|p| p.capitale).collect();
-    let est_bot = |m: &Monde, o: Option<u32>| o.and_then(|o| m.pays.get(&o)).map(|p| crate::bots::est_bot(p.user_id)).unwrap_or(false);
-    let i = (0..m.cases.len())
-        .filter(|&i| est_terre(m.cases[i].terrain) && est_bot(m, m.cases[i].proprio) && m.cases[i].bat.as_deref() != Some("capitale"))
-        .max_by_key(|&i| capitales.iter().map(|&c| m.distance(c, i)).min().unwrap_or(0))?;
-    for v in m.rayon(i, 1) {
-        if est_terre(m.cases[v].terrain) && est_bot(m, m.cases[v].proprio) && m.cases[v].bat.as_deref() != Some("capitale") {
-            m.cases[v].proprio = None;
-            m.cases[v].bat = None;
-            m.cases[v].niv = 0;
-            m.toucher(v);
-        }
-    }
-    let zone = m.rayon(i, 1);
-    let bots: HashSet<u32> = m.pays.values().filter(|p| crate::bots::est_bot(p.user_id)).map(|p| p.id).collect();
-    m.armees.retain(|_, a| !(zone.contains(&a.case) && bots.contains(&a.proprio)));
-    Some(i)
-}
-
 fn installer_pays(m: &mut Monde, pid: u32, regles: &Regles) -> Result<(), String> {
-    let cap = match apparition(m) {
-        Some(c) => c,
-        None => apparition_chez_un_bot(m).ok_or("Plus aucune terre libre pour fonder une nation.")?,
-    };
+    let cap = apparition(m).ok_or("Plus aucune terre libre pour fonder une nation.")?;
     m.cases[cap].proprio = Some(pid);
     for v in m.voisins(cap) {
         if est_terre(m.cases[v].terrain) && m.cases[v].proprio.is_none() {
@@ -1246,7 +1279,7 @@ pub const LIGNES_MAX: usize = 12;
 /// Niveaux cumules d'un atelier : la raffinerie, ou pour la fabrication le
 /// complexe industriel (plus les anciennes fabriques).
 pub fn niveau_atelier(b: &Bilan, atelier: &str) -> f64 {
-    if atelier == "raffinerie" { b.n("raffinerie") } else { b.n("usine") + b.n("fabrique") }
+    if atelier == "raffinerie" { b.n("raffinerie") } else { b.n("usine") }
 }
 
 /// Credits par point de recherche pour acheter un plan au marche.
@@ -2545,34 +2578,13 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             m.evenement(None, "annonce", "L'administration impose la paix mondiale : toutes les guerres s'arrêtent.".into(), None);
             return Ok(format!("{} guerre(s) arrêtée(s).", n));
         }
-        "admin_bots" if j.admin => {
-            let nb = u(cmd, "nb").unwrap_or(0).min(16) as usize;
-            m.bots_admin = Some(nb);
-            // Les bots en trop disparaissent et leurs terres redeviennent neutres.
-            let trop: Vec<u32> = m
-                .pays
-                .values()
-                .filter(|p| crate::bots::est_bot(p.user_id) && crate::bots::rang_bot(p.user_id) >= nb)
-                .map(|p| p.id)
-                .collect();
-            for pid in &trop {
-                supprimer_pays(m, *pid);
-            }
-            // Et ceux qui manquent sont crees tout de suite.
-            crate::bots::creer(m, nb, regles);
-            return Ok(format!("{} nation(s) jouée(s) par l'ordinateur ({} retirée(s)).", nb, trop.len()));
-        }
         "admin_nouvelle_carte" if j.admin => {
             let graine = rand::thread_rng().gen_range(1..u32::MAX as u64);
-            let (l, h, bots) = (m.largeur, m.hauteur, m.bots_admin);
+            let (l, h) = (m.largeur, m.hauteur);
             // Les trous noirs sont eternels : ils survivent au nouveau monde,
             // au meme endroit et a la meme taille.
             let trous = std::mem::take(&mut m.trous_noirs);
             *m = if regles.monde_reel { Monde::generer_monde_reel(regles.largeur_monde, graine) } else { Monde::generer(l, h, graine) };
-            // Carte du monde : jamais de nations jouees par l'ordinateur.
-            if !m.monde_reel {
-                m.bots_admin = bots;
-            }
             let n = m.cases.len();
             for t in trous.into_iter().filter(|t| t.case < n) {
                 avaler(m, t.case, (t.rayon + 1e-9).floor() as i64);
@@ -2797,6 +2809,15 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             let actif = cmd.get("actif").and_then(|v| v.as_bool()).unwrap_or(true);
             m.pays.get_mut(&pid).unwrap().recrut_auto = actif;
             Ok(if actif { "Recrutement automatique activé (parmi les sans-emploi)." } else { "Recrutement automatique arrêté." }.into())
+        }
+        "tva" => {
+            let t = cmd.get("taux").and_then(|v| v.as_f64()).unwrap_or(0.2);
+            if !t.is_finite() {
+                return Err("Taux invalide.".into());
+            }
+            let t = (t.clamp(0.0, demo::TVA_MAX) * 100.0).round() / 100.0;
+            m.pays.get_mut(&pid).unwrap().tva = t;
+            Ok(format!("TVA fixée à {} %.", (t * 100.0).round()))
         }
         "natalite" => {
             let prime = cmd.get("prime").and_then(|v| v.as_f64()).unwrap_or(0.0);
@@ -3811,6 +3832,7 @@ fn rejoindre(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Result<
         cout_natalite: 0.0,
         recrut_auto: true,
         formation: vec![],
+        tva: 0.2,
     });
     let installe = match reel {
         Some(k) => installer_pays_reel(m, pid, k, regles),
@@ -4047,7 +4069,7 @@ mod tests_armes {
     fn antimatiere_prend_le_territoire_et_creuse() {
         let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false, largeur_monde: 500 };
         let mut m = Monde::generer(60, 40, 7);
-        crate::bots::assurer(&mut m, 1, &regles, 0.0);
+        crate::essais::fonder(&mut m, 1, &regles);
         let pid = *m.pays.keys().next().unwrap();
         let cible = m.pays[&pid].capitale;
         frappe_speciale(&mut m, pid, "bombe_antimatiere", cible);
@@ -4062,7 +4084,7 @@ mod tests_armes {
     fn centrale_fusion_exige_un_reacteur() {
         let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false, largeur_monde: 500 };
         let mut m = Monde::generer(60, 40, 7);
-        crate::bots::assurer(&mut m, 1, &regles, 0.0);
+        crate::essais::fonder(&mut m, 1, &regles);
         let pid = *m.pays.keys().next().unwrap();
         let uid = m.pays[&pid].user_id;
         let j = Joueur { user_id: uid, nom: "Test", admin: false, triche: false };
@@ -4081,7 +4103,7 @@ mod tests_armes {
     fn trou_noir_reste_et_grossit() {
         let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false, largeur_monde: 500 };
         let mut m = Monde::generer(60, 40, 7);
-        crate::bots::assurer(&mut m, 1, &regles, 0.0);
+        crate::essais::fonder(&mut m, 1, &regles);
         let pid = *m.pays.keys().next().unwrap();
         let cible = m.pays[&pid].capitale;
         frappe_speciale(&mut m, pid, "bombe_trou_noir", cible);

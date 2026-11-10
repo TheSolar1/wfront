@@ -6,7 +6,7 @@
 
 import { Carte } from './carte.js';
 import { ico, esc, fmt, fmtPop, duree, signe, Grille, coutBatiment, contraste } from './util.js';
-import { PANNEAUX, apercuPrime, drapeau, cout, nomCase, statutArmee, listeChat, ICONES_EVT, menuCase, menuTroupes, menuDiplomatie, nomObjet, recetteDeTable, actionsRadiales } from './panneaux.js';
+import { PANNEAUX, apercuPrime, apercuTva, drapeau, cout, nomCase, statutArmee, listeChat, ICONES_EVT, menuCase, menuTroupes, menuDiplomatie, nomObjet, recetteDeTable, actionsRadiales } from './panneaux.js';
 
 const $ = s => document.querySelector(s);
 const corps = document.body;
@@ -1018,7 +1018,7 @@ function monRang() {
 
 const OBJECTIFS = [
   { id: 'bat', ico: 'hammer', titre: 'Construisez un bâtiment',
-    aide: 'Clic gauche sur une de vos cases, puis « Construire ». Une ferme nourrit votre population, une carrière donne du minerai.',
+    aide: 'Clic gauche sur une de vos cases, puis « Construire ». Une mine ou une carrière donne des minerais, un puits de pétrole des crédits.',
     fait: () => (S.moi.chantiers?.length > 0) || S.carte.bat.some((b, i) => b && b !== 'capitale' && S.carte.proprio[i] === S.moi.id) },
   { id: 'rech', ico: 'flask', titre: 'Lancez une recherche',
     aide: 'Menu « Mon pays » → Recherche : choisissez une technologie. Elle débloque bâtiments, unités et bonus.',
@@ -1077,14 +1077,14 @@ const TUTO = [
   { cible: '#wf-resbar', ico: 'coins', titre: () => 'Vos ressources',
     texte: () => `Crédits, minerais, électricité, population… Vos bâtiments les produisent chaque seconde. Le chiffre vert indique ce que vous gagnez par minute. Passez la souris dessus pour le détail.` },
   { cible: '#wf-carte-3d', ico: 'hand-pointer', titre: () => 'Construire',
-    texte: () => `<b>Clic gauche</b> sur une de vos cases : un menu rond s'ouvre pour <b>construire</b> (ferme, mine, usine, caserne…), améliorer ou produire des troupes.<br><br>Pour vous déplacer : <b>glissez</b> la carte, <b>molette</b> pour zoomer, <b>clic droit + glisser</b> pour pivoter.`, centre: true },
+    texte: () => `<b>Clic gauche</b> sur une de vos cases : un menu rond s'ouvre pour <b>construire</b> (mine, usine, caserne…), améliorer ou produire des troupes.<br><br>Pour vous déplacer : <b>glissez</b> la carte, <b>molette</b> pour zoomer, <b>clic droit + glisser</b> pour pivoter.`, centre: true },
   { cible: null, ico: 'industry', titre: () => 'Les bâtiments', large: true,
     texte: () => `Chaque bâtiment a un rôle. Faites défiler la liste : ceux marqués d'un cadenas se débloquent par la <b>recherche</b> (menu Mon pays).`,
     liste: listeBatimentsTuto },
   { cible: '#wf-troupes', ico: 'person-military-rifle', titre: () => 'Vos troupes',
     texte: () => `Votre réserve de troupes se remplit toute seule. <b>Clic droit</b> sur une case : une partie de vos troupes y part (réglez la part avec le curseur).<br>• Terre libre : vous l'annexez.<br>• Pays en guerre avec vous : vous l'envahissez.` },
   { cible: '[data-panneau="population"]', ico: 'people-group', titre: () => 'Votre population',
-    texte: () => `Chaque case a des <b>habitants</b>, même avant d'être annexée : en la prenant, vous les récupérez.<br>• Vos bâtiments ont besoin d'<b>ouvriers</b>.<br>• Un <b>soldat est un habitant</b> : il passe par la caserne avant de servir.<br>• Une <b>prime de natalité</b> fait naître plus d'enfants.<br>• Les provinces d'une autre <b>religion</b> peuvent se révolter (mode de carte « Religions »).<br>1 jour réel = 1 an dans le jeu.` },
+    texte: () => `Chaque case a des <b>habitants</b>, même avant d'être annexée : en la prenant, vous les récupérez.<br>• Vos bâtiments ont besoin d'<b>ouvriers</b>.<br>• Un <b>soldat est un habitant</b> : il passe par la caserne avant de servir.<br>• Une <b>prime de natalité</b> fait naître plus d'enfants.<br>• Les provinces d'une autre <b>religion</b> peuvent se révolter (mode de carte « Religions »).<br>1 jour réel = 2 ans dans le jeu.` },
   { cible: '#wf-menu', ico: 'bars', titre: () => 'Le menu',
     texte: () => `<b>Mon pays</b> : économie et recherche. <b>Usines</b> : fabriquer des produits. <b>Armées</b>, <b>Alliances</b> (blocs), <b>Marché</b> pour acheter et vendre, <b>Classement</b> et <b>Messages</b>.` },
   { cible: '#wf-objectifs', ico: 'bullseye', titre: () => 'Vos objectifs',
@@ -1339,6 +1339,7 @@ const ACTIONS = {
   demobiliser: () => agir('demobiliser', { n: Math.floor(+val('pop-demob') || 0) }),
   recrut_auto: (d, el) => agir('recrutement_auto', { actif: el.checked }),
   natalite: () => agir('natalite', { prime: +val('pop-prime') || 0 }),
+  tva: () => agir('tva', { taux: (+val('tva-taux') || 0) / 100 }),
   pop_qte: d => { const i = document.getElementById(d.champ); if (i) i.value = d.v; },
   reprimer: d => agir('reprimer', { revolte: +d.id, troupes: Math.floor(+val('rev-' + d.id) || 0) }),
   fab_onglet: d => { S.fabOnglet = d.onglet; majPanneau(true); },
@@ -1355,7 +1356,6 @@ const ACTIONS = {
     if (d.champ === 'auto') agir('regler_fabrication', { id: +d.id, auto: el.checked });
     else agir('regler_fabrication', { id: +d.id, qte: Math.max(1, +val('lot-' + d.id) || 1), cible: +val('cible-' + d.id) || 0 });
   },
-  admin_bots: () => agir('admin_bots', { nb: Math.max(0, Math.min(16, +val('admin-bots') || 0)) }),
   admin_paix: () => confirmer('Paix mondiale ?', 'Toutes les guerres s\'arrêtent immédiatement.', 'Imposer la paix', () => agir('admin_paix_mondiale')),
   admin_carte: () => confirmer('Générer une nouvelle carte ?', 'Le monde actuel est effacé : toutes les nations disparaissent et chacun doit refonder la sienne. Irréversible.', 'Nouvelle carte', () => agir('admin_nouvelle_carte'), true),
   admin_moi: () => agir('dev_tout'),
@@ -1498,7 +1498,7 @@ const ACTIONS = {
     const p = S.pays.get(+d.pays);
     modaleOk = () => agir('aide', { pays: +d.pays, res: S.defs.ressources.map((_, i) => +val('aide-' + i) || 0) });
     modale(`<div class="wf-modale-tete">${ico('box-open')}<h2>Envoyer une aide à ${esc(p?.nom)}</h2></div><p>5 % des ressources sont perdues pendant le transport.</p>
-      <div class="wf-form grille2">${S.defs.ressources.map((r, i) => `<label>${ico(r.icone, '', `color:${r.couleur}`)} ${esc(r.nom)} <small>(${fmt(S.moi?.res[i])})</small><input type="number" id="aide-${i}" min="0" value="0"></label>`).join('')}</div>
+      <div class="wf-form grille2">${S.defs.ressources.map((r, i) => r.id === 'nourriture' ? '' : `<label>${ico(r.icone, '', `color:${r.couleur}`)} ${esc(r.nom)} <small>(${fmt(S.moi?.res[i])})</small><input type="number" id="aide-${i}" min="0" value="0"></label>`).join('')}</div>
       <div class="wf-boutons fin"><button class="wf-btn secondaire" data-act="fermer_modale">Annuler</button><button class="wf-btn" data-act="modale_ok">${ico('paper-plane')} Envoyer</button></div>`);
   },
 
@@ -1566,6 +1566,12 @@ document.addEventListener('input', e => {
 
 // Campagne de natalite : apercu en direct du curseur de prime.
 document.addEventListener('input', e => {
+  if (e.target.id === 'tva-taux') {
+    const v = +e.target.value;
+    const o = document.getElementById('tva-val'); if (o) o.textContent = v + ' %';
+    const a = document.getElementById('tva-apercu'); if (a) a.innerHTML = apercuTva(S, v);
+    return;
+  }
   if (e.target.id !== 'pop-prime') return;
   const v = +e.target.value;
   const o = document.getElementById('pop-prime-val');
