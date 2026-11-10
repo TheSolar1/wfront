@@ -91,10 +91,10 @@ fn depart_bateau(m: &Monde, pid: u32, i: usize) -> Option<(usize, i64)> {
         .enumerate()
         .filter(|(_, c)| c.proprio == Some(pid) && c.bat.as_deref() == Some("port"))
         .map(|(k, _)| (k, m.distance(k, i)))
-        .filter(|&(_, d)| d <= PORTEE_BATEAU)
+        .filter(|&(_, d)| d <= PORTEE_BATEAU + crate::armee::bonus_naval(m, pid))
         .min_by_key(|&(_, d)| d);
     port.or_else(|| {
-        m.rayon(i, PORTEE_COTE)
+        m.rayon(i, PORTEE_COTE + crate::armee::bonus_naval(m, pid) / 2)
             .into_iter()
             .filter(|&k| m.cases[k].proprio == Some(pid) && m.est_cote(k))
             .map(|k| (k, m.distance(k, i)))
@@ -347,6 +347,11 @@ fn prendre(m: &mut Monde, a: &mut Attaque, i: usize) -> bool {
         let att = m.pays.get(&a.de).map(|p| crate::fabrication::effet(&p.stock, "attaque")).unwrap_or(0.0);
         let def = m.pays.get(&d).map(|p| crate::fabrication::effet(&p.stock, "defense")).unwrap_or(0.0);
         cout *= (1.0 - att.min(0.9)) * (1.0 + def);
+        // Materiel equipe : chars, artillerie, avions multiplient la force
+        // des soldats (armee.rs).
+        let fa = crate::armee::forces(m, a.de);
+        let fd = crate::armee::forces(m, d);
+        cout *= fd.defense / fa.attaque.max(1.0);
     }
     if a.troupes < cout {
         return false;

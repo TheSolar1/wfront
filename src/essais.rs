@@ -377,14 +377,11 @@ mod tests {
         let r = jeu::commande(&mut m, &j, &json!({ "action": "produire", "case": case, "unite": "missile_nucleaire" }), &regles);
         assert!(r.is_ok(), "produire : {:?}", r);
         for _ in 0..600 { jeu::tick(&mut m, 1.0); }
-        let aid = m.armees.values()
-            .find(|x| x.proprio == a && x.unites.contains_key("missile_nucleaire"))
-            .map(|x| x.id)
-            .expect("missile nucleaire introuvable apres production");
+        assert_eq!(m.pays[&a].materiel.get("missile_nucleaire").copied(), Some(1), "missile nucleaire dans le materiel apres production");
         let r = jeu::commande(&mut m, &j, &json!({ "action": "guerre", "pays": b }), &regles);
         assert!(r.is_ok(), "guerre : {:?}", r);
         let cible = m.pays[&b].capitale;
-        let tir = json!({ "action": "missile", "armee": aid, "genre": "missile_nucleaire", "cible": cible, "matiere": 40 });
+        let tir = json!({ "action": "missile", "genre": "missile_nucleaire", "cible": cible, "matiere": 40 });
         let r = jeu::commande(&mut m, &j, &tir, &regles);
         assert!(r.is_err(), "sans matiere fissile ni explosifs : refuse");
         {
@@ -442,5 +439,65 @@ mod tests {
         assert!(b55.chomage > 0.6);
         assert!(jeu::commande(&mut m, &joueur(BASE_ID), &json!({ "action": "tva", "taux": 2.0 }), &regles).is_ok());
         assert!((m.pays[&a].tva - crate::demographie::TVA_MAX).abs() < 1e-9, "plafonnee");
+    }
+
+    /// Une seule armee : le materiel multiplie la force des soldats s'il a
+    /// son equipage ; les anciennes armees deviennent du materiel.
+    #[test]
+    fn armee_unique_materiel_et_equipage() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false, largeur_monde: 500 };
+        let mut m = Monde::generer(84, 52, 20260925);
+        fonder(&mut m, 1, &regles);
+        let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        let sans = crate::armee::forces(&m, a);
+        m.pays.get_mut(&a).unwrap().troupes = 2000.0;
+        m.pays.get_mut(&a).unwrap().materiel.insert("char".into(), 40);
+        let f = crate::armee::forces(&m, a);
+        assert!(f.attaque > sans.attaque + 0.3, "les chars renforcent l'attaque : {} -> {}", sans.attaque, f.attaque);
+        assert!((f.equipe - 1.0).abs() < 1e-9, "assez de soldats pour les equipages");
+        // Sans soldats, le materiel ne sert presque a rien.
+        m.pays.get_mut(&a).unwrap().troupes = 20.0;
+        let peu = crate::armee::forces(&m, a);
+        assert!(peu.equipe < 0.2, "la plupart du materiel reste sans equipage");
+        assert!(20.0 * peu.attaque < 2000.0 * f.attaque / 10.0, "force totale bien plus faible");
+        // Migration : une ancienne armee rejoint le materiel.
+        let id = m.nouvel_id();
+        m.armees.insert(id, Armee { id, proprio: a, case: m.pays[&a].capitale, unites: [("artillerie".to_string(), 3)].into_iter().collect(),
+            blessures: Default::default(), chemin: vec![], progres: 0.0, bombarde: None, assaut: None, nom: "x".into() });
+        m.version = 7;
+        jeu::migrer(&mut m);
+        assert!(m.armees.is_empty());
+        assert_eq!(m.pays[&a].materiel.get("artillerie").copied(), Some(3));
+    }
+
+    /// Raid aerien depuis la base aerienne avec les avions du materiel :
+    /// ils reviennent dans le materiel, la cible perd des soldats.
+    #[test]
+    fn raid_aerien_depuis_le_materiel() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false, largeur_monde: 500 };
+        let mut m = Monde::generer(84, 52, 20260925);
+        fonder(&mut m, 2, &regles);
+        let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        let b = jeu::pays_du_joueur(&m, BASE_ID - 1).unwrap();
+        let cap_a = m.pays[&a].capitale;
+        let base = m.voisins(cap_a).into_iter().find(|&v| m.cases[v].proprio == Some(a)).unwrap();
+        m.cases[base].bat = Some("aeroport".into());
+        m.cases[base].niv = 1;
+        // Une case de B a 3 cases de la base.
+        let cible = m.rayon(base, 3).into_iter().find(|&v| m.distance(v, base) == 3 && est_terre(m.cases[v].terrain) && m.cases[v].proprio.is_none()).expect("terre libre");
+        m.cases[cible].proprio = Some(b);
+        let ja = joueur(BASE_ID);
+        assert!(jeu::commande(&mut m, &ja, &json!({ "action": "mission", "cible": cible }), &regles).is_err(), "pas d'avion, pas de guerre");
+        jeu::commande(&mut m, &ja, &json!({ "action": "guerre", "pays": b }), &regles).unwrap();
+        m.pays.get_mut(&a).unwrap().materiel.insert("bombardier".into(), 4);
+        m.pays.get_mut(&b).unwrap().troupes = 1000.0;
+        jeu::commande(&mut m, &ja, &json!({ "action": "mission", "cible": cible }), &regles).unwrap();
+        assert!(m.pays[&a].materiel.get("bombardier").is_none(), "les bombardiers sont partis");
+        for _ in 0..120 {
+            jeu::tick(&mut m, 1.0);
+        }
+        assert!(m.missions.is_empty(), "escadre rentree");
+        assert!(m.pays[&a].materiel.get("bombardier").copied().unwrap_or(0) >= 1, "retour au materiel");
+        assert!(m.pays[&b].troupes < 1000.0, "soldats tues : {}", m.pays[&b].troupes);
     }
 }

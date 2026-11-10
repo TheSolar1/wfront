@@ -96,6 +96,11 @@ pub struct Bilan {
     /// Habitants par religion (id, habitants).
     pub religions: Vec<(u8, f64)>,
     pub revoltes: u32,
+    // ── Armee (armee.rs) ──
+    pub mult_attaque: f64,
+    pub mult_defense: f64,
+    pub equipage: f64,
+    pub equipe: f64,
 }
 
 impl Bilan {
@@ -134,6 +139,13 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
             if bat == "carriere" {
                 let k = match c.depot { D_TERRES_RARES => 1, D_URANIUM => 2, D_METEORITE => 3, _ => 0 };
                 b.carrieres[k] += c.niv as f64;
+            }
+        }
+    }
+    for p in m.pays.values() {
+        if let Some(b) = out.get_mut(&p.id) {
+            for (t, n) in &p.materiel {
+                *b.unites.entry(t.clone()).or_insert(0) += *n;
             }
         }
     }
@@ -299,6 +311,11 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         b.vitesse = v;
         b.slots = (2 + (b.n("usine") as usize) / 3).min(5);
         b.troupes_max = front::maximum(p, b);
+        let f = crate::armee::forces(m, *pid);
+        b.mult_attaque = f.attaque;
+        b.mult_defense = f.defense;
+        b.equipage = f.equipage;
+        b.equipe = f.equipe;
     }
     out
 }
@@ -565,6 +582,17 @@ pub fn migrer(m: &mut Monde) {
         }
         m.version = 3;
     }
+    // Version 8 : une seule armee. Les unites des armees et des escadres
+    // en vol rejoignent le materiel national.
+    if m.version < 8 {
+        let armees: Vec<Armee> = std::mem::take(&mut m.armees).into_values().collect();
+        let missions: Vec<Mission> = std::mem::take(&mut m.missions).into_values().collect();
+        for (pid, lot) in armees.iter().map(|a| (a.proprio, &a.unites)).chain(missions.iter().map(|x| (x.proprio, &x.unites))) {
+            if let Some(p) = m.pays.get_mut(&pid) {
+                crate::armee::ajouter(p, lot);
+            }
+        }
+    }
     // Version 7 : la capitale est l'unique centre administratif (les anciens
     // deviennent des commissariats), la place financiere devient un centre
     // commercial (la TVA remplace son bonus).
@@ -616,7 +644,7 @@ pub fn migrer(m: &mut Monde) {
         }
         m.version = 4;
     }
-    m.version = m.version.max(7);
+    m.version = m.version.max(8);
 }
 
 fn cout_recherche_valide(id: &String) -> bool {
@@ -916,7 +944,18 @@ pub fn chemin(m: &Monde, pid: u32, depart: usize, cible: usize, dom: &str) -> Op
 }
 
 /// Ajoute des unites a la garnison du bon domaine sur la case (ou en cree une).
+/// Materiel livre a une nation : il rejoint le stock national (une seule
+/// armee : les soldats et leur materiel, voir armee.rs).
 fn deposer_unites(m: &mut Monde, pid: u32, case: usize, unites: &BTreeMap<String, u32>) {
+    let _ = case;
+    if let Some(p) = m.pays.get_mut(&pid) {
+        crate::armee::ajouter(p, unites);
+    }
+}
+
+/// Ancien systeme d'armees sur la carte (plus utilise).
+#[allow(dead_code)]
+fn deposer_armee(m: &mut Monde, pid: u32, case: usize, unites: &BTreeMap<String, u32>) {
     let dom = domaine_unites(unites);
     let existante = m
         .armees
@@ -2241,6 +2280,16 @@ fn missions(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
                 }
             }
         }
+        // Chasseurs du materiel de la nation visee (une part en alerte).
+        if let Some(o) = proprio_cible {
+            if let Some(po) = m.pays.get(&o) {
+                for (t, n) in &po.materiel {
+                    if let Some(u) = unite(t).filter(|u| u.domaine == DOM_AIR) {
+                        chasse_def += u.att_air * *n as f64 * 0.3;
+                    }
+                }
+            }
+        }
         let mut escorte = 0.0;
         for (t, n) in &mi.unites {
             if let Some(u) = unite(t) {
@@ -2279,6 +2328,15 @@ fn missions(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
             }
         } else {
             endommager_batiment(m, cible, feu_sol * 1.2);
+        }
+        // Les bombes tuent aussi des soldats de la nation visee.
+        if let Some(o) = proprio_cible {
+            if let Some(po) = m.pays.get_mut(&o) {
+                let k = (feu_sol * 0.4).min(po.troupes);
+                po.troupes -= k;
+                po.pop = (po.pop - k / 1000.0).max(0.0);
+                detruits += k.round();
+            }
         }
         m.armees.retain(|_, a| !a.unites.is_empty());
         m.effets.push(Effet { genre: "frappe".into(), case: cible, rayon: 0 });
@@ -2453,6 +2511,9 @@ fn missiles(m: &mut Monde, dt: f64, rng: &mut impl Rng) {
             if m.cases[cible].proprio.map(|o| o != pid).unwrap_or(false) {
                 reduire_batiment(m, cible, niv);
             }
+            // Soldats et habitants tues autour de l'impact.
+            let zone: Vec<(usize, f64)> = m.rayon(cible, rayon).into_iter().map(|v| (v, if v == cible { 0.25 } else { 0.08 })).collect();
+            pertes_frappe(m, &zone);
             m.effets.push(Effet { genre: if mv.genre == "missile_balistique" { "balistique" } else { "explosion" }.into(), case: cible, rayon: rayon as u32 });
             m.evenement(Some(pid), "militaire", format!("{} : impact confirmé.", nom_u), Some(cible));
             if let Some(d) = defenseur {
@@ -3161,79 +3222,79 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             m.armees.get_mut(&aid).unwrap().bombarde = Some(cible);
             Ok("Bombardement en cours.".into())
         }
+        // Raid aerien : des avions du materiel decollent de la base aerienne
+        // la plus proche de la cible.
         "mission" => {
-            let aid = u(cmd, "armee").ok_or("Escadre manquante.")? as u32;
             let cible = u(cmd, "cible").ok_or("Cible manquante.")? as usize;
             if cible >= m.cases.len() {
                 return Err("Cible invalide.".into());
             }
-            let a = m.armees.get(&aid).filter(|a| a.proprio == pid).ok_or("Escadre introuvable.")?;
-            if domaine(a) != DOM_AIR {
-                return Err("Seules les escadres aériennes partent en mission.".into());
-            }
-            let mut lot: BTreeMap<String, u32> = BTreeMap::new();
-            match cmd.get("unites").and_then(|x| x.as_object()) {
-                Some(parts) => {
-                    for (t, n) in parts {
-                        let n = (n.as_u64().unwrap_or(0) as u32).min(*a.unites.get(t).unwrap_or(&0));
-                        if n > 0 {
-                            lot.insert(t.clone(), n);
-                        }
-                    }
-                }
-                None => lot = a.unites.clone(),
-            }
-            if lot.is_empty() {
-                return Err("Aucun appareil sélectionné.".into());
-            }
-            let d = m.distance(a.case, cible) as f64;
-            let portee = lot.keys().filter_map(|t| unite(t)).map(|u| u.portee).fold(f64::MAX, f64::min);
-            if d > portee {
-                return Err(format!("Cible hors du rayon d'action ({} cases).", portee));
-            }
-            let ok = m.cases[cible].proprio.map(|o| hostile(m, pid, o)).unwrap_or(false)
-                || m.armees.values().any(|x| x.case == cible && hostile(m, pid, x.proprio));
+            let ok = m.cases[cible].proprio.map(|o| hostile(m, pid, o)).unwrap_or(false);
             if !ok {
                 return Err("La cible doit appartenir à une nation en guerre avec vous.".into());
             }
-            let vitesse = lot.keys().filter_map(|t| unite(t)).map(|u| u.vitesse).fold(f64::MAX, f64::min);
-            let duree = (d.max(1.0) / vitesse * 60.0).max(4.0);
-            let base = a.case;
-            let a = m.armees.get_mut(&aid).unwrap();
-            for (t, n) in &lot {
-                *a.unites.get_mut(t).unwrap() -= n;
+            let (base, d) = crate::armee::base_proche(m, pid, "aeroport", cible).ok_or("Il faut une base aérienne.")?;
+            let p = &m.pays[&pid];
+            let mut lot: BTreeMap<String, u32> = BTreeMap::new();
+            let demande = cmd.get("unites").and_then(|x| x.as_object());
+            for (t, &n) in &p.materiel {
+                let Some(ud) = unite(t) else { continue };
+                if ud.domaine != DOM_AIR || (ud.portee as i64) < d {
+                    continue;
+                }
+                let voulu = match demande {
+                    Some(o) => o.get(t).and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                    None => n,
+                };
+                let k = voulu.min(n);
+                if k > 0 {
+                    lot.insert(t.clone(), k);
+                }
             }
-            a.unites.retain(|_, n| *n > 0);
+            if lot.is_empty() {
+                return Err(format!("Aucun avion capable d'atteindre la cible ({} cases de votre base aérienne la plus proche).", d));
+            }
+            let vitesse = lot.keys().filter_map(|t| unite(t)).map(|u| u.vitesse).fold(f64::MAX, f64::min);
+            let duree = ((d as f64).max(1.0) / vitesse * 60.0).max(4.0);
+            let p = m.pays.get_mut(&pid).unwrap();
+            for (t, n) in &lot {
+                crate::armee::retirer(p, t, *n);
+            }
+            let n: u32 = lot.values().sum();
             let mid = m.nouvel_id();
             m.missions.insert(mid, Mission { id: mid, proprio: pid, unites: lot, base, cible, retour: false, progres: 0.0, duree });
-            m.armees.retain(|_, a| !a.unites.is_empty());
-            Ok(format!("Escadre en vol, impact dans {} s.", (duree / regles.vitesse).round()))
+            Ok(format!("{} avions en vol, impact dans {} s.", n, (duree / regles.vitesse).round()))
         }
         "missile" => {
-            let aid = u(cmd, "armee").ok_or("Arsenal manquant.")? as u32;
             let genre = s(cmd, "genre").to_string();
             let cible = u(cmd, "cible").ok_or("Cible manquante.")? as usize;
             if cible >= m.cases.len() {
                 return Err("Cible invalide.".into());
             }
             let ud = unite(&genre).filter(|u| u.domaine == DOM_MISSILE).ok_or("Missile inconnu.")?;
-            let a = m.armees.get(&aid).filter(|a| a.proprio == pid).ok_or("Arsenal introuvable.")?;
-            if *a.unites.get(&genre).unwrap_or(&0) == 0 {
-                return Err("Aucun missile de ce type en stock.".into());
+            if m.pays[&pid].materiel.get(&genre).copied().unwrap_or(0) == 0 {
+                return Err(format!("Aucun {} en stock : produisez-en au silo ou achetez-en au marché.", ud.nom.to_lowercase()));
             }
-            if m.cases[a.case].bat.as_deref() != Some("silo") || m.cases[a.case].proprio != Some(pid) {
-                return Err("Les missiles se tirent depuis un silo.".into());
-            }
-            let d = m.distance(a.case, cible) as f64;
-            if d > ud.portee {
-                return Err(format!("Cible hors de portée ({} cases).", ud.portee));
-            }
-            let ok = m.cases[cible].proprio.map(|o| hostile(m, pid, o)).unwrap_or(false)
-                || m.armees.values().any(|x| x.case == cible && hostile(m, pid, x.proprio));
+            let ok = m.cases[cible].proprio.map(|o| hostile(m, pid, o)).unwrap_or(false);
             if !ok {
                 return Err("La cible doit appartenir à une nation en guerre avec vous.".into());
             }
-            let depart = a.case;
+            // Depart : un silo a portee, sinon un bombardier qui emporte le
+            // missile depuis une base aerienne (dans son rayon d'action).
+            let silo = crate::armee::base_proche(m, pid, "silo", cible).filter(|&(_, d)| d as f64 <= ud.portee);
+            let bombardier = m.pays[&pid].materiel.get("bombardier").copied().unwrap_or(0) > 0;
+            let rayon_b = unite("bombardier").map(|u| u.portee).unwrap_or(0.0);
+            let base_air = crate::armee::base_proche(m, pid, "aeroport", cible).filter(|&(_, d)| bombardier && d as f64 <= rayon_b + ud.portee);
+            let (depart, d) = match (silo, base_air) {
+                (Some(x), _) => (x.0, x.1 as f64),
+                (None, Some(x)) => (x.0, x.1 as f64),
+                (None, None) => {
+                    return Err(format!(
+                        "Hors de portée : il faut un silo à moins de {} cases, ou un bombardier et une base aérienne à moins de {} cases.",
+                        ud.portee, ud.portee + rayon_b
+                    ))
+                }
+            };
             // Arme nucleaire : soit de la matiere fissile brute (uranium enrichi
             // ou plutonium) + des explosifs de mise a feu, soit des ogives
             // fabriquees (ogive nucleaire, bombe H) qui contiennent deja tout.
@@ -3279,10 +3340,7 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             } else {
                 (0.0, 0.0, String::new())
             };
-            let a = m.armees.get_mut(&aid).unwrap();
-            *a.unites.get_mut(&genre).unwrap() -= 1;
-            a.unites.retain(|_, n| *n > 0);
-            m.armees.retain(|_, a| !a.unites.is_empty());
+            crate::armee::retirer(m.pays.get_mut(&pid).unwrap(), &genre, 1);
             let duree = (d.max(1.0) / ud.vitesse * 60.0).max(5.0);
             let mid = m.nouvel_id();
             m.missiles.insert(mid, MissileVol { id: mid, proprio: pid, genre: genre.clone(), depart, cible, progres: 0.0, duree, matiere, explosifs, fissile });
@@ -3595,21 +3653,14 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
             let mut reste = u(cmd, "qte").unwrap_or(1).clamp(1, 500) as u32;
             let voulu = reste;
             let prix_u = (prix_unite_marche(&m.pays[&pid], ud, &m.prix) / if ud.tech.is_empty() || m.pays[&pid].a(ud.tech) { 1.5 } else { 2.5 } * 0.6).floor();
-            for a in m.armees.values_mut().filter(|a| a.proprio == pid && a.chemin.is_empty() && a.assaut.is_none()) {
-                if reste == 0 {
-                    break;
-                }
-                if let Some(nb) = a.unites.get_mut(ud.id) {
-                    let pris = (*nb).min(reste);
-                    *nb -= pris;
-                    reste -= pris;
-                }
-                a.unites.retain(|_, n| *n > 0);
-            }
-            m.armees.retain(|_, a| !a.unites.is_empty());
+            // Materiel national (une seule armee, armee.rs).
+            let dispo = m.pays[&pid].materiel.get(ud.id).copied().unwrap_or(0);
+            let pris = dispo.min(reste);
+            crate::armee::retirer(m.pays.get_mut(&pid).unwrap(), ud.id, pris);
+            reste -= pris;
             let vendues = voulu - reste;
             if vendues == 0 {
-                return Err(format!("Aucun(e) {} au repos à vendre.", ud.nom.to_lowercase()));
+                return Err(format!("Aucun(e) {} dans votre matériel.", ud.nom.to_lowercase()));
             }
             let total = prix_u * vendues as f64;
             m.pays.get_mut(&pid).unwrap().res[CR] += total;
@@ -3833,6 +3884,7 @@ fn rejoindre(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Result<
         recrut_auto: true,
         formation: vec![],
         tva: 0.2,
+        materiel: BTreeMap::new(),
     });
     let installe = match reel {
         Some(k) => installer_pays_reel(m, pid, k, regles),

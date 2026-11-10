@@ -480,16 +480,13 @@ function menuProduction(S, i) {
 function blocArsenal(S, i) {
   const m = S.moi;
   const lignes = [];
-  for (const a of S.armees.filter(x => x.proprio === m.id && x.case === i && x.dom === 'missile')) {
-    for (const [id, n] of Object.entries(a.unites || {})) {
-      const u = uniDef(S, id);
-      if (!u || !n) continue;
-      lignes.push(`<div class="wf-menu-item" title="${esc(u.desc)}">
+  for (const [id, n] of Object.entries(m.materiel || {})) {
+    const u = uniDef(S, id);
+    if (!u || !n || u.domaine !== 'missile') continue;
+    lignes.push(`<div class="wf-menu-item" title="${esc(u.desc)}">
         <span class="wf-bat-ic">${ico(u.icone)}</span>
         <div class="wf-ligne-corps"><b>${esc(u.nom)}</b><small>${n} en stock · portée ${u.portee > 900 ? 'illimitée' : u.portee + ' cases'}</small></div>
-        <button class="wf-btn petit ${id === 'missile_nucleaire' ? 'danger' : ''}" data-act="ordre" data-type="missile" data-genre="${id}" data-armee="${a.id}">${ico('crosshairs')} Tirer</button>
       </div>`);
-    }
   }
   // Armes non conventionnelles (antimatière, trou noir, générateur de point zéro) : en stock, tirées depuis ce silo.
   for (const o of ['bombe_antimatiere', 'bombe_trou_noir', 'generateur_point_zero']) {
@@ -506,7 +503,7 @@ function blocArsenal(S, i) {
     .map(u => `${esc(u.nom)} : recherchez « ${esc(nomTech(S, u.tech))} »`);
   return `<div class="wf-menu-titre">${ico('rocket')} Missiles en stock</div>
     <div class="wf-menu-liste">${lignes.join('') || '<div class="wf-insp-ligne petit">Aucun missile prêt : produisez-en ci-dessus, ils apparaîtront ici une fois terminés.</div>'}</div>
-    <div class="wf-insp-ligne petit">${ico('circle-info')} Cliquez sur « Tirer » puis sur la case visée. On ne peut frapper qu'une nation avec qui vous êtes <b>en guerre</b>.</div>
+    <div class="wf-insp-ligne petit">${ico('circle-info')} Pour tirer : cliquez sur une case d'un pays <b>en guerre</b> avec vous, puis « Frappes ».</div>
     ${verrous.length ? `<div class="wf-insp-ligne petit">${ico('lock')} ${verrous.join(' · ')}</div>` : ''}`;
 }
 
@@ -522,10 +519,13 @@ export function statutArmee(S, a) {
   return { t: 'En position', c: '', i: 'flag' };
 }
 
+// Soldats d'equipage par unite de materiel (memes valeurs que armee.rs).
+const EQUIPAGE = { infanterie: 10, forces_speciales: 5, exosoldat: 2, blinde_leger: 4, char: 4, dca_mobile: 4, bombardier: 4, artillerie: 6,
+  chasseur: 1, chasseur_furtif: 1, helicoptere: 2, fregate: 40, sous_marin: 40, destroyer: 80, porte_avions: 300 };
+
 function panneauArmee(S) {
   const m = S.moi;
   if (!m) return vide('Fondez d\'abord votre nation.', 'flag');
-  const miennes = S.armees.filter(a => a.proprio === m.id);
   const totaux = m.bilan.unites;
   const entretien = S.defs.unites.reduce((acc, u) => {
     const n = totaux[u.id] || 0;
@@ -576,14 +576,36 @@ function panneauArmee(S) {
     }).join('')}</div>`;
   }
 
+  // Une seule armee : les soldats et leur materiel (armee.rs).
+  const b = m.bilan;
+  const materiel = Object.entries(m.materiel || {}).filter(([, n]) => n > 0).map(([id, n]) => ({ u: uniDef(S, id), n })).filter(x => x.u);
+  const avions = materiel.filter(x => x.u.domaine === 'air').reduce((a, x) => a + x.n, 0);
+  const navires = materiel.filter(x => x.u.domaine === 'mer').reduce((a, x) => a + x.n, 0);
+  const missiles = materiel.filter(x => x.u.domaine === 'missile');
+  const ligneMat = x => `<div class="wf-ligne"><span class="wf-ligne-ic">${ico(x.u.icone)}</span><div class="wf-ligne-corps">
+      <div class="wf-ligne-titre">${esc(x.u.nom)} <b>× ${fmt(x.n)}</b></div>
+      <div class="wf-ligne-sous">${x.u.domaine === 'missile' ? `portée ${x.u.portee > 900 ? 'illimitée' : x.u.portee + ' cases'}` : `attaque ${x.u.att_sol} · défense ${x.u.defense}`}${EQUIPAGE[x.u.id] ? ` · ${EQUIPAGE[x.u.id]} soldats d'équipage` : ''}</div></div></div>`;
   return `
-  ${titre('Forces armées', 'shield-halved', `<small>Entretien : ${fmt(entretien[0] + 6 * entretien[2], 1)} ${ico('coins')} /min</small>`)}
-  <div class="wf-totaux">${Object.keys(totaux).length ? composition(S, totaux) : '<small>Aucune unité</small>'}</div>
+  ${titre('Votre armée', 'shield-halved', `<small>Entretien : ${fmt(entretien[0] + 6 * entretien[2], 1)} ${ico('coins')} /min</small>`)}
+  <p class="wf-note">${ico('circle-info')} Une seule armée : vos <b>soldats</b> (des habitants formés à la caserne) et leur <b>matériel</b>. Le matériel (chars, artillerie, avions, navires) multiplie la force de vos soldats en attaque et en défense, à condition d'avoir assez de soldats pour l'équiper.</p>
+  <div class="wf-stats">
+    <div class="wf-stat">${ico('person-military-rifle')}<b>${fmt(m.troupes)} / ${fmt(b.troupes_max)}</b><span>Soldats prêts${b.recrues >= 1 ? ` · ${fmt(b.recrues)} en formation` : ''}</span>${barre(m.troupes / Math.max(1, b.troupes_max))}</div>
+    <div class="wf-stat">${ico('crosshairs')}<b>× ${(b.mult_attaque || 1).toFixed(2).replace('.', ',')}</b><span>Force en attaque</span></div>
+    <div class="wf-stat">${ico('shield-halved')}<b>× ${(b.mult_defense || 1).toFixed(2).replace('.', ',')}</b><span>Force en défense</span></div>
+    <div class="wf-stat ${(b.equipe ?? 1) < 1 ? 'alerte' : ''}">${ico('users')}<b>${Math.round((b.equipe ?? 1) * 100)} %</b><span>Matériel équipé · ${fmt(b.equipage || 0)} soldats requis</span>${barre(b.equipe ?? 1, (b.equipe ?? 1) < 1 ? 'rouge' : '')}</div>
+  </div>
+  ${(b.equipe ?? 1) < 1 ? `<div class="wf-avert">${ico('triangle-exclamation')} Pas assez de soldats pour tout votre matériel : recrutez (Population) ou il reste au hangar.</div>` : ''}
 
-  ${titre('Troupes', 'person-military-rifle', `<small>${fmt(m.troupes)} / ${fmt(m.bilan.troupes_max)}</small>`)}
-  ${barre(m.troupes / Math.max(1, m.bilan.troupes_max))}
-  <p class="wf-note">${ico('circle-info')} Votre réserve se remplit toute seule, plus vite quand elle est vide. Son maximum grandit avec votre territoire, vos villes, votre capitale, vos casernes et vos centres administratifs. <b>Clic droit sur une case</b> : vous y envoyez ${Math.round(S.ratio * 100)} % de vos troupes (terre neutre : votre pays s'agrandit ; ennemi en guerre : vous l'envahissez ; côte lointaine : débarquement depuis un chantier naval).</p>
+  ${titre('Matériel', 'truck-monster', `<small>${fmt(materiel.reduce((a, x) => a + x.n, 0))}</small>`)}
+  <div class="wf-liste">${materiel.filter(x => x.u.domaine !== 'missile').map(ligneMat).join('') || vide('Aucun matériel. Produisez-en dans vos bâtiments militaires (ci-dessous) ou achetez-en au marché.', 'truck-monster')}</div>
+  <p class="wf-note">${ico('jet-fighter')} <b>${avions} avion${avions > 1 ? 's' : ''}</b> : raids aériens depuis une base aérienne (clic sur une case d'un pays en guerre avec vous, « Frappes »). ${ico('ship')} <b>${navires} navire${navires > 1 ? 's' : ''}</b> : +${Math.min(30, navires * 2)} cases de portée pour les débarquements.</p>
+
+  ${titre('Missiles et bombes', 'rocket', `<small>${fmt(missiles.reduce((a, x) => a + x.n, 0))}</small>`)}
+  <div class="wf-liste">${missiles.map(ligneMat).join('') || vide('Aucun missile. Produisez-en au silo ou achetez-en au marché.', 'rocket')}</div>
+  <p class="wf-note">${ico('circle-info')} Un missile part d'un <b>silo</b> à portée, ou d'un <b>bombardier</b> qui l'emporte depuis une base aérienne (rayon du bombardier + portée du missile). Pour tirer : cliquez sur une case d'un pays en guerre avec vous, puis « Frappes ».</p>
+
   ${titre('Offensives', 'flag', `<small>${(S.attaques || []).filter(a => a.de === m.id).length}</small>`)}
+  <p class="wf-note">${ico('circle-info')} <b>Clic droit sur une case</b> : vous y envoyez ${Math.round(S.ratio * 100)} % de vos soldats (terre neutre : votre pays s'agrandit ; ennemi en guerre : vous l'envahissez ; côte lointaine : débarquement).</p>
   <div class="wf-liste">${(S.attaques || []).filter(a => a.de === m.id || a.cible === m.id).map(a => {
     const mienne = a.de === m.id;
     const autre = mienne ? (a.cible != null ? S.pays.get(a.cible) : null) : S.pays.get(a.de);
@@ -591,23 +613,10 @@ function panneauArmee(S) {
     return `<div class="wf-ligne cliquable" data-act="voir" data-case="${a.bateau ? a.bateau.case : a.vise}">
       <span class="wf-ligne-ic">${ico(a.bateau ? 'ship' : mienne ? 'person-military-pointing' : 'triangle-exclamation')}</span>
       <div class="wf-ligne-corps"><div class="wf-ligne-titre">${quoi}</div>
-      <div class="wf-ligne-sous">${fmt(a.troupes)} troupes · ${a.prises} cases prises${a.bateau ? ` · en mer, débarquement dans ${duree(a.bateau.reste / S.vitesse)}` : ''}</div></div>
+      <div class="wf-ligne-sous">${fmt(a.troupes)} soldats · ${a.prises} cases prises${a.bateau ? ` · en mer, débarquement dans ${duree(a.bateau.reste / S.vitesse)}` : ''}</div></div>
       ${mienne && !a.bateau ? `<button class="wf-btn petit secondaire" data-act="rappeler" data-id="${a.id}">Rappeler</button>` : ''}
     </div>`;
   }).join('') || vide('Aucune offensive. Faites un clic droit sur une case neutre qui touche votre pays pour vous agrandir.', 'map-location-dot')}</div>
-
-  ${titre('Armées, flottes et escadres', 'flag', `<small>${miennes.length}</small>`)}
-  <div class="wf-liste">${miennes.map(a => {
-    const st = statutArmee(S, a);
-    return `<div class="wf-ligne cliquable ${a.id === S.selArmee ? 'actif' : ''}" data-act="sel_armee" data-armee="${a.id}">
-      <span class="wf-ligne-ic">${ico(uniDef(S, a.principal)?.icone || 'flag')}</span>
-      <div class="wf-ligne-corps">
-        <div class="wf-ligne-titre">${esc(a.nom)} <small>${a.total} u.</small></div>
-        <div class="wf-ligne-sous">${esc(nomCase(S, a.case))} · ${puce(st.t, st.c, st.i)}</div>
-        <div class="wf-compos">${composition(S, a.unites)}</div>
-      </div>
-    </div>`;
-  }).join('') || vide('Aucune armée.', 'flag')}</div>
 
   ${titre('Production militaire', 'industry')}
   ${blocProd}
@@ -964,10 +973,9 @@ function listeEquipement(S, prefixe) {
   }).join('');
 }
 
-/** Unités d'un type dans des armées au repos (vendables). */
+/** Materiel d'un type (vendable). */
 function aurepos(S, type) {
-  return S.armees.filter(a => a.proprio === S.moi.id && !(a.chemin && a.chemin.length) && a.assaut == null)
-    .reduce((n, a) => n + (a.unites?.[type] || 0), 0);
+  return S.moi?.materiel?.[type] || 0;
 }
 
 function listeServices(S, prefixe) {
@@ -1106,13 +1114,13 @@ function panneauAide(S) {
   <p>Chaque région a ses gisements : filons de minerais (collines, montagnes, déserts), uranium (montagnes, toundra), minéraux rares (forêts, collines), et cratères de météorite (très rares). Une carrière extrait des minerais n'importe où. Ce qui vous manque s'achète au <b>marché mondial</b> ou se négocie avec vos alliés. L'<b>électricité</b> n'est pas stockée : si la consommation dépasse la production, tous les bâtiments consommateurs tournent au ralenti.</p>
   <h3>${ico('flask')} Recherche</h3>
   <p>Quatre branches (militaire, économie, diplomatie, industrie) débloquent bâtiments, unités et bonus. Les branches se croisent : les chars demandent la sidérurgie, les missiles l'aérospatiale, le nucléaire militaire le nucléaire civil.</p>
-  <h3>${ico('person-military-rifle')} Armées et combat</h3>
-  <p>Sélectionnez une armée puis <b>clic droit</b> sur une case (ou « Déplacer ») : elle suit le meilleur chemin. Entrer dans une province ennemie la conquiert ; si elle est défendue, un combat s'engage en temps réel. Relief et <b>fortifications</b> avantagent le défenseur. L'<b>artillerie</b> et les navires lourds bombardent à distance sans riposte. Les troupes ne traversent un pays que s'il est allié ou en guerre avec vous.</p>
+  <h3>${ico('person-military-rifle')} Une seule armée : soldats et matériel</h3>
+  <p>Vos <b>soldats</b> sont des habitants formés à la caserne. <b>Clic droit</b> sur une case : une part de vos soldats y part (terre neutre : annexion ; pays en guerre : invasion ; côte : débarquement). Relief et <b>fortifications</b> avantagent le défenseur. Le <b>matériel</b> (chars, artillerie, avions, navires) se produit dans les bâtiments militaires ou s'achète au marché : il multiplie la force de vos soldats en attaque et en défense, s'ils sont assez nombreux pour l'équiper. Un soldat tué est un habitant en moins.</p>
   <h3>${ico('jet-fighter')} Aviation, marine et missiles</h3>
-  <p>Les avions restent à leur base aérienne et partent en <b>mission</b> dans leur rayon d'action ; batteries sol-air, DCA et chasseurs ennemis les abattent. Les navires naviguent de port en port ; avec les <b>opérations amphibies</b>, vos troupes peuvent traverser la mer. Les <b>missiles</b> partent d'un silo et peuvent être interceptés par les batteries sol-air.</p>
+  <p>Les <b>avions</b> partent en <b>raid</b> depuis votre base aérienne la plus proche (clic sur une case ennemie, « Frappes ») ; batteries sol-air et chasseurs ennemis les abattent. Les <b>navires</b> allongent la portée des débarquements. Les <b>missiles</b> partent d'un silo à portée, ou d'un <b>bombardier</b> qui les emporte depuis une base aérienne ; les batteries sol-air peuvent les intercepter.</p>
   <h3>${ico('radiation')} Le nucléaire</h3>
   <p>Un missile nucléaire rase tout dans un rayon d'une case (bâtiments détruits, zone irradiée 30 min) et frappe encore fort jusqu'à deux cases (moitié des dégâts, bâtiments −2 niveaux, 15 min d'irradiation). Chaque nation touchée perd la moitié de sa population, et le lanceur perd 200 d'influence. Seul le <b>bouclier antimissile</b> peut l'intercepter. Toute la planète est prévenue au lancement.</p>
-  <p><b>Comment tirer :</b> 1. recherchez « Missiles de croisière » et « Dissuasion nucléaire » (branche militaire) ; 2. construisez un <b>silo à missiles</b> ; 3. cliquez sur le silo et produisez un missile nucléaire (il faut de l'uranium) ; 4. déclarez la guerre à la cible (Diplomatie) ; 5. recliquez sur le silo : dans « Missiles en stock », <b>Tirer</b>, puis cliquez sur la case visée et confirmez. Portée illimitée.</p>
+  <p><b>Comment tirer :</b> 1. recherchez « Missiles de croisière » et « Dissuasion nucléaire » (branche militaire) ; 2. construisez un <b>silo à missiles</b> ; 3. cliquez sur le silo et produisez un missile (le nucléaire demande de l'uranium enrichi) ; 4. déclarez la guerre à la cible (Diplomatie) ; 5. cliquez sur une case du pays visé, « Frappes », puis choisissez le missile et confirmez.</p>
   <h3>${ico('people-group')} Diplomatie et blocs</h3>
   <p>Pactes de non-agression, traités de paix, aide en ressources et espionnage. Les <b>blocs</b> fonctionnent comme de grandes alliances : vision partagée, trésor commun, canal privé, et <b>défense collective</b> — attaquer un membre, c'est attaquer tout le bloc.</p>
   <h3>${ico('keyboard')} Raccourcis</h3>
@@ -1796,7 +1804,7 @@ export const PANNEAUX = {
   population: { titre: 'Population', icone: 'people-group', rendre: panneauPopulation },
   construction: { titre: 'Construction', icone: 'helmet-safety', rendre: panneauConstruction },
   fabrication: { titre: 'Fabrication', icone: 'gears', rendre: panneauFabrication },
-  armee: { titre: 'Armées', icone: 'person-military-rifle', rendre: panneauArmee },
+  armee: { titre: 'Armée', icone: 'person-military-rifle', rendre: panneauArmee },
   recherche: { titre: 'Recherche', icone: 'flask', rendre: panneauRecherche },
   diplomatie: { titre: 'Diplomatie', icone: 'handshake', rendre: panneauDiplomatie },
   blocs: { titre: 'Blocs & alliances', icone: 'people-group', rendre: panneauBlocs },
@@ -1870,12 +1878,6 @@ export function actionsRadiales(S, i) {
       // Silo : tirer missiles ET armes non conventionnelles directement depuis le menu rond.
       if (b === 'silo') {
         const tirs = [];
-        for (const a of S.armees.filter(x => x.proprio === m.id && x.case === i && x.dom === 'missile')) {
-          for (const [id, nn] of Object.entries(a.unites || {})) {
-            const u = uniDef(S, id);
-            if (u && nn) tirs.push({ ico: u.icone, label: `Tirer : ${u.nom}`, info: `${fmt(nn)} en stock`, act: 'ordre', data: { type: 'missile', genre: id, armee: a.id }, danger: id === 'missile_nucleaire' });
-          }
-        }
         for (const o of ['bombe_antimatiere', 'bombe_trou_noir', 'generateur_point_zero']) {
           const nn = possede(S, o);
           if (nn >= 1) tirs.push({ ico: o === 'bombe_trou_noir' ? 'circle' : o === 'generateur_point_zero' ? 'mountain' : 'explosion', label: `Lancer : ${nomObjet(S, o)}`, info: `${fmt(nn)} en stock`, act: 'ordre_special', data: { objet: o }, danger: true });
@@ -1927,14 +1929,13 @@ export function actionsRadiales(S, i) {
     if (rel === 'guerre') {
       const frappes = [];
       const vus = new Set();
-      for (const a of S.armees.filter(x => x.proprio === m.id && x.dom === 'missile')) {
-        for (const [id, n] of Object.entries(a.unites || {})) {
-          const u = uniDef(S, id);
-          if (!u || !n || vus.has(id) || (u.portee < 900 && S.g.distance(a.case, i) > u.portee)) continue;
-          vus.add(id);
-          frappes.push({ ico: u.icone, label: `Tirer : ${u.nom}`, info: `${n} en silo`, act: 'tirer_ici', data: { armee: a.id, genre: id, case: i }, danger: id === 'missile_nucleaire' });
-        }
+      for (const [id, n] of Object.entries(m.materiel || {})) {
+        const u = uniDef(S, id);
+        if (!u || !n || u.domaine !== 'missile') continue;
+        frappes.push({ ico: u.icone, label: `Tirer : ${u.nom}`, info: `${n} en stock · silo ou bombardier`, act: 'tirer_ici', data: { genre: id, case: i }, danger: id === 'missile_nucleaire' });
       }
+      const avions = Object.entries(m.materiel || {}).filter(([id, n]) => n > 0 && uniDef(S, id)?.domaine === 'air').reduce((a, [, n]) => a + n, 0);
+      if (avions) frappes.push({ ico: 'jet-fighter', label: 'Raid aérien', info: `${avions} avion${avions > 1 ? 's' : ''} · depuis votre base aérienne`, act: 'raid_ici', data: { case: i } });
       for (const o of ['bombe_antimatiere', 'bombe_trou_noir', 'generateur_point_zero']) {
         const n = possede(S, o);
         const ic = o === 'bombe_trou_noir' ? 'circle' : o === 'generateur_point_zero' ? 'mountain' : 'explosion';

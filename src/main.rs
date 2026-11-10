@@ -11,6 +11,7 @@
 // ══════════════════════════════════════════════════════════════════
 
 mod admin;
+mod armee;
 mod defs;
 mod essais;
 mod demographie;
