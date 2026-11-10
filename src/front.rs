@@ -33,7 +33,8 @@ pub const TROUPES_DEPART: f64 = 500.0;
 /// Maximum de troupes d'une nation.
 pub fn maximum(p: &Pays, b: &Bilan) -> f64 {
     let mut m = 500.0
-        + 10.0 * b.cases as f64
+        // Par case de la carte de reference (la carte fine en compte 9 fois plus).
+        + 10.0 * b.cases as f64 / (b.echelle * b.echelle).max(1.0)
         + 1200.0 * b.n("capitale")
         + 250.0 * b.n("ville")
         + 300.0 * b.n("caserne")
@@ -62,18 +63,25 @@ pub fn croissance(p: &Pays, max: f64, en_formation: f64) -> f64 {
 pub fn cout_case(m: &Monde, i: usize) -> f64 {
     let c = &m.cases[i];
     let t = &TERRAINS[c.terrain as usize];
+    // Une case de la carte fine couvre 1/9 de la surface : 1/9 du cout.
+    let surface = 1.0 / (m.echelle() * m.echelle());
     match c.proprio {
-        None => COUT_NEUTRE * t.cout_mvt,
+        None => COUT_NEUTRE * t.cout_mvt * surface,
         Some(d) => {
             let fort = if c.bat.as_deref() == Some("fort") { 1.0 + 0.3 * c.niv as f64 } else { 1.0 };
-            COUT_ENNEMI * t.cout_mvt * (1.0 + t.defense) * fort + 0.8 * densite(m, d)
+            // La densite de defenseurs est deja comptee par case.
+            COUT_ENNEMI * t.cout_mvt * (1.0 + t.defense) * fort * surface + 0.8 * densite(m, d)
         }
     }
 }
 
 /// Troupes du defenseur par case de son territoire.
 fn densite(m: &Monde, d: u32) -> f64 {
-    let cases = m.cases.iter().filter(|c| c.proprio == Some(d)).count().max(1) as f64;
+    // Nombre de cases tenu a jour a chaque tick (pas de parcours de la carte).
+    let cases = match m.nb_cases.get(&d) {
+        Some(&n) => n.max(1) as f64,
+        None => m.cases.iter().filter(|c| c.proprio == Some(d)).count().max(1) as f64,
+    };
     m.pays.get(&d).map(|p| p.troupes / cases).unwrap_or(0.0)
 }
 
@@ -91,10 +99,10 @@ fn depart_bateau(m: &Monde, pid: u32, i: usize) -> Option<(usize, i64)> {
         .enumerate()
         .filter(|(_, c)| c.proprio == Some(pid) && c.bat.as_deref() == Some("port"))
         .map(|(k, _)| (k, m.distance(k, i)))
-        .filter(|&(_, d)| d <= PORTEE_BATEAU + crate::armee::bonus_naval(m, pid))
+        .filter(|&(_, d)| d <= m.portee(PORTEE_BATEAU as f64) + crate::armee::bonus_naval(m, pid))
         .min_by_key(|&(_, d)| d);
     port.or_else(|| {
-        m.rayon(i, PORTEE_COTE + crate::armee::bonus_naval(m, pid) / 2)
+        m.rayon(i, m.portee(PORTEE_COTE as f64) + crate::armee::bonus_naval(m, pid) / 2)
             .into_iter()
             .filter(|&k| m.cases[k].proprio == Some(pid) && m.est_cote(k))
             .map(|k| (k, m.distance(k, i)))
@@ -140,7 +148,7 @@ pub fn etendre(m: &mut Monde, pid: u32, i: usize, ratio: f64, maint: i64) -> Res
             _ if cotier => {
                 return Err(format!(
                     "Trop loin : vos côtes doivent être à moins de {} cases (ou un chantier naval à moins de {} cases).",
-                    PORTEE_COTE, PORTEE_BATEAU
+                    m.portee(PORTEE_COTE as f64), m.portee(PORTEE_BATEAU as f64)
                 ))
             }
             _ => return Err("Cette province ne touche pas votre territoire.".into()),
@@ -315,7 +323,9 @@ fn avancer_une(m: &mut Monde, a: &mut Attaque, dt: f64) -> bool {
 
 /// Avance le front ; false s'il ne peut plus avancer.
 fn prendre_voisines(m: &mut Monde, a: &mut Attaque, dt: f64) -> bool {
-    a.progres += dt * (0.6 + a.troupes / 250.0).min(5.0);
+    // Meme vitesse sur le terrain : 9 fois plus de cases par seconde sur la carte fine.
+    let e = m.echelle();
+    a.progres += dt * (0.6 + a.troupes / 250.0).min(5.0) * e * e;
     while a.progres >= 1.0 {
         a.progres -= 1.0;
         let Some(i) = prochaine(m, a) else { return false };
@@ -326,8 +336,38 @@ fn prendre_voisines(m: &mut Monde, a: &mut Attaque, dt: f64) -> bool {
     true
 }
 
-/// Case du front la plus proche de la case visee.
+/// Case du front la plus proche de la case visee : recherche en anneaux
+/// autour de la case visee (la carte compte des millions de cases), puis
+/// parcours complet en dernier recours.
 fn prochaine(m: &Monde, a: &Attaque) -> Option<usize> {
+    let ok = |i: usize| {
+        let c = &m.cases[i];
+        c.proprio == a.cible && est_terre(c.terrain) && !m.zone_morte(i) && touche(m, a.de, i)
+    };
+    let mut vus = std::collections::HashSet::from([a.vise]);
+    let mut anneau = vec![a.vise];
+    let mut trouve: Option<usize> = None;
+    for _ in 0..80 {
+        if let Some(&i) = anneau.iter().filter(|&&i| ok(i)).min() {
+            trouve = Some(i);
+            break;
+        }
+        let mut suivant = Vec::new();
+        for &i in &anneau {
+            for v in m.voisins(i) {
+                if vus.insert(v) {
+                    suivant.push(v);
+                }
+            }
+        }
+        if suivant.is_empty() {
+            break;
+        }
+        anneau = suivant;
+    }
+    if trouve.is_some() {
+        return trouve;
+    }
     (0..m.cases.len())
         .filter(|&i| {
             let c = &m.cases[i];

@@ -662,12 +662,7 @@ fn occupations(m: &mut Monde, pas: f64, rng: &mut impl Rng) {
     let mut conversions: Vec<(usize, u8)> = Vec::new();
     for i in 0..m.cases.len() {
         let c = &m.cases[i];
-        let Some(pid) = c.proprio else {
-            if !m.occupations.is_empty() {
-                m.occupations.remove(&i);
-            }
-            continue;
-        };
+        let Some(pid) = c.proprio else { continue };
         let Some(p) = m.pays.get(&pid) else { continue };
         if p.religion == 0 || c.rel == 0 || c.rel == p.religion || origine(m, pid, i) {
             m.occupations.remove(&i);
@@ -693,12 +688,17 @@ fn occupations(m: &mut Monde, pas: f64, rng: &mut impl Rng) {
         }
         // Chaque niveau de commissariat : -15 % de risque (jusqu'a -90 %).
         let ordre = (1.0 - 0.15 * police.get(&pid).copied().unwrap_or(0.0)).max(0.1);
-        let taux = if o.conquise { TAUX_CONQUISE } else { TAUX_NEUTRE } * ordre * if integration { 0.6 } else { 1.0 };
+        // Par case de la carte de reference : 9 fois moins par case fine.
+        let surface = 1.0 / (m.echelle() * m.echelle());
+        let taux = if o.conquise { TAUX_CONQUISE } else { TAUX_NEUTRE } * ordre * surface * if integration { 0.6 } else { 1.0 };
         if rng.gen::<f64>() < taux * pas {
             departs.push((pid, i));
             deja.insert(pid);
         }
     }
+    // Cases perdues ou devenues neutres : leur occupation s'efface.
+    let cases = &m.cases;
+    m.occupations.retain(|&i, o| cases.get(i).map(|c| c.proprio == Some(o.proprio)).unwrap_or(false));
     for (i, rel) in conversions {
         m.cases[i].rel = rel;
         m.religions_changees.insert(i, rel);
@@ -718,11 +718,11 @@ pub fn demarrer_revolte(m: &mut Monde, pid: u32, i: usize) {
     let mut file = VecDeque::from([i]);
     while let Some(k) = file.pop_front() {
         for v in m.voisins(k) {
-            if zone.len() >= 20 || !vus.insert(v) {
+            if zone.len() >= (20.0 * m.echelle() * m.echelle()) as usize || !vus.insert(v) {
                 continue;
             }
             let c = &m.cases[v];
-            if c.proprio == Some(pid) && c.rel == rel && !c.revolte && m.distance(v, i) <= 4 {
+            if c.proprio == Some(pid) && c.rel == rel && !c.revolte && m.distance(v, i) <= m.portee(4.0) {
                 zone.push(v);
                 file.push_back(v);
             }

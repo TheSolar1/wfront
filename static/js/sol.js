@@ -7,9 +7,17 @@
 // ══════════════════════════════════════════════════════════════════
 import { Color } from '../vendor/three.module.min.js';
 
-export const R = 1;                       // rayon d'un hexagone
-export const LX = Math.sqrt(3) * R;       // pas horizontal
-export const LZ = 1.5 * R;                // pas vertical
+// Rayon d'un hexagone : 1 sur la carte de reference (708 cases de large),
+// 1/3 sur la carte fine (2124) : le monde garde la meme taille a l'ecran,
+// les cases sont plus petites (definirEchelle).
+export let R = 1;
+export let LX = Math.sqrt(3) * R;         // pas horizontal
+export let LZ = 1.5 * R;                  // pas vertical
+export function definirEchelle(e) {
+  R = 1 / Math.max(1, e || 1);
+  LX = Math.sqrt(3) * R;
+  LZ = 1.5 * R;
+}
 // Altitude de base et rugosite par terrain (ocean, mer, plaine, foret,
 // collines, montagnes, desert, toundra, neant).
 export const ALT = [-1.25, -0.38, 0.2, 0.3, 0.85, 1.9, 0.24, 0.33, -2.6];
@@ -95,7 +103,7 @@ export class Sol {
       const i = k < 0 ? i0 : this.idx(cx0 + d[k][0], cy0 + d[k][1]);
       if (i < 0) continue;
       const y = (i / this.l) | 0, px = LX * (i % this.l + 0.5 * (y & 1)), pz = LZ * y;
-      const w = Math.exp(-((x - px) ** 2 + (z - pz) ** 2) / 0.85);
+      const w = Math.exp(-((x - px) ** 2 + (z - pz) ** 2) / (0.85 * R * R));
       const t = this.terrain[i];
       sw += w; sa += w * ALT[t]; sr += w * RUG[t];
     }
@@ -110,7 +118,8 @@ export class Sol {
   terrainNaturel(x, z, ci) {
     const t0 = ci >= 0 ? this.terrain[ci] : 0;
     if (t0 <= 1 || t0 === T_NEANT) return t0;
-    const dx = (fbm(x * 0.55 + 11.3, z * 0.55 - 4.1, 3) - 0.5) * 1.5, dz = (fbm(x * 0.55 - 7.7, z * 0.55 + 19.2, 3) - 0.5) * 1.5;
+    const f = 0.55 / R, amp = 1.5 * R;
+    const dx = (fbm(x * f + 11.3, z * f - 4.1, 3) - 0.5) * amp, dz = (fbm(x * f - 7.7, z * f + 19.2, 3) - 0.5) * amp;
     const cj = this.hexDepuis(x + dx, z + dz);
     const t = cj >= 0 ? this.terrain[cj] : t0;
     return t <= 1 || t === T_NEANT ? t0 : t;
@@ -213,22 +222,9 @@ export class Sol {
       const i = y * this.l + x, [cx, cz] = this.pos(i);
       if (cx >= x0 && cx < x0 + T && cz >= z0 && cz < z0 + T) cases.push(i);
     }
-    // Grille des cases (terres seulement).
+    // La grille des cases est dessinee par le shader du sol (aucune
+    // geometrie : la carte fine en compte des millions).
     const lignes = [];
-    const coin = j => { const a = (Math.PI / 180) * (60 * j - 30); return [Math.cos(a) * R, Math.sin(a) * R]; };
-    for (const i of cases) {
-      const t = this.terrain[i];
-      if (t <= 1 || t === T_NEANT) continue;
-      const [cx, cz] = this.pos(i);
-      for (let j = 0; j < 3; j++) {
-        const [ax, az] = coin(j), [bx, bz] = coin(j + 1);
-        for (let s2 = 0; s2 < 2; s2++) {
-          const t1 = s2 / 2, t2 = (s2 + 1) / 2;
-          const x1 = cx + ax + (bx - ax) * t1, z1 = cz + az + (bz - az) * t1, x2 = cx + ax + (bx - ax) * t2, z2 = cz + az + (bz - az) * t2;
-          lignes.push(x1, Math.max(0.02, this.altitude(x1, z1)) + 0.04, z1, x2, Math.max(0.02, this.altitude(x2, z2)) + 0.04, z2);
-        }
-      }
-    }
     // Arbres : coniferes (nord, toundra, altitude) et feuillus ; hasard tire
     // de l'index de la case (les memes arbres a chaque construction).
     const types = [[], []];
@@ -238,13 +234,16 @@ export class Sol {
       const hz = mulberry(i * 7919 + 13);
       let nb = t === 3 ? 9 : t === 7 ? 2 : t === 2 && hz() < 0.3 ? 2 : t === 4 && hz() < 0.45 ? 2 : 0;
       if (this.mobile) nb = Math.ceil(nb / 3);
+      // Meme densite d'arbres par surface quelle que soit la taille des cases.
+      const parSurface = nb * R * R * (R < 1 ? 1.5 : 1);
+      nb = Math.floor(parSurface) + (hz() < parSurface % 1 ? 1 : 0);
       const [cx, cz] = this.pos(i);
       const nord = ((i / this.l) | 0) / this.h;
       for (let k = 0; k < nb; k++) {
-        const a = hz() * Math.PI * 2, r = Math.sqrt(hz()) * 0.78;
+        const a = hz() * Math.PI * 2, r = Math.sqrt(hz()) * 0.78 * R;
         const x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r, h = this.altitude(x, z);
         const conif = t === 7 || nord < 0.28 || h > 1.0 || (t === 3 && hz() < 0.25);
-        const e = 0.6 + hz() * 0.65, rot = hz() * Math.PI * 2, c1 = hz(), c2 = hz(), c3 = hz();
+        const e = (0.6 + hz() * 0.65) * Math.pow(R, 0.75), rot = hz() * Math.PI * 2, c1 = hz(), c2 = hz(), c3 = hz();
         if (!(h > 0.08 && h < 1.6)) continue;
         const type = conif ? 0 : 1, ey = e * (type === 0 ? 1.15 : 1), cs = Math.cos(rot), sn = Math.sin(rot);
         if (type === 0) col.set(t === 7 ? '#2f5a46' : '#2b5a32');

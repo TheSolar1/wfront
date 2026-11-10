@@ -124,3 +124,25 @@ export function coutUnite(def, qte, mods, spe) {
   if (spe === 'militaire') c = c.map(v => v * 0.85);
   return c.map(v => Math.round(v));
 }
+
+/** Decompression par suites (paires longueur, octet en base64), comme
+ *  rle_b64 cote serveur : la carte compte des millions de cases. */
+export function rle(b64, n) {
+  const v = new Uint8Array(n);
+  if (!b64) return v;
+  const b = atob(b64);
+  let k = 0;
+  for (let i = 0; i + 1 < b.length; i += 2) {
+    const long = b.charCodeAt(i), x = b.charCodeAt(i + 1);
+    if (x) v.fill(x, k, Math.min(n, k + long));
+    k += long;
+  }
+  return v;
+}
+
+/** Meme chose, en texte de chiffres ('0', '1'...). */
+export function rleTexte(b64, n) {
+  const v = rle(b64, n);
+  for (let i = 0; i < n; i++) v[i] += 48;
+  return new TextDecoder().decode(v);
+}

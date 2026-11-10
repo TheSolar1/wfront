@@ -55,7 +55,7 @@ mod tests {
             assert_eq!(m.cases[case].bat.as_deref(), Some("centrale_nucleaire"));
         }
         assert!(accident, "aucun accident en 60 mises en service a 25 %");
-        assert!(m.cases[case].bat.is_none() && m.cases[case].irradiee > m.temps);
+        assert!(m.cases[case].bat.is_none() && (m.cases[case].irradiee as f64) > m.temps);
         let depart = m.nuages[0].case;
         for _ in 0..40 { jeu::tick(&mut m, 1.0); }
         assert!(m.nuages.is_empty() || m.nuages[0].case != depart, "le nuage n'a pas bouge");
@@ -396,11 +396,11 @@ mod tests {
         assert_eq!(crate::fabrication::qte(&m.pays[&a].stock, "explosifs"), 50.0 - jeu::explosifs_requis(40.0));
         for _ in 0..600 { jeu::tick(&mut m, 1.0); }
         assert!(m.missiles.is_empty(), "missile toujours en vol");
-        assert!(m.cases[cible].irradiee > m.temps, "cible non irradiee");
+        assert!((m.cases[cible].irradiee as f64) > m.temps, "cible non irradiee");
         assert!(m.cases[cible].hab < hab_cible * 0.5, "les habitants de la case touchee meurent ({} -> {})", hab_cible, m.cases[cible].hab);
         // 40 kg : rayon 2 (1 + racine(2)), donc une case a distance 2 est touchee.
         let anneau = m.rayon(cible, 2).into_iter().find(|&v| m.distance(cible, v) == 2).unwrap();
-        assert!(m.cases[anneau].irradiee > m.temps);
+        assert!((m.cases[anneau].irradiee as f64) > m.temps);
         assert_eq!(m.cases[cible].proprio, None, "le coeur de l'explosion devient neutre");
     }
 
@@ -499,5 +499,103 @@ mod tests {
         assert!(m.missions.is_empty(), "escadre rentree");
         assert!(m.pays[&a].materiel.get("bombardier").copied().unwrap_or(0) >= 1, "retour au materiel");
         assert!(m.pays[&b].troupes < 1000.0, "soldats tues : {}", m.pays[&b].troupes);
+    }
+
+    /// Sauvegarde compacte : rien ne se perd a l'aller-retour, et l'ancien
+    /// format (une liste d'objets) se relit toujours.
+    #[test]
+    fn sauvegarde_compacte_aller_retour() {
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: false, largeur_monde: 500 };
+        let mut m = Monde::generer(60, 40, 7);
+        fonder(&mut m, 2, &regles);
+        let a = jeu::pays_du_joueur(&m, BASE_ID).unwrap();
+        let i = m.pays[&a].capitale;
+        m.cases[i + 1].irradiee = 1234.5;
+        m.cases[i + 1].degats = 77.0;
+        m.cases[i + 1].revolte = true;
+        let texte = serde_json::to_string(&m).unwrap();
+        let m2: Monde = serde_json::from_str(&texte).unwrap();
+        assert_eq!(m2.cases.len(), m.cases.len());
+        for (x, y) in m.cases.iter().zip(&m2.cases) {
+            assert_eq!((x.terrain, x.depot, x.proprio, x.bat.as_deref(), x.niv, x.revolte), (y.terrain, y.depot, y.proprio, y.bat.as_deref(), y.niv, y.revolte));
+            assert!((x.hab - y.hab).abs() < 1e-3 && x.irradiee == y.irradiee && x.degats == y.degats);
+        }
+        assert!(m2.cases[i].rev > 0, "les cases possedees seront renvoyees aux clients");
+        // Ancien format.
+        let mut v: serde_json::Value = serde_json::from_str(&texte).unwrap();
+        v["cases"] = serde_json::to_value(m.cases.iter().map(|c| json!({"terrain": c.terrain, "depot": c.depot, "proprio": c.proprio, "bat": c.bat.as_deref(), "niv": c.niv, "irradiee": c.irradiee, "degats": c.degats, "rev": 3, "hab": c.hab})).collect::<Vec<_>>()).unwrap();
+        let m3: Monde = serde_json::from_value(v).unwrap();
+        assert_eq!(m3.cases[i].proprio, m.cases[i].proprio);
+        assert_eq!(m3.cases[i].bat.as_deref(), Some("capitale"));
+    }
+}
+
+#[cfg(test)]
+mod mesure_grande_carte {
+    use super::*;
+    #[test]
+    #[ignore]
+    fn mesure() {
+        let t = std::time::Instant::now();
+        let mut m = Monde::generer_monde_reel(2124, 3);
+        println!("generation {:?} : {} x {} = {} cases", t.elapsed(), m.largeur, m.hauteur, m.cases.len());
+        let regles = Regles { protection_s: 0, vitesse: 1.0, monde_reel: true, largeur_monde: 2124 };
+        let pays = pays_reels();
+        for (k, code) in ["FR", "DE", "BE"].iter().enumerate() {
+            let idx = pays.iter().position(|p| p.code == *code).unwrap() + 1;
+            let r = jeu::commande(&mut m, &joueur(BASE_ID - k as i64), &json!({"action": "rejoindre", "pays_reel": idx, "couleur": "#ef4444", "spe": "militaire"}), &regles);
+            println!("{} : {:?}", code, r.map(|_| ()).err());
+        }
+        let t = std::time::Instant::now();
+        for _ in 0..10 { jeu::tick(&mut m, 1.0); }
+        println!("tick moyen {:?}", t.elapsed() / 10);
+        let t = std::time::Instant::now();
+        jeu::encerclements(&mut m);
+        println!("encerclements {:?}", t.elapsed());
+        let bl0 = jeu::bilans(&m);
+        let t = std::time::Instant::now();
+        m.demo_acc = 10.0;
+        crate::demographie::evoluer(&mut m, &bl0, 0.0);
+        println!("demographie {:?}", t.elapsed());
+        let t = std::time::Instant::now();
+        m.occ_acc = 60.0;
+        crate::demographie::religions(&mut m, 0.0, &mut rand::thread_rng());
+        println!("religions {:?}", t.elapsed());
+        let mut durees = vec![];
+        for _ in 0..20 { let t = std::time::Instant::now(); jeu::tick(&mut m, 1.0); durees.push(t.elapsed().as_millis()); }
+        println!("ticks {:?}", durees);
+        let t = std::time::Instant::now();
+        let bl = jeu::bilans(&m);
+        println!("bilans {:?}", t.elapsed());
+        let t = std::time::Instant::now();
+        let vis = crate::vue::visions(&m, &bl, &m.pays.keys().copied().collect());
+        println!("visions {:?}", t.elapsed());
+        let t = std::time::Instant::now();
+        let init = crate::vue::init(&m, "x", false, 1.0, "");
+        println!("init {:?} {} Mo", t.elapsed(), init.len() / 1_000_000);
+        let pid = *m.pays.keys().next().unwrap();
+        let ctx = crate::vue::Contexte { m: &m, bl: &bl, vis: &vis, publics: None };
+        let mut suivi = crate::vue::Suivi::default();
+        let t = std::time::Instant::now();
+        let e1 = crate::vue::etat(&ctx, Some(pid), &mut suivi);
+        let d1 = t.elapsed();
+        let t = std::time::Instant::now();
+        let e2 = crate::vue::etat(&ctx, Some(pid), &mut suivi);
+        println!("etat premier {:?} {} ko, suivant {:?} {} ko", d1, e1.len() / 1000, t.elapsed(), e2.len() / 1000);
+        let t = std::time::Instant::now();
+        let s = serde_json::to_string(&m).unwrap();
+        println!("sauvegarde {:?} {} Mo", t.elapsed(), s.len() / 1_000_000);
+        println!("taille Case {} octets", std::mem::size_of::<Case>());
+        let fr = (pays.iter().position(|p| p.code == "FR").unwrap() + 1) as u8;
+        let mut origine = std::collections::BTreeMap::new();
+        for i in 0..m.cases.len() {
+            if m.region(i) == fr {
+                let k = m.pays_au_centre(i);
+                *origine.entry(if k == 0 { "bord".to_string() } else { pays[k as usize - 1].code.clone() }).or_insert(0) += 1;
+            }
+        }
+        println!("France : {:?}", origine);
+        let jouables = (1..=pays.len()).filter(|&k| m.pays_reel_jouable(k as u8)).count();
+        println!("{} pays jouables", jouables);
     }
 }

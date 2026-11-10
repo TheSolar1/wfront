@@ -21,6 +21,8 @@ pub struct Suivi {
     pub premier: bool,
     /// Dernier point d'historique de population envoye (unix).
     pub histo: f64,
+    /// Empreinte de la derniere vision envoyee.
+    pub vision: u64,
 }
 
 pub struct Visions {
@@ -28,13 +30,28 @@ pub struct Visions {
     pub radar: HashMap<u32, Vec<bool>>,
 }
 
-pub fn visions(m: &Monde, bl: &HashMap<u32, Bilan>) -> Visions {
+/// Vision des nations des joueurs connectes (et de leurs allies de bloc)
+/// seulement : la carte compte des millions de cases.
+pub fn visions(m: &Monde, bl: &HashMap<u32, Bilan>, pour: &std::collections::HashSet<u32>) -> Visions {
     let n = m.cases.len();
+    let _ = bl;
+    // Nations a calculer : les connectees et les membres de leurs blocs.
+    let mut calc: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    for &pid in pour {
+        calc.insert(pid);
+        if let Some(b) = m.pays.get(&pid).and_then(|p| p.bloc).and_then(|b| m.blocs.get(&b)) {
+            calc.extend(b.membres.iter().copied());
+        }
+    }
+    calc.retain(|id| m.pays.get(id).map(|p| !p.elimine).unwrap_or(false));
     let mut vue: HashMap<u32, Vec<bool>> = HashMap::new();
     let mut radar: HashMap<u32, Vec<bool>> = HashMap::new();
-    for p in m.pays.values().filter(|p| !p.elimine) {
-        vue.insert(p.id, vec![false; n]);
-        radar.insert(p.id, vec![false; n]);
+    if calc.is_empty() {
+        return Visions { vue, radar };
+    }
+    for &id in &calc {
+        vue.insert(id, vec![false; n]);
+        radar.insert(id, vec![false; n]);
     }
     let bonus = |pid: u32| -> i64 {
         if m.pays.get(&pid).map(|p| p.a("dip_renseignement")).unwrap_or(false) { 1 } else { 0 }
@@ -42,12 +59,12 @@ pub fn visions(m: &Monde, bl: &HashMap<u32, Bilan>) -> Visions {
     for (i, c) in m.cases.iter().enumerate() {
         let Some(o) = c.proprio else { continue };
         let Some(v) = vue.get_mut(&o) else { continue };
-        let r = 1 + bonus(o);
+        let r = m.portee(1.0 + bonus(o) as f64);
         for k in m.rayon(i, r) {
             v[k] = true;
         }
-        if c.bat.as_deref() == Some("radar") && c.irradiee <= m.temps {
-            let rr = 10 * (c.niv as i64).max(1);
+        if c.bat.as_deref() == Some("radar") && (c.irradiee as f64) <= m.temps {
+            let rr = m.portee(10.0 * (c.niv as f64).max(1.0));
             let zone = m.rayon(i, rr);
             for &k in &zone {
                 v[k] = true;
@@ -59,21 +76,17 @@ pub fn visions(m: &Monde, bl: &HashMap<u32, Bilan>) -> Visions {
             }
         }
     }
-    for a in m.armees.values() {
-        let Some(v) = vue.get_mut(&a.proprio) else { continue };
-        let r = 1 + bonus(a.proprio) + if jeu::domaine(a) == DOM_MER { 1 } else { 0 };
-        for k in m.rayon(a.case, r) {
-            v[k] = true;
-        }
-    }
     for mi in m.missions.values() {
         let Some(v) = vue.get_mut(&mi.proprio) else { continue };
-        for k in m.rayon(mi.cible, 1) {
+        for k in m.rayon(mi.cible, m.portee(1.0)) {
             v[k] = true;
         }
     }
     // Les membres d'un bloc partagent leur vision et leurs radars.
     for b in m.blocs.values() {
+        if !b.membres.iter().any(|id| vue.contains_key(id)) {
+            continue;
+        }
         let mut v = vec![false; n];
         let mut r = vec![false; n];
         for id in &b.membres {
@@ -95,10 +108,29 @@ pub fn visions(m: &Monde, bl: &HashMap<u32, Bilan>) -> Visions {
             }
         }
     }
-    let _ = bl;
     Visions { vue, radar }
 }
 
+/// Vision compressee : longueurs des suites alternees (cachee, visible,
+/// cachee...), en commencant par « cachee ».
+fn suites(v: &[bool]) -> Vec<u32> {
+    let mut out = Vec::new();
+    let mut courant = false;
+    let mut n = 0u32;
+    for &b in v {
+        if b == courant {
+            n += 1;
+        } else {
+            out.push(n);
+            courant = b;
+            n = 1;
+        }
+    }
+    out.push(n);
+    out
+}
+
+#[allow(dead_code)]
 fn hex_bits(v: &[bool]) -> String {
     let mut s = String::with_capacity(v.len() / 4 + 1);
     for chunk in v.chunks(4) {
@@ -114,11 +146,12 @@ fn hex_bits(v: &[bool]) -> String {
 }
 
 pub fn init(m: &Monde, nom: &str, admin: bool, vitesse: f64, vex_url: &str) -> String {
-    let terrain: String = m.cases.iter().map(|c| std::char::from_digit(c.terrain as u32, 10).unwrap()).collect();
-    let depot: String = m.cases.iter().map(|c| std::char::from_digit(c.depot as u32, 10).unwrap()).collect();
-    let cotes: String = (0..m.cases.len()).map(|i| if m.est_cote(i) { '1' } else { '0' }).collect();
+    // Tout est compresse par suites (rle_b64) : la carte fine compte des
+    // millions de cases, surtout de l'ocean.
+    let terrain = rle_b64(&m.cases.iter().map(|c| c.terrain).collect::<Vec<_>>());
+    let depot = rle_b64(&m.cases.iter().map(|c| c.depot).collect::<Vec<_>>());
+    let cotes = rle_b64(&(0..m.cases.len()).map(|i| m.est_cote(i) as u8).collect::<Vec<_>>());
     let monde_reel = if m.monde_reel {
-        use base64::Engine as _;
         // Gisements de chaque vrai pays (petrole, commun, radioactif, rare).
         let mut gis = vec![[0u32; 4]; crate::monde::pays_reels().len() + 1];
         for (i, c) in m.cases.iter().enumerate() {
@@ -132,18 +165,16 @@ pub fn init(m: &Monde, nom: &str, admin: bool, vitesse: f64, vex_url: &str) -> S
             .filter(|(k, _)| m.pays_reel_jouable(*k as u8 + 1))
             .map(|(k, p)| json!({ "k": k + 1, "code": p.code, "nom": p.nom, "capitale": m.capitales_reelles.get(k + 1), "gisements": gis[k + 1] }))
             .collect();
-        json!({ "pays": pays, "regions": base64::engine::general_purpose::STANDARD.encode(&m.regions) })
+        json!({ "pays": pays, "regions": rle_b64(&m.regions) })
     } else {
         Value::Null
     };
     // Religion (un octet) et habitants (un octet, echelle log2 x 16) de
     // chaque case, en base64.
     let (religions, habitants) = {
-        use base64::Engine as _;
         let r: Vec<u8> = m.cases.iter().map(|c| c.rel).collect();
         let h: Vec<u8> = m.cases.iter().map(|c| ((1.0 + c.hab.max(0.0) as f64).log2() * 16.0).round().min(255.0) as u8).collect();
-        let b = &base64::engine::general_purpose::STANDARD;
-        (b.encode(&r), b.encode(&h))
+        (rle_b64(&r), rle_b64(&h))
     };
     json!({
         "t": "init",
@@ -184,7 +215,8 @@ pub fn init(m: &Monde, nom: &str, admin: bool, vitesse: f64, vex_url: &str) -> S
                 v
             }).collect::<Vec<_>>(),
             "index_minerais": fab::MINERAIS.iter().map(|mi| (mi.id, fab::index_minerai(mi.id))).collect::<HashMap<_, _>>(),
-            "troupes": { "cout_neutre": crate::front::COUT_NEUTRE, "portee_bateau": crate::front::PORTEE_BATEAU, "portee_cote": crate::front::PORTEE_COTE },
+            "troupes": { "cout_neutre": crate::front::COUT_NEUTRE / (m.echelle() * m.echelle()), "portee_bateau": m.portee(crate::front::PORTEE_BATEAU as f64), "portee_cote": m.portee(crate::front::PORTEE_COTE as f64) },
+            "echelle": m.echelle(),
             "religions": crate::demographie::RELIGIONS,
             "demographie": { "emplois_par_niveau": crate::demographie::EMPLOIS_PAR_NIVEAU, "prime_max": crate::demographie::PRIME_MAX, "age_actif": crate::demographie::AGE_ACTIF, "age_retraite": crate::demographie::AGE_RETRAITE },
             "file_fabrication": jeu::FILE_FABRICATION,
@@ -294,18 +326,27 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
     suivi.premier = true;
 
     // ── Cases modifiees ──
-    let cases: Vec<Value> = m
-        .cases
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| c.rev > suivi.rev)
+    // Cases modifiees : par le journal (sans parcourir toute la carte), ou
+    // par un parcours complet si ce client est trop en retard.
+    let depuis_journal = m.journal.front().map(|&(r, _)| r <= suivi.rev + 1).unwrap_or(m.rev <= suivi.rev);
+    let indices: Vec<usize> = if depuis_journal && suivi.rev > 0 {
+        let mut v: Vec<usize> = m.journal.iter().rev().take_while(|&&(r, _)| r > suivi.rev).map(|&(_, i)| i).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    } else {
+        (0..m.cases.len()).filter(|&i| m.cases[i].rev as u64 > suivi.rev).collect()
+    };
+    let cases: Vec<Value> = indices
+        .into_iter()
+        .map(|i| (i, &m.cases[i]))
         .map(|(i, c)| {
             json!([
                 i,
                 c.proprio.map(|x| x as i64).unwrap_or(-1),
                 c.bat.as_deref().unwrap_or(""),
                 c.niv,
-                if c.irradiee > m.temps { 1 } else { 0 },
+                if (c.irradiee as f64) > m.temps { 1 } else { 0 },
                 // Terrain : change seulement sous un cratere d'antimatiere.
                 c.terrain,
                 c.rel
@@ -459,6 +500,22 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
         suivi.histo = x[0];
     }
 
+    // Vision : seulement quand elle change (compressee en suites).
+    let vision: Option<Value> = {
+        let v = vue.map(|v| suites(v));
+        let h = {
+            use std::hash::{Hash, Hasher};
+            let mut st = std::collections::hash_map::DefaultHasher::new();
+            v.hash(&mut st);
+            st.finish()
+        };
+        if premier || h != suivi.vision {
+            suivi.vision = h;
+            Some(v.map(|x| json!(x)).unwrap_or(Value::Null))
+        } else {
+            None
+        }
+    };
     let mut out = json!({
         "t": "etat",
         "revoltes": revoltes,
@@ -467,7 +524,7 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
         "now": chrono::Utc::now().timestamp_millis(),
         "cases": cases,
         "moi": moi,
-        "vision": vue.map(|v| hex_bits(v)),
+        "vision": Value::Null,
         "armees": armees,
         "missions": missions,
         "missiles": missiles,
@@ -486,6 +543,15 @@ pub fn etat(ctx: &Contexte, pid: Option<u32>, suivi: &mut Suivi) -> String {
     });
     if let Some(p) = ctx.publics {
         out.as_object_mut().unwrap().insert("publics".into(), p.clone());
+    }
+    let o = out.as_object_mut().unwrap();
+    match vision {
+        Some(v) => {
+            o.insert("vision".into(), v);
+        }
+        None => {
+            o.remove("vision");
+        }
     }
     out.to_string()
 }

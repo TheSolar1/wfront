@@ -5,7 +5,7 @@
 // ══════════════════════════════════════════════════════════════════
 
 import { Carte } from './carte.js';
-import { ico, esc, fmt, fmtPop, duree, signe, Grille, coutBatiment, contraste } from './util.js';
+import { ico, esc, fmt, fmtPop, duree, signe, Grille, coutBatiment, contraste, rle, rleTexte } from './util.js';
 import { PANNEAUX, apercuPrime, apercuTva, drapeau, cout, nomCase, statutArmee, listeChat, ICONES_EVT, menuCase, menuTroupes, menuDiplomatie, nomObjet, recetteDeTable, actionsRadiales } from './panneaux.js';
 
 const $ = s => document.querySelector(s);
@@ -95,21 +95,21 @@ function recevoirInit(m) {
   S.defs = m.defs;
   S.joueur = m.joueur;
   S.vitesse = m.vitesse || 1;
-  S.cotes = m.carte.cotes;
+  S.cotes = rleTexte(m.carte.cotes, m.carte.largeur * m.carte.hauteur);
   S.g = new Grille(m.carte.largeur, m.carte.hauteur);
   if (!dejaInit) {
     S.carte = new Carte($('#wf-carte-3d'), m, {
       clic: clicCarte, clicDroit: clicDroitCarte, survol: survolCarte,
       flash: () => { const f = $('#wf-flash'); f.classList.remove('go'); void f.offsetWidth; f.classList.add('go'); },
     });
-    S.carte.cotes = m.carte.cotes;
+    S.carte.cotes = S.cotes;
     S.carte.vitesseJeu = S.vitesse;
     dejaInit = true;
   } else {
     // Reconnexion : religions et habitants a jour.
-    const octets = b64 => Uint8Array.from(atob(b64 || ''), ch => ch.charCodeAt(0));
-    if (m.religions) { S.carte.rel = octets(m.religions); S.carte.relSales = true; S.carte.couleursSales = S.carte.labelsSales = true; }
-    if (m.habitants) S.carte.habLog = octets(m.habitants);
+    const n = m.carte.largeur * m.carte.hauteur;
+    if (m.religions) { S.carte.rel = rle(m.religions, n); S.carte.relSales = true; S.carte.couleursSales = S.carte.labelsSales = true; }
+    if (m.habitants) S.carte.habLog = rle(m.habitants, n);
   }
   // Historique de population : le serveur renvoie tout apres un init.
   S.histo = [];

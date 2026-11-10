@@ -57,7 +57,7 @@ function inverse(x, y) {
 }
 
 // ── Rasterisation (equirectangulaire, 5' d'arc) ─────────────────────
-const ML = 4320, MH = 2160;
+const ML = 8640, MH = 4320;
 function anneauxDe(geometrie) {
   const polys = geometrie.type === 'Polygon' ? [geometrie.coordinates] : geometrie.type === 'MultiPolygon' ? geometrie.coordinates : [];
   return polys.flat();
@@ -291,7 +291,7 @@ const LAT_N = 83, LAT_S = -56, MARGE = 0.02;
 const XMAX = projeter(180, 0)[0];
 const YN = projeter(0, LAT_N)[1], YS = projeter(0, LAT_S)[1];
 const largeurP = 2 * XMAX * (1 + 2 * MARGE), hauteurP = (YN - YS) + 2 * MARGE * 2 * XMAX;
-const RW = 2048, RH = Math.round(RW * hauteurP / largeurP);
+const RW = 6144, RH = Math.round(RW * hauteurP / largeurP);
 
 const masque = masqueTerres();
 const { liste: PAYS, masque: masquePays } = paysReels();
