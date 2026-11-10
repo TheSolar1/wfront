@@ -288,7 +288,7 @@ document.addEventListener('pointerdown', e => {
 const MENU = [
   // Construire : clic gauche sur une case. Diplomatie : clic sur un pays.
   // Recherche : plans au marché. Journal : notifications.
-  ['carte', 'Carte du monde', 'earth-europe'], ['pays', 'Mon pays', 'landmark-flag'], ['population', 'Population', 'people-group'], ['fabrication', 'Usines', 'industry'],
+  ['carte', 'Carte du monde', 'earth-europe'], ['pays', 'Mon pays', 'landmark-flag'], ['population', 'Population', 'people-group'], ['recherche', 'Recherche', 'flask'], ['fabrication', 'Usines', 'industry'],
   ['armee', 'Armée', 'person-military-rifle'], ['blocs', 'Alliances', 'handshake'], ['marche', 'Marché', 'store'],
   ['classement', 'Classement', 'trophy'], ['chat', 'Messages', 'comments'], ['aide', 'Guide', 'book-open'],
 ];
@@ -326,7 +326,7 @@ function ouvrirPanneau(id, opts = {}) {
     corps.classList.remove('wf-panneau-ouvert');
   } else {
     S.panneau = id;
-    corps.classList.toggle('wf-panneau-large', id === 'fabrication');
+    corps.classList.toggle('wf-panneau-large', id === 'fabrication' || id === 'recherche');
     if (id === 'journal') S.nonLus.journal = 0;
     if (id === 'chat') { S.nonLus.chat = 0; if (opts.canal) S.canal = opts.canal; }
     corps.classList.add('wf-panneau-ouvert');

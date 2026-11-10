@@ -204,7 +204,9 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         b.retraites = demo::entre(p, demo::AGE_RETRAITE, demo::NB_AGES);
         b.soldats = sold;
         b.recrues = recr;
-        b.emplois = b.niv.iter().filter(|(k, _)| k.as_str() != "ville").map(|(_, &n)| n as f64).sum::<f64>() * demo::EMPLOIS_PAR_NIVEAU;
+        // Robotisation : 20 % d'ouvriers en moins par batiment.
+        let robots = if p.a("ind_robotisation") { 0.8 } else { 1.0 };
+        b.emplois = b.niv.iter().filter(|(k, _)| k.as_str() != "ville").map(|(_, &n)| n as f64).sum::<f64>() * demo::EMPLOIS_PAR_NIVEAU * robots;
         // TVA : au-dela de 20 %, une partie des actifs ne veut plus
         // travailler (le salaire net ne vaut plus la peine).
         b.tva = p.tva.clamp(0.0, demo::TVA_MAX);
@@ -221,10 +223,13 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         // Activite taxable : services (1 credit/min pour 1000 employes,
         // +5 % par niveau de centre commercial), industrie (2), et les
         // centres commerciaux eux-memes.
-        let cc = b.n("centre_commercial");
+        let cc = b.n("centre_commercial") * if p.a("eco_distribution") { 1.5 } else { 1.0 };
         b.activite = b.prive / 1000.0 * (1.0 + (0.05 * cc).min(1.0)) + b.travailleurs / 1000.0 * 2.0 + 12.0 * cc * b.travail;
+        if p.a("eco_fiscalite") {
+            b.activite *= 1.1;
+        }
         b.recettes_tva = b.activite * b.tva;
-        b.duree_formation = demo::duree_formation(b);
+        b.duree_formation = demo::duree_formation(b) * if p.a("mil_conscription") { 0.6 } else { 1.0 };
         let mut rel: Vec<(u8, f64)> = religions.remove(pid).unwrap_or_default().into_iter().filter(|(r, h)| *r > 0 && *h > 0.0).collect();
         rel.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         b.religions = rel;
@@ -246,7 +251,7 @@ pub fn bilans(m: &Monde) -> HashMap<u32, Bilan> {
         // Le petrole des puits est vendu : +25 credits par minute et par niveau.
         let mut cr = 40.0 * b.n("capitale") + 6.0 * b.n("ville") * ratio + 3.0 * b.n("usine") * ratio + b.recettes_tva + 0.15 * b.cases as f64
             + 25.0 * b.n("puits_petrole") * ratio;
-        let mut mult_cr = 1.0;
+        let mut mult_cr = 1.0 + if p.a("eco_banque") { 0.08 } else { 0.0 };
         mult_cr += 0.05 * p.niv("fiscalite");
         if p.a("eco_etat_providence") { mult_cr += 0.10; }
         if spe == "commerciale" { mult_cr += 0.15; }
@@ -1347,7 +1352,7 @@ fn inventions(m: &mut Monde, bl: &HashMap<u32, Bilan>, dt: f64, rng: &mut impl R
         if !rng.gen_bool(chance) {
             continue;
         }
-        let dispo: Vec<(&str, f64)> = TECHS.iter().filter(|t| !p.a(t.id)).map(|t| (t.id, 1.0 / t.cout.max(1.0))).collect();
+        let dispo: Vec<(&str, f64)> = TECHS.iter().filter(|t| !p.a(t.id) && t.prereq.iter().all(|q| p.a(q))).map(|t| (t.id, 1.0 / t.cout.max(1.0))).collect();
         let total: f64 = dispo.iter().map(|(_, w)| w).sum();
         if total <= 0.0 {
             continue;
@@ -3022,6 +3027,19 @@ pub fn commande(m: &mut Monde, j: &Joueur, cmd: &Value, regles: &Regles) -> Resu
                 return Err("Déjà en file d'attente.".into());
             }
             let cout = cout_recherche(p, t).ok_or(if t.starts_with("am:") { "Niveau maximal atteint." } else { "Déjà recherchée." })?;
+            // Arbre : chaque prerequis doit etre connu, en cours, ou plus tot
+            // dans la file.
+            if let Some(d) = tech(t) {
+                let manque: Vec<&str> = d
+                    .prereq
+                    .iter()
+                    .filter(|&&q| !p.a(q) && p.recherche.as_deref() != Some(q) && !p.file_recherche.iter().any(|x| x == q))
+                    .map(|&q| tech(q).map(|x| x.nom).unwrap_or(q))
+                    .collect();
+                if !manque.is_empty() {
+                    return Err(format!("Recherchez d'abord : {}.", manque.join(", ")));
+                }
+            }
             if p.recherche.is_none() {
                 let pris = p.recherche_stock.min(cout);
                 p.recherche_stock -= pris;

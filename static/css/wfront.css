@@ -1032,3 +1032,42 @@ body[data-mode="dev"] .wf-apps-vex, body[data-mode="dev"] .wf-lien-vex { display
 .wf-res-pop-bats { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .wf-res-pop-bats span { display: inline-flex; align-items: center; gap: 5px; }
 .wf-res-pop-bats .ico { color: var(--accent); }
+
+/* ── Arbre de recherche ─────────────────────────────────────────── */
+.wf-arbre-cadre { flex-shrink: 0; border: 1px solid var(--panel-border); border-radius: 14px; overflow: hidden; margin-bottom: 14px;
+  background: radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text-dim) 22%, transparent) 1px, transparent 0) 0 0 / 18px 18px,
+    linear-gradient(180deg, color-mix(in srgb, var(--bc) 7%, var(--surface)), var(--surface)); }
+.wf-arbre-resume { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 12.5px; font-weight: 600; color: var(--text-dim);
+  border-bottom: 1px solid var(--panel-border); background: color-mix(in srgb, var(--surface) 80%, transparent); }
+.wf-arbre-resume .ico { color: var(--bc); }
+.wf-arbre-defile { overflow-x: auto; overflow-y: hidden; padding-bottom: 6px; scrollbar-width: thin; }
+.wf-arbre { position: relative; }
+.wf-arbre-liens { position: absolute; inset: 0; pointer-events: none; }
+.wf-arbre-liens path { fill: none; stroke: color-mix(in srgb, var(--text-dim) 45%, transparent); stroke-width: 2; stroke-dasharray: 5 5; }
+.wf-arbre-liens path.fait { stroke: var(--bc); stroke-dasharray: none; stroke-width: 2.6; opacity: .85; }
+.wf-arbre-liens path.actif { stroke: var(--bc); stroke-dasharray: 7 6; animation: wf-flux 0.9s linear infinite; }
+@keyframes wf-flux { to { stroke-dashoffset: -26; } }
+.wf-arbre-col { position: absolute; top: 14px; text-align: center; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--text-dim); }
+.wf-noeud { position: absolute; box-sizing: border-box; display: flex; align-items: center; gap: 9px; padding: 8px 10px 8px 9px; border-radius: 12px;
+  background: var(--surface); border: 1.5px solid var(--panel-border); box-shadow: 0 2px 6px rgba(0,0,0,.08); transition: transform .15s, box-shadow .15s, border-color .15s; }
+.wf-noeud-ic { width: 34px; height: 34px; flex: none; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bc) 14%, transparent); color: var(--bc); }
+.wf-noeud-ic .ico { width: 17px; height: 17px; }
+.wf-noeud-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wf-noeud-txt b { font-size: 12.5px; line-height: 1.2; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.wf-noeud-txt small { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wf-noeud-txt small .ico { width: 11px; height: 11px; flex: none; }
+.wf-noeud.dispo { border-color: color-mix(in srgb, var(--bc) 65%, transparent); cursor: pointer; }
+.wf-noeud.dispo:hover { transform: translateY(-2px); box-shadow: 0 8px 18px color-mix(in srgb, var(--bc) 30%, transparent); border-color: var(--bc); }
+.wf-noeud.acquise { background: linear-gradient(135deg, color-mix(in srgb, var(--bc) 20%, var(--surface)), var(--surface)); border-color: color-mix(in srgb, var(--bc) 50%, transparent); }
+.wf-noeud.acquise .wf-noeud-ic { background: var(--bc); color: #fff; }
+.wf-noeud.encours { border-color: var(--bc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bc) 25%, transparent); animation: wf-lueur 2s ease-in-out infinite; }
+@keyframes wf-lueur { 50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--bc) 12%, transparent), 0 6px 18px color-mix(in srgb, var(--bc) 30%, transparent); } }
+.wf-noeud.file { border-style: dashed; border-color: var(--bc); }
+.wf-noeud.verrou { opacity: .55; filter: grayscale(.7); }
+.wf-noeud-ext { position: absolute; top: -8px; right: -8px; width: 20px; height: 20px; border-radius: 50%; background: var(--surface); border: 1.5px solid var(--bc);
+  display: flex; align-items: center; justify-content: center; color: var(--bc); }
+.wf-noeud-ext .ico { width: 10px; height: 10px; }
+.wf-noeud-prog { position: absolute; left: 10px; right: 10px; bottom: 5px; height: 4px; border-radius: 99px; background: var(--border); overflow: hidden; }
+.wf-noeud-prog i { display: block; height: 100%; background: var(--bc); border-radius: 99px; }
+.wf-tech.verrou { opacity: .55; cursor: default; }
