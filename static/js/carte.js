@@ -872,7 +872,7 @@ if (vHaut > -0.05) {
     const ancien = this.spritesBat.get(i);
     if (ancien) {
       this.groupes.bats.remove(ancien);
-      ancien.traverse(o => { if (o.isSprite) o.material.dispose(); });
+      ancien.traverse(o => { if (o.isSprite) o.material.dispose(); if (o.geometry && o.geometry.type === 'BoxGeometry') o.geometry.dispose(); });
       this.spritesBat.delete(i);
     }
     const b = this.bat[i];
@@ -896,7 +896,27 @@ if (vHaut > -0.05) {
       groupe.add(s);
     }
     const [x, z] = this.pos(i);
-    groupe.position.set(x, this.haut(i) - 0.02, z);
+    // Le sol n'est pas plat sur toute la case : le batiment se pose au point
+    // le plus haut de son emprise (il ne s'enfonce plus), et un socle de
+    // pierre descend jusqu'au point le plus bas (il ne flotte plus).
+    const r = 0.36 * echelle;
+    let hMax = -Infinity, hMin = Infinity;
+    for (let k = 0; k <= 12; k++) {
+      const a = k / 12 * Math.PI * 2, d = k === 12 ? 0 : r * (k % 2 ? 0.6 : 1);
+      const h = this.altitude(x + Math.cos(a) * d, z + Math.sin(a) * d);
+      hMax = Math.max(hMax, h); hMin = Math.min(hMin, h);
+    }
+    hMax = Math.max(0.05, hMax); hMin = Math.max(0.0, hMin);
+    if (hMax - hMin > 0.015) {
+      const haut = hMax - hMin + 0.12;
+      this._matSocle ??= new THREE.MeshStandardMaterial({ color: '#8d877c', roughness: 0.95, flatShading: true });
+      const socle = new THREE.Mesh(new THREE.BoxGeometry(0.66 * echelle, haut, 0.6 * echelle), this._matSocle);
+      socle.position.y = -haut / 2 + 0.005;
+      socle.rotation.y = modele.rotation.y;
+      socle.receiveShadow = true;
+      groupe.add(socle);
+    }
+    groupe.position.set(x, hMax, z);
     groupe.visible = !this.vision || !!this.vision[i];   // caché sous le brouillard
     this.groupes.bats.add(groupe);
     this.spritesBat.set(i, groupe);
